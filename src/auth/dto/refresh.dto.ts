@@ -1,11 +1,7 @@
-import { IsString, Length, Matches } from 'class-validator';
+import { IsString, MinLength } from 'class-validator';
 
-export class VerifyOtpDto {
+export class RefreshDto {
   @IsString()
-  @Matches(/^\+[1-9]\d{9,14}$/)
-  phone!: string;
-
-  @IsString()
-  @Length(4, 8)
-  code!: string;
+  @MinLength(20)
+  refreshToken!: string;
 }
