@@ -1,1 +1,261 @@
+generator client {
+  provider = "prisma-client-js"
+}
 
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===================== RBAC — 11 ROL =====================
+enum Role {
+  CUSTOMER
+  COURIER
+  MERCHANT
+  RESTAURANT
+  MARKET_OPERATOR
+  COFFEE_BRANCH
+  DICLEFUL_OPERATOR
+  DICLEFUL_DRIVER
+  LOAD_CUSTOMER
+  CARRIER
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DELETED
+}
+
+model User {
+  id            String     @id @default(uuid()) @db.Uuid
+  phone         String     @unique
+  phoneVerified Boolean    @default(false)
+  email         String?    @unique
+  name          String?
+  surname       String?
+  passwordHash  String?
+  roles         Role[]     @default([CUSTOMER])
+  status        UserStatus @default(PENDING)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
+
+  otpRequests      OtpRequest[]
+  refreshTokens    RefreshToken[]
+  addresses        Address[]
+  wallets          Wallet[]
+  socialIdentities SocialIdentity[]
+
+  @@index([phone])
+  @@map("users")
+}
+
+model SocialIdentity {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   String
+  providerId String
+  createdAt  DateTime @default(now())
+
+  @@unique([provider, providerId])
+  @@index([userId])
+  @@map("social_identities")
+}
+
+// ===================== AUTH — OTP + Oturum =====================
+enum OtpPurpose {
+  LOGIN
+  PHONE_VERIFICATION
+  PASSWORD_RESET
+}
+
+model OtpRequest {
+  id         String     @id @default(uuid()) @db.Uuid
+  phone      String
+  codeHash   String
+  purpose    OtpPurpose @default(LOGIN)
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime   @default(now())
+  userId     String?    @db.Uuid
+  user       User?      @relation(fields: [userId], references: [id])
+
+  @@index([phone, createdAt])
+  @@map("otp_requests")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ===================== ADRES =====================
+enum AddressType {
+  HOME
+  WORK
+  BILLING
+  OTHER
+}
+
+model Address {
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @db.Uuid
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         AddressType @default(HOME)
+  title        String?
+  fullName     String?
+  phone        String?
+  country      String      @default("TR")
+  city         String
+  district     String?
+  neighborhood String?
+  line1        String
+  line2        String?
+  postalCode   String?
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ===================== FİNANS (double-entry) =====================
+enum Currency {
+  TRY
+  USD
+  EUR
+}
+
+enum WalletType {
+  USER
+  MERCHANT
+  PLATFORM
+  ESCROW
+}
+
+model Wallet {
+  id        String     @id @default(uuid()) @db.Uuid
+  userId    String?    @db.Uuid
+  user      User?      @relation(fields: [userId], references: [id])
+  type      WalletType @default(USER)
+  currency  Currency   @default(TRY)
+  balance   BigInt     @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  entries LedgerEntry[]
+
+  @@unique([userId, type, currency])
+  @@map("wallets")
+}
+
+enum TransactionType {
+  TOPUP
+  WITHDRAWAL
+  TRANSFER
+  PAYMENT
+  REFUND
+  FEE
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum BusinessUnit {
+  MARKET
+  YEMEK
+  CARSI
+  COFFEE
+  LOAD
+  DICLEFUL
+  COURIER
+}
+
+model Transaction {
+  id           String            @id @default(uuid()) @db.Uuid
+  type         TransactionType
+  status       TransactionStatus @default(PENDING)
+  currency     Currency          @default(TRY)
+  amount       BigInt
+  orderNo      String?
+  businessUnit BusinessUnit?
+  commission   BigInt            @default(0)
+  vat          BigInt            @default(0)
+  deliveryFee  BigInt            @default(0)
+  netRevenue   BigInt            @default(0)
+  reference    String?           @unique
+  description  String?
+  metadata     Json?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  entries LedgerEntry[]
+
+  @@index([type, status])
+  @@index([businessUnit])
+  @@index([orderNo])
+  @@map("transactions")
+}
+
+enum EntryDirection {
+  DEBIT
+  CREDIT
+}
+
+model LedgerEntry {
+  id            String         @id @default(uuid()) @db.Uuid
+  transactionId String         @db.Uuid
+  transaction   Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  walletId      String         @db.Uuid
+  wallet        Wallet         @relation(fields: [walletId], references: [id])
+  direction     EntryDirection
+  amount        BigInt
+  balanceAfter  BigInt
+  createdAt     DateTime       @default(now())
+
+  @@index([walletId])
+  @@index([transactionId])
+  @@map("ledger_entries")
+}
+
+// ===================== DENETİM =====================
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @db.Uuid
+  action    String
+  entity    String?
+  entityId  String?
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
