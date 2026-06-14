@@ -52,6 +52,7 @@ model User {
   ownedStores      Store[]
   cart             Cart?
   orders           Order[]
+  deliveries       Delivery[] @relation("CourierDeliveries")
 
   @@index([phone])
   @@map("users")
@@ -428,7 +429,8 @@ model Order {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  items OrderItem[]
+  items    OrderItem[]
+  delivery Delivery?
 
   @@index([userId])
   @@index([storeId, status])
@@ -448,4 +450,33 @@ model OrderItem {
 
   @@index([orderId])
   @@map("order_items")
+}
+
+// ===================== FAZ 4 — KURYE / TESLİMAT =====================
+enum DeliveryStatus {
+  PENDING // havuzda, kurye bekliyor
+  ASSIGNED // kuryeye atandı
+  PICKED_UP // kurye aldı, yolda
+  DELIVERED // teslim edildi
+  CANCELLED // iptal
+}
+
+model Delivery {
+  id          String         @id @default(uuid()) @db.Uuid
+  orderId     String         @unique @db.Uuid
+  order       Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierId   String?        @db.Uuid
+  courier     User?          @relation("CourierDeliveries", fields: [courierId], references: [id])
+  status      DeliveryStatus @default(PENDING)
+  fee         BigInt         @default(0) // kurye hakedişi (= order.deliveryFee)
+  note        String?
+  assignedAt  DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([courierId, status])
+  @@index([status])
+  @@map("deliveries")
 }

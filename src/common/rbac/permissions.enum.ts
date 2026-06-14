@@ -25,4 +25,9 @@ export enum Permission {
   ORDER_READ = 'order:read',
   ORDER_WRITE = 'order:write',
   ORDER_MANAGE = 'order:manage',
+
+  // Faz 4 — Kurye / Teslimat
+  DELIVERY_READ = 'delivery:read',
+  DELIVERY_CLAIM = 'delivery:claim',
+  DELIVERY_MANAGE = 'delivery:manage',
 }

@@ -2,7 +2,7 @@ import {
   Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException,
 } from '@nestjs/common';
 import {
-  Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus,
+  Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
@@ -15,12 +15,12 @@ const DELIVERY_FEE = 1500n; // 15,00 TL
 const FREE_DELIVERY_THRESHOLD = 30000n; // 300 TL ve üzeri teslimat ücretsiz
 const VAT_INCLUDED_RATE = 20n; // komisyon KDV dahil; KDV payı = komisyon * 20 / 120
 
-// Satıcı/admin tarafından ileri durum geçişleri
+// Satıcı/admin tarafından ileri durum geçişleri (READY'den sonrasını KURYE devralır)
 const NEXT_STATUS: Record<string, OrderStatus[]> = {
   CONFIRMED: [OrderStatus.PREPARING],
   PREPARING: [OrderStatus.READY],
-  READY: [OrderStatus.ON_THE_WAY],
-  ON_THE_WAY: [OrderStatus.DELIVERED],
+  READY: [], // kurye teslimatı devralır (Faz 4)
+  ON_THE_WAY: [],
   DELIVERED: [],
   CANCELLED: [],
   REFUNDED: [],
@@ -166,6 +166,11 @@ export class OrdersService {
         ],
       });
 
+      // Teslimat kaydı (havuzda, kurye bekliyor)
+      await tx.delivery.create({
+        data: { orderId: created.id, fee: deliveryFee, status: DeliveryStatus.PENDING },
+      });
+
       // Sepeti temizle
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       await tx.cart.update({ where: { id: cart.id }, data: { storeId: null } });
@@ -235,43 +240,6 @@ export class OrdersService {
       throw new ConflictException(`Geçersiz durum geçişi: ${order.status} -> ${next}`);
     }
 
-    // Teslim edildiğinde escrow'u dağıt (satıcı + platform)
-    if (next === OrderStatus.DELIVERED) {
-      const escrow = await this.wallet.getSystemWallet(WalletType.ESCROW);
-      const platform = await this.wallet.getSystemWallet(WalletType.PLATFORM);
-      const merchantWallet = await this.wallet.getOrCreateUserWallet(order.store.ownerId);
-
-      return this.prisma.$transaction(async (tx) => {
-        const updated = await tx.order.update({
-          where: { id },
-          data: { status: OrderStatus.DELIVERED, paymentStatus: PaymentStatus.RELEASED, deliveredAt: new Date() },
-          include: { items: true },
-        });
-
-        const platformShare = order.commission + order.deliveryFee;
-        const lines = [
-          { walletId: escrow.id, direction: EntryDirection.DEBIT, amount: order.total },
-          { walletId: merchantWallet.id, direction: EntryDirection.CREDIT, amount: order.netRevenue },
-          { walletId: platform.id, direction: EntryDirection.CREDIT, amount: platformShare },
-        ].filter((l) => l.amount > 0n);
-
-        await this.ledger.postWithTx(tx, {
-          type: TransactionType.PAYMENT,
-          reference: `${order.orderNo}:settle`,
-          orderNo: order.orderNo,
-          businessUnit: order.businessUnit,
-          commission: order.commission,
-          vat: order.vat,
-          deliveryFee: order.deliveryFee,
-          netRevenue: order.netRevenue,
-          description: `Sipariş ${order.orderNo} dağıtım (satıcı + platform)`,
-          lines,
-        });
-
-        return updated;
-      });
-    }
-
     return this.prisma.order.update({
       where: { id },
       data: { status: next },
@@ -312,6 +280,12 @@ export class OrdersService {
         where: { id },
         data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.REFUNDED, cancelledAt: new Date() },
         include: { items: true },
+      });
+
+      // Teslimat kaydını iptal et (varsa)
+      await tx.delivery.updateMany({
+        where: { orderId: id },
+        data: { status: DeliveryStatus.CANCELLED },
       });
 
       // İade: escrow -total, müşteri +total

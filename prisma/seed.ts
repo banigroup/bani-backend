@@ -37,6 +37,20 @@ async function main() {
     },
   });
 
+  // --- Örnek kurye (Faz 4) ---
+  const courier = await prisma.user.upsert({
+    where: { phone: '+905222222222' },
+    update: { roles: [Role.COURIER] },
+    create: {
+      phone: '+905222222222',
+      phoneVerified: true,
+      name: 'Demo',
+      surname: 'Kurye',
+      roles: [Role.COURIER],
+      status: UserStatus.ACTIVE,
+    },
+  });
+
   // --- Örnek mağaza ---
   const store = await prisma.store.upsert({
     where: { slug: 'demo-market' },
@@ -82,6 +96,7 @@ async function main() {
   console.log('Seed tamam.');
   console.log('  SUPER_ADMIN :', admin.phone);
   console.log('  MERCHANT    :', merchant.phone);
+  console.log('  COURIER     :', courier.phone);
   console.log('  Mağaza      :', store.slug, '(id:', store.id + ')');
 }
 
