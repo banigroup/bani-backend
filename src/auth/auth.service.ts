@@ -14,9 +14,10 @@ export class AuthService {
     private readonly tokens: TokenService,
   ) {}
 
-  async requestOtp(phone: string): Promise<{ sent: true }> {
-    await this.otp.issue(phone);
-    return { sent: true };
+  async requestOtp(phone: string) {
+    const code = await this.otp.issue(phone);
+    const devCode = process.env.NODE_ENV !== 'production' ? code : undefined;
+    return { sent: true, devCode };
   }
 
   async verifyOtp(phone: string, code: string, meta: ReqMeta) {
@@ -28,11 +29,7 @@ export class AuthService {
     });
     const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles: user.roles });
     const refreshToken = await this.tokens.issueRefresh(user.id, meta);
-    return {
-      accessToken,
-      refreshToken,
-      user: { id: user.id, phone: user.phone, roles: user.roles, status: user.status },
-    };
+    return { accessToken, refreshToken, user: { id: user.id, phone: user.phone, roles: user.roles, status: user.status } };
   }
 
   async refresh(raw: string, meta: ReqMeta) {
