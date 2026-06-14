@@ -51,6 +51,7 @@ model User {
   socialIdentities SocialIdentity[]
   ownedStores      Store[]
   cart             Cart?
+  orders           Order[]
 
   @@index([phone])
   @@map("users")
@@ -295,6 +296,7 @@ model Store {
 
   categories Category[]
   products   Product[]
+  orders     Order[]
 
   @@index([ownerId])
   @@index([type, isActive])
@@ -376,4 +378,74 @@ model CartItem {
   @@unique([cartId, productId])
   @@index([cartId])
   @@map("cart_items")
+}
+
+// ===================== FAZ 3 — SİPARİŞ / ÖDEME (ESCROW) =====================
+enum OrderStatus {
+  PENDING // oluşturuldu, ödeme bekliyor (kısa geçiş durumu)
+  CONFIRMED // ödeme alındı, escrow'da tutuluyor; satıcı onayı bekliyor
+  PREPARING // hazırlanıyor
+  READY // hazır
+  ON_THE_WAY // yolda
+  DELIVERED // teslim edildi (escrow dağıtıldı)
+  CANCELLED // iptal edildi (müşteriye iade)
+  REFUNDED // iade edildi
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID // müşteriden alındı, escrow'da
+  RELEASED // satıcı + platforma dağıtıldı
+  REFUNDED // müşteriye geri ödendi
+}
+
+model Order {
+  id            String        @id @default(uuid()) @db.Uuid
+  orderNo       String        @unique
+  userId        String        @db.Uuid
+  user          User          @relation(fields: [userId], references: [id])
+  storeId       String        @db.Uuid
+  store         Store         @relation(fields: [storeId], references: [id])
+  businessUnit  BusinessUnit  @default(MARKET)
+  status        OrderStatus   @default(CONFIRMED)
+  paymentStatus PaymentStatus @default(PAID)
+
+  subtotal    BigInt // mal toplamı (kuruş)
+  deliveryFee BigInt @default(0)
+  discount    BigInt @default(0)
+  total       BigInt // müşterinin ödediği = subtotal + deliveryFee - discount
+  commission  BigInt @default(0) // platform komisyonu
+  vat         BigInt @default(0) // komisyon içindeki KDV (raporlama)
+  netRevenue  BigInt @default(0) // satıcı hakedişi = subtotal - commission
+
+  addressId   String?   @db.Uuid
+  addressText String? // teslimat adresi anlık kopyası
+  note        String?
+  placedAt    DateTime  @default(now())
+  confirmedAt DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  items OrderItem[]
+
+  @@index([userId])
+  @@index([storeId, status])
+  @@index([orderNo])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String @id @default(uuid()) @db.Uuid
+  orderId   String @db.Uuid
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String @db.Uuid
+  name      String // anlık kopya
+  unitPrice BigInt // anlık kopya (kuruş)
+  quantity  Int
+  lineTotal BigInt // unitPrice * quantity
+
+  @@index([orderId])
+  @@map("order_items")
 }
