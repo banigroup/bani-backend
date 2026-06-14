@@ -49,6 +49,8 @@ model User {
   addresses        Address[]
   wallets          Wallet[]
   socialIdentities SocialIdentity[]
+  ownedStores      Store[]
+  cart             Cart?
 
   @@index([phone])
   @@map("users")
@@ -258,4 +260,120 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ===================== FAZ 2 — MARKET / KATALOG / SEPET =====================
+enum StoreType {
+  MARKET
+  RESTAURANT
+  CAFE
+  SHOP
+}
+
+model Store {
+  id             String       @id @default(uuid()) @db.Uuid
+  ownerId        String       @db.Uuid
+  owner          User         @relation(fields: [ownerId], references: [id])
+  name           String
+  slug           String       @unique
+  type           StoreType    @default(MARKET)
+  businessUnit   BusinessUnit @default(MARKET)
+  description    String?
+  logoUrl        String?
+  phone          String?
+  city           String?
+  district       String?
+  line1          String?
+  latitude       Float?
+  longitude      Float?
+  commissionRate Int          @default(1000) // binde (1000 = %10)
+  minOrder       BigInt       @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+
+  categories Category[]
+  products   Product[]
+
+  @@index([ownerId])
+  @@index([type, isActive])
+  @@map("stores")
+}
+
+model Category {
+  id        String     @id @default(uuid()) @db.Uuid
+  storeId   String     @db.Uuid
+  store     Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name      String
+  slug      String
+  parentId  String?    @db.Uuid
+  parent    Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryTree")
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+
+  products Product[]
+
+  @@unique([storeId, slug])
+  @@index([storeId])
+  @@map("categories")
+}
+
+model Product {
+  id          String    @id @default(uuid()) @db.Uuid
+  storeId     String    @db.Uuid
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  categoryId  String?   @db.Uuid
+  category    Category? @relation(fields: [categoryId], references: [id])
+  name        String
+  slug        String
+  description String?
+  sku         String?
+  imageUrl    String?
+  price       BigInt // kuruş (minor units)
+  currency    Currency  @default(TRY)
+  stock       Int       @default(0)
+  unit        String?   @default("adet")
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  cartItems CartItem[]
+
+  @@unique([storeId, slug])
+  @@index([storeId, isActive])
+  @@index([categoryId])
+  @@map("products")
+}
+
+model Cart {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId   String?  @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  cartId    String   @db.Uuid
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int      @default(1)
+  unitPrice BigInt // ürünün sepete eklendiği andaki fiyatı (kuruş)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, productId])
+  @@index([cartId])
+  @@map("cart_items")
 }

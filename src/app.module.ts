@@ -9,6 +9,9 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { AddressModule } from './address/address.module';
 import { FinanceModule } from './finance/finance.module';
+import { MarketModule } from './market/market.module';
+import { CatalogModule } from './catalog/catalog.module';
+import { CartModule } from './cart/cart.module';
 
 @Module({
   imports: [
@@ -20,6 +23,9 @@ import { FinanceModule } from './finance/finance.module';
     UsersModule,
     AddressModule,
     FinanceModule,
+    MarketModule,
+    CatalogModule,
+    CartModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

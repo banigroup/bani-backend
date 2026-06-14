@@ -1,4 +1,5 @@
 export enum Permission {
+  // Faz 1
   USER_READ = 'user:read',
   USER_WRITE = 'user:write',
   USER_ROLE_ASSIGN = 'user:role:assign',
@@ -11,4 +12,12 @@ export enum Permission {
   TRANSACTION_READ = 'transaction:read',
   TRANSACTION_REVERSE = 'transaction:reverse',
   AUDIT_READ = 'audit:read',
+
+  // Faz 2 — Market / Katalog
+  STORE_READ = 'store:read',
+  STORE_WRITE = 'store:write',
+  STORE_MANAGE_ALL = 'store:manage:all',
+  PRODUCT_READ = 'product:read',
+  PRODUCT_WRITE = 'product:write',
+  CATEGORY_WRITE = 'category:write',
 }
