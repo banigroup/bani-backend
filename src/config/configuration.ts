@@ -1,5 +1,5 @@
 export default () => ({
-  api: { port: parseInt(process.env.API_PORT ?? '4000', 10) },
+  api: { port: parseInt(process.env.PORT ?? process.env.API_PORT ?? '4000', 10) },
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET ?? 'dev-access',
     accessTtl: process.env.JWT_ACCESS_TTL ?? '180d',
