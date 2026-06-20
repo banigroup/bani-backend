@@ -13,7 +13,7 @@ import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorat
 export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
-  // Herkese açık okuma
+  // Herkese acik okuma
   @Get('stores/:storeId/categories')
   categories(@Param('storeId') storeId: string) {
     return this.catalog.listCategories(storeId);
@@ -34,7 +34,15 @@ export class CatalogController {
     return this.catalog.getProduct(id);
   }
 
-  // Satıcı işlemleri
+  // Onay bekleyen urunler (magaza sahibi / admin)
+  @Get('stores/:storeId/pending')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
+  pending(@Param('storeId') storeId: string, @CurrentUser() user: AuthUser) {
+    return this.catalog.listPending(storeId, user.id, user.roles);
+  }
+
+  // Satici islemleri
   @Post('stores/:storeId/categories')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.CATEGORY_WRITE)
@@ -54,6 +62,21 @@ export class CatalogController {
   @RequirePermissions(Permission.PRODUCT_WRITE)
   updateProduct(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: UpdateProductDto) {
     return this.catalog.updateProduct(id, user.id, user.roles, dto);
+  }
+
+  // Admin: onayla / reddet
+  @Patch('products/:id/approve')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
+  approve(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.catalog.approveProduct(id, user.id, user.roles);
+  }
+
+  @Patch('products/:id/reject')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
+  reject(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.catalog.rejectProduct(id, user.id, user.roles);
   }
 
   @Delete('products/:id')

@@ -30,4 +30,7 @@ export enum Permission {
   DELIVERY_READ = 'delivery:read',
   DELIVERY_CLAIM = 'delivery:claim',
   DELIVERY_MANAGE = 'delivery:manage',
+
+  // Finans — sadece Süper Admin
+  FINANCE_READ = 'finance:read',
 }

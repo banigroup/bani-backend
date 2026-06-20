@@ -14,7 +14,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { CartModule } from './cart/cart.module';
 import { OrdersModule } from './orders/orders.module';
 import { DeliveryModule } from './delivery/delivery.module';
-
+import { SuperadminModule } from './superadmin/superadmin.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
@@ -30,6 +30,7 @@ import { DeliveryModule } from './delivery/delivery.module';
     CartModule,
     OrdersModule,
     DeliveryModule,
+    SuperadminModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

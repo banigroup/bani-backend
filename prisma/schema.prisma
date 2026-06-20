@@ -7,7 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ===================== RBAC — 11 ROL =====================
+// ===================== RBAC — 12 ROL =====================
 enum Role {
   CUSTOMER
   COURIER
@@ -19,6 +19,7 @@ enum Role {
   DICLEFUL_DRIVER
   LOAD_CUSTOMER
   CARRIER
+  ADMIN
   SUPER_ADMIN
 }
 

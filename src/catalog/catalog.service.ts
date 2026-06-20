@@ -32,7 +32,7 @@ export class CatalogService {
     });
   }
 
-  // ---- Ürünler ----
+  // ---- Urunler ----
   listProducts(storeId: string, categoryId?: string, skip = 0, take = 50) {
     return this.prisma.product.findMany({
       where: { storeId, isActive: true, deletedAt: null, ...(categoryId ? { categoryId } : {}) },
@@ -42,9 +42,18 @@ export class CatalogService {
     });
   }
 
+  // Onay bekleyen (yayinda olmayan) urunler — magaza sahibi veya admin gorur
+  async listPending(storeId: string, userId: string, roles: Role[]) {
+    await this.market.assertOwner(storeId, userId, roles);
+    return this.prisma.product.findMany({
+      where: { storeId, isActive: false, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async getProduct(id: string) {
     const product = await this.prisma.product.findFirst({ where: { id, deletedAt: null } });
-    if (!product) throw new NotFoundException('Ürün bulunamadı');
+    if (!product) throw new NotFoundException('Urun bulunamadi');
     return product;
   }
 
@@ -65,6 +74,7 @@ export class CatalogService {
         price: BigInt(dto.price),
         stock: dto.stock ?? 0,
         unit: dto.unit ?? 'adet',
+        isActive: false, // satici ekledi -> onay bekliyor; admin onaylayinca yayinlanir
       },
     });
   }
@@ -76,6 +86,21 @@ export class CatalogService {
     const data: any = { ...dto };
     if (dto.price !== undefined) data.price = BigInt(dto.price);
     return this.prisma.product.update({ where: { id }, data });
+  }
+
+  // Admin: onayla -> yayinla
+  async approveProduct(id: string, userId: string, roles: Role[]) {
+    const product = await this.getProduct(id);
+    await this.market.assertOwner(product.storeId, userId, roles);
+    return this.prisma.product.update({ where: { id }, data: { isActive: true } });
+  }
+
+  // Admin: reddet -> sil (soft delete)
+  async rejectProduct(id: string, userId: string, roles: Role[]) {
+    const product = await this.getProduct(id);
+    await this.market.assertOwner(product.storeId, userId, roles);
+    await this.prisma.product.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
+    return { rejected: true };
   }
 
   async removeProduct(id: string, userId: string, roles: Role[]) {
