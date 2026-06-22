@@ -12,7 +12,7 @@ function meta(req: Request) {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(private readonly auth: AuthService) { }
 
   @Post('otp/request')
   @HttpCode(200)
@@ -28,11 +28,18 @@ export class AuthController {
     return this.auth.verifyOtp(dto.phone, dto.code, meta(req));
   }
 
+  @Post('guest-session')
+  @HttpCode(200)
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  guestSession(@Req() req: Request) {
+    return this.auth.guestSession(meta(req));
+  }
+
   @Post('refresh')
   @HttpCode(200)
   async refresh(@Body() dto: RefreshDto, @Req() req: Request) {
     const result = await this.auth.refresh(dto.refreshToken, meta(req));
-    if (!result) throw new UnauthorizedException('Geçersiz refresh token');
+    if (!result) throw new UnauthorizedException('Gecersiz refresh token');
     return result;
   }
 
