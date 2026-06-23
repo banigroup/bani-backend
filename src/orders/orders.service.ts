@@ -2,13 +2,14 @@ import {
   Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException,
 } from '@nestjs/common';
 import {
-  Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus,
+  Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CheckoutDto } from './dto/checkout.dto';
+import { calculateCargoFee } from '../delivery/cargo-pricing';
 
 // --- Placeholder ayarları (sonradan mağaza/iş kuralına göre değişebilir) ---
 const DELIVERY_FEE = 1500n; // 15,00 TL
@@ -83,8 +84,27 @@ export class OrdersService {
       throw new BadRequestException(`Minimum sipariş tutarı: ${store.minOrder} kuruş`);
     }
 
+    // ---- Teslimat / kargo ücreti ----
+    let deliveryFee: bigint;
+    if (store.businessUnit === BusinessUnit.CARSI) {
+      // Çarşı = DicleFul kargo: sepetin toplam desi/kg'ı üzerinden tarife
+      let totalDesi = 0;
+      let totalKg = 0;
+      for (const it of cart.items) {
+        totalDesi += (it.product.desi ?? 0) * it.quantity;
+        totalKg += (it.product.weightKg ?? 0) * it.quantity;
+      }
+      const cargo = calculateCargoFee(totalDesi, totalKg);
+      if (!cargo.ok) {
+        throw new BadRequestException(`Kargo hesaplanamadı: ${cargo.message}`);
+      }
+      deliveryFee = cargo.feeKurus;
+    } else {
+      // Diğer dikeyler: mevcut sabit teslimat mantığı
+      deliveryFee = subtotal >= FREE_DELIVERY_THRESHOLD ? 0n : DELIVERY_FEE;
+    }
+
     // Para hesabı
-    const deliveryFee = subtotal >= FREE_DELIVERY_THRESHOLD ? 0n : DELIVERY_FEE;
     const discount = 0n;
     const total = subtotal + deliveryFee - discount;
     const commission = (subtotal * BigInt(store.commissionRate)) / 10000n; // binde -> /10000
