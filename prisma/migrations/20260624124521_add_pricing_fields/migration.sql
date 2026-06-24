@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "products" ADD COLUMN     "kdvOrani" INTEGER NOT NULL DEFAULT 20,
+ADD COLUMN     "netFiyat" BIGINT NOT NULL DEFAULT 0,
+ADD COLUMN     "satisModeli" TEXT NOT NULL DEFAULT 'A';

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MarketService } from '../market/market.service';
@@ -6,6 +6,7 @@ import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { vitrinFiyatHesapla } from '../delivery/pricing';
 
 @Injectable()
 export class CatalogService {
@@ -62,6 +63,18 @@ export class CatalogService {
     const baseSlug = slugify(dto.name) || 'urun';
     const exists = await this.prisma.product.findFirst({ where: { storeId, slug: baseSlug } });
     const slug = exists ? `${baseSlug}-${randomSuffix()}` : baseSlug;
+
+    const desi = dto.desi ?? 0;
+    const weightKg = dto.weightKg ?? 0;
+    const kdvOrani = dto.kdvOrani ?? 20;
+    const satisModeli = dto.satisModeli ?? 'A';
+    // net fiyat: dto.netFiyat varsa onu, yoksa dto.price'i net say
+    const netKurus = BigInt(dto.netFiyat ?? dto.price ?? 0);
+
+    // Vitrin fiyatini otomatik hesapla (kargo + komisyon + KDV gomulu)
+    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli);
+    if (!hesap.ok) throw new BadRequestException(hesap.sebep);
+
     return this.prisma.product.create({
       data: {
         storeId,
@@ -71,11 +84,14 @@ export class CatalogService {
         description: dto.description,
         sku: dto.sku,
         imageUrl: dto.imageUrl,
-        price: BigInt(dto.price),
+        price: hesap.vitrinKurus, // musterinin gordugu fiyat
+        netFiyat: netKurus,
+        kdvOrani,
+        satisModeli,
         stock: dto.stock ?? 0,
         unit: dto.unit ?? 'adet',
-        desi: dto.desi ?? 0,
-        weightKg: dto.weightKg ?? 0,
+        desi,
+        weightKg,
         isActive: false, // satici ekledi -> onay bekliyor; admin onaylayinca yayinlanir
       },
     });
@@ -84,9 +100,26 @@ export class CatalogService {
   async updateProduct(id: string, userId: string, roles: Role[], dto: UpdateProductDto) {
     const product = await this.getProduct(id);
     await this.market.assertOwner(product.storeId, userId, roles);
+
+    // Guncel degerler (dto'da yoksa mevcut urundekini kullan)
+    const desi = dto.desi ?? product.desi;
+    const weightKg = dto.weightKg ?? product.weightKg;
+    const kdvOrani = dto.kdvOrani ?? product.kdvOrani;
+    const satisModeli = dto.satisModeli ?? product.satisModeli;
+    const netKurus = dto.netFiyat !== undefined ? BigInt(dto.netFiyat) : product.netFiyat;
+
+    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli);
+    if (!hesap.ok) throw new BadRequestException(hesap.sebep);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = { ...dto };
-    if (dto.price !== undefined) data.price = BigInt(dto.price);
+    data.price = hesap.vitrinKurus;
+    data.netFiyat = netKurus;
+    data.desi = desi;
+    data.weightKg = weightKg;
+    data.kdvOrani = kdvOrani;
+    data.satisModeli = satisModeli;
+
     return this.prisma.product.update({ where: { id }, data });
   }
 

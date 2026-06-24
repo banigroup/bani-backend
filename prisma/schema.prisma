@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 // ===================== RBAC — 12 ROL =====================
@@ -32,27 +32,27 @@ enum UserStatus {
 }
 
 model User {
-  id            String @id @default (uuid()) @db.Uuid
-  phone         String @unique
-  phoneVerified Boolean @default (false)
-  email         String ? @unique
-  name          String ?
-    surname       String ?
-      passwordHash  String ?
-        roles         Role[]     @default ([CUSTOMER])
-  status        UserStatus @default (PENDING)
-  createdAt     DateTime @default (now())
-  updatedAt     DateTime @updatedAt
-  deletedAt     DateTime ?
+  id            String     @id @default(uuid()) @db.Uuid
+  phone         String     @unique
+  phoneVerified Boolean    @default(false)
+  email         String?    @unique
+  name          String?
+  surname       String?
+  passwordHash  String?
+  roles         Role[]     @default([CUSTOMER])
+  status        UserStatus @default(PENDING)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
 
-    otpRequests      OtpRequest[]
+  otpRequests      OtpRequest[]
   refreshTokens    RefreshToken[]
   addresses        Address[]
   wallets          Wallet[]
   socialIdentities SocialIdentity[]
   ownedStores      Store[]
-  cart             Cart ?
-    orders           Order[]
+  cart             Cart?
+  orders           Order[]
   deliveries       Delivery[] @relation("CourierDeliveries")
 
   @@index([phone])
@@ -60,12 +60,12 @@ model User {
 }
 
 model SocialIdentity {
-  id         String @id @default (uuid()) @db.Uuid
-  userId     String @db.Uuid
-  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   provider   String
   providerId String
-  createdAt  DateTime @default (now())
+  createdAt  DateTime @default(now())
 
   @@unique([provider, providerId])
   @@index([userId])
@@ -80,31 +80,31 @@ enum OtpPurpose {
 }
 
 model OtpRequest {
-  id         String @id @default (uuid()) @db.Uuid
+  id         String     @id @default(uuid()) @db.Uuid
   phone      String
   codeHash   String
-  purpose    OtpPurpose @default (LOGIN)
-  attempts   Int @default (0)
-  consumedAt DateTime ?
-    expiresAt  DateTime
-  createdAt  DateTime @default (now())
-  userId     String ? @db.Uuid
-  user       User ? @relation(fields: [userId], references: [id])
+  purpose    OtpPurpose @default(LOGIN)
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime   @default(now())
+  userId     String?    @db.Uuid
+  user       User?      @relation(fields: [userId], references: [id])
 
   @@index([phone, createdAt])
   @@map("otp_requests")
 }
 
 model RefreshToken {
-  id        String @id @default (uuid()) @db.Uuid
-  userId    String @db.Uuid
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String @unique
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
   expiresAt DateTime
-  revokedAt DateTime ?
-    userAgent String ?
-      ip        String ?
-        createdAt DateTime @default (now())
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@map("refresh_tokens")
@@ -119,29 +119,29 @@ enum AddressType {
 }
 
 model Address {
-  id           String @id @default (uuid()) @db.Uuid
-  userId       String @db.Uuid
-  user         User @relation(fields: [userId], references: [id], onDelete: Cascade)
-    type AddressType @default (HOME)
-  title        String ?
-    fullName     String ?
-      phone        String ?
-        country      String @default ("TR")
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @db.Uuid
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         AddressType @default(HOME)
+  title        String?
+  fullName     String?
+  phone        String?
+  country      String      @default("TR")
   city         String
-  district     String ?
-    neighborhood String ?
-      line1        String
-  line2        String ?
-    postalCode   String ?
-      latitude     Float ?
-        longitude    Float ?
-          isDefault    Boolean @default (false)
-  createdAt    DateTime @default (now())
-  updatedAt    DateTime @updatedAt
-  deletedAt    DateTime ?
+  district     String?
+  neighborhood String?
+  line1        String
+  line2        String?
+  postalCode   String?
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
 
-    @@index([userId])
-    @@map("addresses")
+  @@index([userId])
+  @@map("addresses")
 }
 
 // ===================== FİNANS (double-entry) =====================
@@ -159,14 +159,14 @@ enum WalletType {
 }
 
 model Wallet {
-  id        String @id @default (uuid()) @db.Uuid
-  userId    String ? @db.Uuid
-  user      User ? @relation(fields: [userId], references: [id])
-  type WalletType @default (USER)
-  currency  Currency @default (TRY)
-  balance   BigInt @default (0)
-  createdAt DateTime @default (now())
-  updatedAt DateTime @updatedAt
+  id        String     @id @default(uuid()) @db.Uuid
+  userId    String?    @db.Uuid
+  user      User?      @relation(fields: [userId], references: [id])
+  type      WalletType @default(USER)
+  currency  Currency   @default(TRY)
+  balance   BigInt     @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   entries LedgerEntry[]
 
@@ -202,22 +202,22 @@ enum BusinessUnit {
 }
 
 model Transaction {
-  id           String @id @default (uuid()) @db.Uuid
-    type TransactionType
-  status       TransactionStatus @default (PENDING)
-  currency     Currency @default (TRY)
+  id           String            @id @default(uuid()) @db.Uuid
+  type         TransactionType
+  status       TransactionStatus @default(PENDING)
+  currency     Currency          @default(TRY)
   amount       BigInt
-  orderNo      String ?
-    businessUnit BusinessUnit ?
-      commission   BigInt @default (0)
-  vat          BigInt @default (0)
-  deliveryFee  BigInt @default (0)
-  netRevenue   BigInt @default (0)
-  reference    String ? @unique
-  description  String ?
-    metadata     Json ?
-      createdAt    DateTime @default (now())
-  updatedAt    DateTime @updatedAt
+  orderNo      String?
+  businessUnit BusinessUnit?
+  commission   BigInt            @default(0)
+  vat          BigInt            @default(0)
+  deliveryFee  BigInt            @default(0)
+  netRevenue   BigInt            @default(0)
+  reference    String?           @unique
+  description  String?
+  metadata     Json?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   entries LedgerEntry[]
 
@@ -233,15 +233,15 @@ enum EntryDirection {
 }
 
 model LedgerEntry {
-  id            String @id @default (uuid()) @db.Uuid
-  transactionId String @db.Uuid
-  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  walletId      String @db.Uuid
-  wallet        Wallet @relation(fields: [walletId], references: [id])
+  id            String         @id @default(uuid()) @db.Uuid
+  transactionId String         @db.Uuid
+  transaction   Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  walletId      String         @db.Uuid
+  wallet        Wallet         @relation(fields: [walletId], references: [id])
   direction     EntryDirection
   amount        BigInt
   balanceAfter  BigInt
-  createdAt     DateTime @default (now())
+  createdAt     DateTime       @default(now())
 
   @@index([walletId])
   @@index([transactionId])
@@ -250,14 +250,14 @@ model LedgerEntry {
 
 // ===================== DENETİM =====================
 model AuditLog {
-  id        String @id @default (uuid()) @db.Uuid
-  actorId   String ? @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @db.Uuid
   action    String
-  entity    String ?
-    entityId  String ?
-      ip        String ?
-        metadata  Json ?
-          createdAt DateTime @default (now())
+  entity    String?
+  entityId  String?
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now())
 
   @@index([actorId])
   @@index([entity, entityId])
@@ -274,29 +274,29 @@ enum StoreType {
 }
 
 model Store {
-  id             String @id @default (uuid()) @db.Uuid
-  ownerId        String @db.Uuid
-  owner          User @relation(fields: [ownerId], references: [id])
+  id             String       @id @default(uuid()) @db.Uuid
+  ownerId        String       @db.Uuid
+  owner          User         @relation(fields: [ownerId], references: [id])
   name           String
-  slug           String @unique
-    type StoreType    @default (MARKET)
-  businessUnit   BusinessUnit @default (MARKET)
-  description    String ?
-    logoUrl        String ?
-      phone          String ?
-        city           String ?
-          district       String ?
-            line1          String ?
-              latitude       Float ?
-                longitude      Float ?
-                  commissionRate Int @default (1000) // binde (1000 = %10)
-  minOrder       BigInt @default (0)
-  isActive       Boolean @default (true)
-  createdAt      DateTime @default (now())
-  updatedAt      DateTime @updatedAt
-  deletedAt      DateTime ?
+  slug           String       @unique
+  type           StoreType    @default(MARKET)
+  businessUnit   BusinessUnit @default(MARKET)
+  description    String?
+  logoUrl        String?
+  phone          String?
+  city           String?
+  district       String?
+  line1          String?
+  latitude       Float?
+  longitude      Float?
+  commissionRate Int          @default(1000) // binde (1000 = %10)
+  minOrder       BigInt       @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
 
-    categories Category[]
+  categories Category[]
   products   Product[]
   orders     Order[]
 
@@ -306,17 +306,17 @@ model Store {
 }
 
 model Category {
-  id        String @id @default (uuid()) @db.Uuid
-  storeId   String @db.Uuid
-  store     Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  id        String     @id @default(uuid()) @db.Uuid
+  storeId   String     @db.Uuid
+  store     Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
   name      String
   slug      String
-  parentId  String ? @db.Uuid
-  parent    Category ? @relation("CategoryTree", fields: [parentId], references: [id])
+  parentId  String?    @db.Uuid
+  parent    Category?  @relation("CategoryTree", fields: [parentId], references: [id])
   children  Category[] @relation("CategoryTree")
-  sortOrder Int @default (0)
-  isActive  Boolean @default (true)
-  createdAt DateTime @default (now())
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
 
   products Product[]
 
@@ -326,28 +326,31 @@ model Category {
 }
 
 model Product {
-  id          String @id @default (uuid()) @db.Uuid
-  storeId     String @db.Uuid
-  store       Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  categoryId  String ? @db.Uuid
-  category    Category ? @relation(fields: [categoryId], references: [id])
+  id          String    @id @default(uuid()) @db.Uuid
+  storeId     String    @db.Uuid
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  categoryId  String?   @db.Uuid
+  category    Category? @relation(fields: [categoryId], references: [id])
   name        String
   slug        String
-  description String ?
-    sku         String ?
-      imageUrl    String ?
-        price       BigInt // kuruş (minor units)
-  currency    Currency @default (TRY)
-  stock       Int @default (0)
-  unit        String ? @default ("adet")
-  desi        Float @default (0) // kargo: hacimsel ağırlık (desi)
-  weightKg    Float @default (0) // kargo: fiili ağırlık (kg)
-  isActive    Boolean @default (true)
-  createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime ?
+  description String?
+  sku         String?
+  imageUrl    String?
+  price       BigInt // kuruş (minor units)
+  currency    Currency  @default(TRY)
+  stock       Int       @default(0)
+  unit        String?   @default("adet")
+  desi        Float     @default(0) // kargo: hacimsel ağırlık (desi)
+  weightKg    Float     @default(0) // kargo: fiili ağırlık (kg)
+  netFiyat    BigInt    @default(0) // satıcının girdiği net fiyat (kuruş)
+  kdvOrani    Int       @default(20) // ürün KDV oranı: 1 / 10 / 20
+  satisModeli String    @default("A") // A=kendi ürün, B=dropshipping
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 
-    cartItems CartItem[]
+  cartItems CartItem[]
 
   @@unique([storeId, slug])
   @@index([storeId, isActive])
@@ -356,11 +359,11 @@ model Product {
 }
 
 model Cart {
-  id        String @id @default (uuid()) @db.Uuid
-  userId    String @unique @db.Uuid
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeId   String ? @db.Uuid
-  createdAt DateTime @default (now())
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId   String?  @db.Uuid
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   items CartItem[]
@@ -369,14 +372,14 @@ model Cart {
 }
 
 model CartItem {
-  id        String @id @default (uuid()) @db.Uuid
-  cartId    String @db.Uuid
-  cart      Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
-  productId String @db.Uuid
-  product   Product @relation(fields: [productId], references: [id])
-  quantity  Int @default (1)
+  id        String   @id @default(uuid()) @db.Uuid
+  cartId    String   @db.Uuid
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int      @default(1)
   unitPrice BigInt // ürünün sepete eklendiği andaki fiyatı (kuruş)
-  createdAt DateTime @default (now())
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([cartId, productId])
@@ -404,47 +407,47 @@ enum PaymentStatus {
 }
 
 model Order {
-  id            String @id @default (uuid()) @db.Uuid
-  orderNo       String @unique
-  userId        String @db.Uuid
-  user          User @relation(fields: [userId], references: [id])
-  storeId       String @db.Uuid
-  store         Store @relation(fields: [storeId], references: [id])
-  businessUnit  BusinessUnit @default (MARKET)
-  status        OrderStatus @default (CONFIRMED)
-  paymentStatus PaymentStatus @default (PAID)
+  id            String        @id @default(uuid()) @db.Uuid
+  orderNo       String        @unique
+  userId        String        @db.Uuid
+  user          User          @relation(fields: [userId], references: [id])
+  storeId       String        @db.Uuid
+  store         Store         @relation(fields: [storeId], references: [id])
+  businessUnit  BusinessUnit  @default(MARKET)
+  status        OrderStatus   @default(CONFIRMED)
+  paymentStatus PaymentStatus @default(PAID)
 
   subtotal    BigInt // mal toplamı (kuruş)
-  deliveryFee BigInt @default (0)
-  discount    BigInt @default (0)
+  deliveryFee BigInt @default(0)
+  discount    BigInt @default(0)
   total       BigInt // müşterinin ödediği = subtotal + deliveryFee - discount
-  commission  BigInt @default (0) // platform komisyonu
-  vat         BigInt @default (0) // komisyon içindeki KDV (raporlama)
-  netRevenue  BigInt @default (0) // satıcı hakedişi = subtotal - commission
+  commission  BigInt @default(0) // platform komisyonu
+  vat         BigInt @default(0) // komisyon içindeki KDV (raporlama)
+  netRevenue  BigInt @default(0) // satıcı hakedişi = subtotal - commission
 
-  addressId   String ? @db.Uuid
-  addressText String ? // teslimat adresi anlık kopyası
-    note        String ?
-      placedAt    DateTime @default (now())
-  confirmedAt DateTime ?
-    deliveredAt DateTime ?
-      cancelledAt DateTime ?
-        createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
+  addressId   String?   @db.Uuid
+  addressText String? // teslimat adresi anlık kopyası
+  note        String?
+  placedAt    DateTime  @default(now())
+  confirmedAt DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   items    OrderItem[]
-  delivery Delivery ?
+  delivery Delivery?
 
-    @@index([userId])
-    @@index([storeId, status])
-    @@index([orderNo])
-    @@map("orders")
+  @@index([userId])
+  @@index([storeId, status])
+  @@index([orderNo])
+  @@map("orders")
 }
 
 model OrderItem {
-  id        String @id @default (uuid()) @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
   orderId   String @db.Uuid
-  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productId String @db.Uuid
   name      String // anlık kopya
   unitPrice BigInt // anlık kopya (kuruş)
@@ -465,19 +468,19 @@ enum DeliveryStatus {
 }
 
 model Delivery {
-  id          String @id @default (uuid()) @db.Uuid
-  orderId     String @unique @db.Uuid
-  order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  courierId   String ? @db.Uuid
-  courier     User ? @relation("CourierDeliveries", fields: [courierId], references: [id])
-  status      DeliveryStatus @default (PENDING)
-  fee         BigInt @default (0) // kurye hakedişi (= order.deliveryFee)
-  note        String ?
-    assignedAt  DateTime ?
-      pickedUpAt  DateTime ?
-        deliveredAt DateTime ?
-          createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
+  id          String         @id @default(uuid()) @db.Uuid
+  orderId     String         @unique @db.Uuid
+  order       Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierId   String?        @db.Uuid
+  courier     User?          @relation("CourierDeliveries", fields: [courierId], references: [id])
+  status      DeliveryStatus @default(PENDING)
+  fee         BigInt         @default(0) // kurye hakedişi (= order.deliveryFee)
+  note        String?
+  assignedAt  DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   @@index([courierId, status])
   @@index([status])
