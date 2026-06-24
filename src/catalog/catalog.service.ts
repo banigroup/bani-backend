@@ -12,7 +12,7 @@ export class CatalogService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly market: MarketService,
-  ) {}
+  ) { }
 
   // ---- Kategoriler ----
   listCategories(storeId: string) {
@@ -42,7 +42,7 @@ export class CatalogService {
     });
   }
 
-  // Onay bekleyen (yayinda olmayan) urunler — magaza sahibi veya admin gorur
+  // Onay bekleyen (yayinda olmayan) urunler - magaza sahibi veya admin gorur
   async listPending(storeId: string, userId: string, roles: Role[]) {
     await this.market.assertOwner(storeId, userId, roles);
     return this.prisma.product.findMany({
@@ -74,6 +74,8 @@ export class CatalogService {
         price: BigInt(dto.price),
         stock: dto.stock ?? 0,
         unit: dto.unit ?? 'adet',
+        desi: dto.desi ?? 0,
+        weightKg: dto.weightKg ?? 0,
         isActive: false, // satici ekledi -> onay bekliyor; admin onaylayinca yayinlanir
       },
     });
