@@ -209,7 +209,7 @@ export class OrdersService {
       orderBy: { createdAt: 'desc' },
       skip,
       take: Math.min(take, 100),
-      include: { items: true },
+      include: { items: true, store: { select: { name: true } } },
     });
   }
 
