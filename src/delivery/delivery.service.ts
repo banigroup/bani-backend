@@ -2,7 +2,7 @@ import {
   Injectable, NotFoundException, ForbiddenException, ConflictException,
 } from '@nestjs/common';
 import {
-  Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus,
+  Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
@@ -32,7 +32,7 @@ export class DeliveryService {
   async available(user: AuthUser) {
     this.assertCourier(user);
     return this.prisma.delivery.findMany({
-      where: { status: DeliveryStatus.PENDING, order: { status: OrderStatus.READY } },
+      where: { status: DeliveryStatus.PENDING, order: { status: OrderStatus.READY, businessUnit: { not: BusinessUnit.CARSI } } },
       orderBy: { createdAt: 'asc' },
       take: 100,
       include: {
@@ -47,7 +47,18 @@ export class DeliveryService {
     });
   }
 
-  // Kuryenin kendi teslimatları
+  // DicleFul kargo havuzu: SADECE Carsi (kargo) siparisleri
+  async cargoQueue(user: AuthUser) {
+    this.assertCourier(user);
+    return this.prisma.delivery.findMany({
+      where: { status: DeliveryStatus.PENDING, order: { status: OrderStatus.READY, businessUnit: BusinessUnit.CARSI } },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+      include: { order: { select: { id: true, orderNo: true, total: true, deliveryFee: true, addressText: true, contactPhone: true, storeId: true, store: { select: { name: true, city: true, district: true, line1: true } } } } },
+    });
+  }
+
+  // Kuryenin kendi teslimatlari
   async mine(user: AuthUser, status?: string) {
     this.assertCourier(user);
     const where: any = { courierId: user.id };

@@ -13,6 +13,10 @@ export class DeliveryController {
     return this.delivery.available(user);
   }
 
+  @Get('cargo')
+  cargo(@CurrentUser() user: AuthUser) {
+    return this.delivery.cargoQueue(user);
+  }
   @Get('mine')
   mine(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
     return this.delivery.mine(user, status);
