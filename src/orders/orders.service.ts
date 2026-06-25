@@ -155,6 +155,7 @@ export class OrdersService {
           addressId: dto.addressId,
           addressText,
           note: dto.note,
+          contactPhone: dto.contactPhone,
           confirmedAt: new Date(),
           items: {
             create: cart.items.map((it) => ({

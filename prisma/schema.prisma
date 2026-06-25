@@ -426,7 +426,8 @@ model Order {
   netRevenue  BigInt @default(0) // satıcı hakedişi = subtotal - commission
 
   addressId   String?   @db.Uuid
-  addressText String? // teslimat adresi anlık kopyası
+  addressText String?
+  contactPhone String? // teslimat adresi anlık kopyası
   note        String?
   placedAt    DateTime  @default(now())
   confirmedAt DateTime?
