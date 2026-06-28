@@ -24,9 +24,9 @@ try {
 
 // Derlenmis fiyat motoru (nest build sonrasi dist'te olur). Iki olasi yol denenir.
 let pricing;
-try { pricing = require('./dist/delivery/pricing'); }
+try { pricing = require('./dist/src/delivery/pricing'); }
 catch (e1) {
-  try { pricing = require('./dist/src/delivery/pricing'); }
+  try { pricing = require('./dist/delivery/pricing'); }
   catch (e2) { console.error('⚠️ Fiyat motoru (dist) bulunamadi — once nest build gerekli. Carsi seed atlandi.'); process.exit(0); }
 }
 const { vitrinFiyatHesapla } = pricing;
