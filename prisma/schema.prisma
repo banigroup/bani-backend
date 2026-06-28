@@ -472,6 +472,21 @@ enum DeliveryStatus {
   CANCELLED // iptal
 }
 
+enum DeliveryYontem {
+  KENDI // DicleFul kendi kuryesi
+  ARACI // dış kargo firması (MNG, Aras, ...)
+}
+
+enum KargoFirmasi {
+  DICLEFUL
+  MNG
+  ARAS
+  YURTICI
+  PTT
+  SURAT
+  UPS
+}
+
 model Delivery {
   id          String @id @default (uuid()) @db.Uuid
   orderId     String @unique @db.Uuid
@@ -481,10 +496,13 @@ model Delivery {
   status      DeliveryStatus @default (PENDING)
   fee         BigInt @default (0) // kurye hakedişi (= order.deliveryFee)
   note        String ?
-    assignedAt  DateTime ?
-      pickedUpAt  DateTime ?
-        deliveredAt DateTime ?
-          createdAt   DateTime @default (now())
+    yontem       DeliveryYontem @default (KENDI) // kendi kuryesi mi, aracı kurum mu
+  kargoFirmasi KargoFirmasi ?                  // ARACI ise hangi firma
+    takipNo      String ? @unique         // aracı firmanın takip no'su (public takip anahtarı)
+  assignedAt  DateTime ?
+    pickedUpAt  DateTime ?
+      deliveredAt DateTime ?
+        createdAt   DateTime @default (now())
   updatedAt   DateTime @updatedAt
 
   @@index([courierId, status])

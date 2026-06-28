@@ -1,8 +1,8 @@
 import {
-  Injectable, NotFoundException, ForbiddenException, ConflictException,
+  Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException,
 } from '@nestjs/common';
 import {
-  Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit,
+  Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit, KargoFirmasi, DeliveryYontem,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
@@ -190,5 +190,88 @@ export class DeliveryService {
 
       return updated;
     });
+  }
+
+  // ============================ ARACI KURUMA DEVRET (admin) ============================
+  // Sadece ADMIN/SUPER_ADMIN. Teslimatı dış kargo firmasına verir: firma + takip no.
+  // İç işleyiş — admin panelinde kullanılır, DicleFul müşteri sayfasında DEĞİL.
+  async aracikurumaVer(
+    user: AuthUser,
+    id: string,
+    kargoFirmasi: KargoFirmasi,
+    takipNo: string,
+  ) {
+    if (!(user.roles ?? []).includes(Role.SUPER_ADMIN) && !(user.roles ?? []).includes(Role.ADMIN)) {
+      throw new ForbiddenException('Bu işlem için admin yetkisi gerekli');
+    }
+    const trimmed = (takipNo ?? '').trim();
+    if (!trimmed) throw new BadRequestException('Takip no zorunlu');
+
+    const d = await this.load(id);
+    if (d.status === DeliveryStatus.DELIVERED || d.status === DeliveryStatus.CANCELLED) {
+      throw new ConflictException(`Bu durumda aracı kuruma verilemez: ${d.status}`);
+    }
+
+    // takipNo benzersiz olmalı (başka teslimatta kullanılmamış)
+    const cakisma = await this.prisma.delivery.findFirst({
+      where: { takipNo: trimmed, NOT: { id } },
+    });
+    if (cakisma) throw new ConflictException('Bu takip no zaten kullanımda');
+
+    // ARACI'ya verilince gönderi yola çıkmış sayılır (PICKED_UP) + sipariş ON_THE_WAY
+    return this.prisma.$transaction(async (tx) => {
+      await tx.order.update({ where: { id: d.orderId }, data: { status: OrderStatus.ON_THE_WAY } });
+      return tx.delivery.update({
+        where: { id },
+        data: {
+          yontem: DeliveryYontem.ARACI,
+          kargoFirmasi,
+          takipNo: trimmed,
+          status: DeliveryStatus.PICKED_UP,
+          pickedUpAt: new Date(),
+        },
+        include: { order: { select: { id: true, orderNo: true, status: true } } },
+      });
+    });
+  }
+
+  // ============================ PUBLIC TAKİP (auth YOK) ============================
+  // DicleFul kargo takip sayfası bunu çağırır. Müşteri giriş YAPMADAN takip no ile sorgular.
+  // GİZLİLİK: sipariş no / ürün / müşteri / tutar DÖNMEZ — yalnızca lojistik durum.
+  async takip(takipNo: string) {
+    const t = (takipNo ?? '').trim();
+    if (!t) throw new BadRequestException('Takip no giriniz');
+
+    const d = await this.prisma.delivery.findUnique({
+      where: { takipNo: t },
+      select: {
+        status: true,
+        kargoFirmasi: true,
+        yontem: true,
+        assignedAt: true,
+        pickedUpAt: true,
+        deliveredAt: true,
+        updatedAt: true,
+        // order / courier / fee / id: BİLEREK seçilmedi (gizlilik)
+      },
+    });
+    if (!d) throw new NotFoundException('Bu takip numarasına ait gönderi bulunamadı');
+
+    // Müşteriye dönük sade durum metni
+    const durumMetni: Record<string, string> = {
+      PENDING: 'Hazırlanıyor',
+      ASSIGNED: 'Kargoya verildi',
+      PICKED_UP: 'Yolda',
+      DELIVERED: 'Teslim edildi',
+      CANCELLED: 'İptal edildi',
+    };
+
+    return {
+      takipNo: t,
+      durum: durumMetni[d.status] ?? d.status,
+      kargoFirmasi: d.kargoFirmasi, // null ise DicleFul kendi taşıyor
+      sonGuncelleme: d.deliveredAt ?? d.pickedUpAt ?? d.assignedAt ?? d.updatedAt,
+      teslimEdildi: d.status === DeliveryStatus.DELIVERED,
+    };
   }
 }
