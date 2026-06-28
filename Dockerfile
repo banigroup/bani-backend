@@ -9,4 +9,4 @@ COPY . .
 RUN pnpm run build
 ENV NODE_ENV=production
 EXPOSE 4000
-CMD pnpm exec prisma migrate deploy && node dist/src/main.js
+CMD pnpm exec prisma migrate deploy && (node create-carsi.js || true) && node dist/src/main.js
