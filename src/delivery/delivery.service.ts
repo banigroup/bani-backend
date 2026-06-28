@@ -15,7 +15,7 @@ export class DeliveryService {
     private readonly prisma: PrismaService,
     private readonly ledger: LedgerService,
     private readonly wallet: WalletService,
-  ) {}
+  ) { }
 
   private isCourier(user: AuthUser): boolean {
     const roles = user.roles ?? [];
@@ -28,7 +28,7 @@ export class DeliveryService {
     }
   }
 
-  // Havuz: hazır (READY) ve henüz kuryesi olmayan teslimatlar
+  // Havuz: hazır (READY) ve henüz kuryesi olmayan teslimatlar (Çarşı DIŞI)
   async available(user: AuthUser) {
     this.assertCourier(user);
     return this.prisma.delivery.findMany({
@@ -128,6 +128,7 @@ export class DeliveryService {
       throw new ConflictException(`Bu durumda teslim edilemez: ${d.status}`);
     }
     const order = d.order;
+    const isCarsi = order.businessUnit === BusinessUnit.CARSI;
 
     // Cüzdanları transaction dışında çöz
     const escrow = await this.wallet.getSystemWallet(WalletType.ESCROW);
@@ -146,13 +147,31 @@ export class DeliveryService {
         include: { order: { select: { id: true, orderNo: true, status: true } } },
       });
 
-      // Dağıtım: escrow -> satıcı (net) + platform (komisyon) + kurye (teslimat ücreti)
-      const lines = [
-        { walletId: escrow.id, direction: EntryDirection.DEBIT, amount: order.total },
-        { walletId: merchantWallet.id, direction: EntryDirection.CREDIT, amount: order.netRevenue },
-        { walletId: platform.id, direction: EntryDirection.CREDIT, amount: order.commission },
-        { walletId: courierWallet.id, direction: EntryDirection.CREDIT, amount: order.deliveryFee },
-      ].filter((l) => l.amount > 0n);
+      // ---- Dağıtım ----
+      let lines: { walletId: string; direction: EntryDirection; amount: bigint }[];
+
+      if (isCarsi) {
+        // Çarşı: kargo ürüne gömülü -> DicleFul'e (şimdilik PLATFORM cüzdanı) gider.
+        //   satıcı  = netRevenue (net + mal KDV) — kargoyu ALMAZ
+        //   platform = komisyon + hizmet KDV + DicleFul kargo (deliveryFee)
+        //   kurye    = order'dan pay almaz (DicleFul kuryesi ayrı ödenir)
+        // NOT: komisyon/vat/deliveryFee Order'da ayrı tutulduğu için muhasebe
+        //      DicleFul kargosunu platform komisyonundan ayrıştırabilir.
+        lines = [
+          { walletId: escrow.id, direction: EntryDirection.DEBIT, amount: order.total },
+          { walletId: merchantWallet.id, direction: EntryDirection.CREDIT, amount: order.netRevenue },
+          { walletId: platform.id, direction: EntryDirection.CREDIT, amount: order.commission + order.vat + order.deliveryFee },
+        ];
+      } else {
+        // Çarşı dışı: mevcut akış — kurye teslimat ücretini alır
+        lines = [
+          { walletId: escrow.id, direction: EntryDirection.DEBIT, amount: order.total },
+          { walletId: merchantWallet.id, direction: EntryDirection.CREDIT, amount: order.netRevenue },
+          { walletId: platform.id, direction: EntryDirection.CREDIT, amount: order.commission },
+          { walletId: courierWallet.id, direction: EntryDirection.CREDIT, amount: order.deliveryFee },
+        ];
+      }
+      lines = lines.filter((l) => l.amount > 0n);
 
       await this.ledger.postWithTx(tx, {
         type: TransactionType.PAYMENT,
@@ -163,7 +182,9 @@ export class DeliveryService {
         vat: order.vat,
         deliveryFee: order.deliveryFee,
         netRevenue: order.netRevenue,
-        description: `Sipariş ${order.orderNo} dağıtım (satıcı + platform + kurye)`,
+        description: isCarsi
+          ? `Sipariş ${order.orderNo} dağıtım (satıcı + platform + DicleFul kargo)`
+          : `Sipariş ${order.orderNo} dağıtım (satıcı + platform + kurye)`,
         lines,
       });
 

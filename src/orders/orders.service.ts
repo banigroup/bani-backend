@@ -9,9 +9,8 @@ import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CheckoutDto } from './dto/checkout.dto';
-import { calculateCargoFee } from '../delivery/cargo-pricing';
 
-// --- Placeholder ayarları (sonradan mağaza/iş kuralına göre değişebilir) ---
+// --- Placeholder ayarları (Çarşı DIŞI dikeyler için) ---
 const DELIVERY_FEE = 1500n; // 15,00 TL
 const FREE_DELIVERY_THRESHOLD = 30000n; // 300 TL ve üzeri teslimat ücretsiz
 const VAT_INCLUDED_RATE = 20n; // komisyon KDV dahil; KDV payı = komisyon * 20 / 120
@@ -37,7 +36,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly ledger: LedgerService,
     private readonly wallet: WalletService,
-  ) {}
+  ) { }
 
   private isAdmin(user: AuthUser): boolean {
     return (user.roles ?? []).includes(Role.SUPER_ADMIN);
@@ -68,8 +67,17 @@ export class OrdersService {
     });
     if (!store) throw new BadRequestException('Mağaza aktif değil');
 
-    // Stok + tutar kontrolü
+    const isCarsi = store.businessUnit === BusinessUnit.CARSI;
+
+    // Stok + tutar kontrolü (+ Çarşı için gömülü muhasebe kırılımı toplama)
     let subtotal = 0n;
+    // Çarşı gömülü kalemleri (ürün fiyatına dahil):
+    let carsiKargo = 0n; // DicleFul kargo
+    let carsiKom = 0n; // platform komisyonu (%15)
+    let carsiHizmetKdv = 0n; // platform hizmet KDV'si
+    let carsiMalKdv = 0n; // satıcının KDV'si
+    let carsiNet = 0n; // satıcının net malı
+
     for (const it of cart.items) {
       if (!it.product || !it.product.isActive || it.product.deletedAt) {
         throw new BadRequestException(`Ürün artık satışta değil: ${it.product?.name ?? it.productId}`);
@@ -77,39 +85,55 @@ export class OrdersService {
       if (it.product.stock < it.quantity) {
         throw new BadRequestException(`Yetersiz stok: ${it.product.name} (kalan ${it.product.stock})`);
       }
-      subtotal += it.unitPrice * BigInt(it.quantity);
+      const q = BigInt(it.quantity);
+      if (isCarsi) {
+        // Çarşı: kargo + komisyon + KDV ürün fiyatına GÖMÜLÜ.
+        // subtotal'ı güncel ürün fiyatından kur (kırılımla birebir uyuşsun).
+        subtotal += it.product.price * q;
+        carsiKargo += it.product.kargoTutari * q;
+        carsiKom += it.product.komisyonTutari * q;
+        carsiHizmetKdv += it.product.hizmetKdvTutari * q;
+        carsiMalKdv += it.product.malKdvTutari * q;
+        carsiNet += it.product.netFiyat * q;
+      } else {
+        subtotal += it.unitPrice * q;
+      }
     }
 
     if (store.minOrder > 0n && subtotal < store.minOrder) {
       throw new BadRequestException(`Minimum sipariş tutarı: ${store.minOrder} kuruş`);
     }
 
-    // ---- Teslimat / kargo ücreti ----
-    let deliveryFee: bigint;
-    if (store.businessUnit === BusinessUnit.CARSI) {
-      // Çarşı = DicleFul kargo: sepetin toplam desi/kg'ı üzerinden tarife
-      let totalDesi = 0;
-      let totalKg = 0;
-      for (const it of cart.items) {
-        totalDesi += (it.product.desi ?? 0) * it.quantity;
-        totalKg += (it.product.weightKg ?? 0) * it.quantity;
-      }
-      const cargo = calculateCargoFee(totalDesi, totalKg);
-      if (!cargo.ok) {
-        throw new BadRequestException(`Kargo hesaplanamadı: ${cargo.message}`);
-      }
-      deliveryFee = cargo.feeKurus;
-    } else {
-      // Diğer dikeyler: mevcut sabit teslimat mantığı
-      deliveryFee = subtotal >= FREE_DELIVERY_THRESHOLD ? 0n : DELIVERY_FEE;
-    }
-
-    // Para hesabı
+    // ---- Para hesabı ----
     const discount = 0n;
-    const total = subtotal + deliveryFee - discount;
-    const commission = (subtotal * BigInt(store.commissionRate)) / 10000n; // binde -> /10000
-    const vat = (commission * VAT_INCLUDED_RATE) / (100n + VAT_INCLUDED_RATE); // KDV dahil pay
-    const netRevenue = subtotal - commission;
+    let deliveryFee: bigint;
+    let commission: bigint;
+    let vat: bigint;
+    let netRevenue: bigint;
+    let total: bigint;
+
+    if (isCarsi) {
+      // Kargo ürün fiyatına gömülü; AYRI EKLENMEZ (çift kargo önlenir).
+      // deliveryFee = gömülü kargo (teslimatta DicleFul'e yönlendirilir).
+      deliveryFee = carsiKargo;
+      commission = carsiKom; // platform komisyonu (gömülü %15)
+      vat = carsiHizmetKdv; // platform hizmet KDV'si
+      netRevenue = carsiNet + carsiMalKdv; // satıcının eline geçen (mal + mal KDV)
+      total = subtotal; // kargo zaten subtotal içinde -> ek YOK
+      // Tutarlılık güvencesi: dağıtım kalemleri subtotal'a birebir oturmalı
+      const dagitim = netRevenue + commission + vat + deliveryFee;
+      if (dagitim !== subtotal) {
+        throw new BadRequestException(
+          `Çarşı tutar tutarsızlığı: dağıtım ${dagitim} ≠ subtotal ${subtotal}`,
+        );
+      }
+    } else {
+      deliveryFee = subtotal >= FREE_DELIVERY_THRESHOLD ? 0n : DELIVERY_FEE;
+      commission = (subtotal * BigInt(store.commissionRate)) / 10000n; // binde -> /10000
+      vat = (commission * VAT_INCLUDED_RATE) / (100n + VAT_INCLUDED_RATE); // KDV dahil pay
+      netRevenue = subtotal - commission;
+      total = subtotal + deliveryFee - discount;
+    }
 
     // Müşteri bakiyesi ön kontrol (net mesaj için)
     const customerWallet = await this.wallet.getOrCreateUserWallet(userId);
@@ -158,13 +182,17 @@ export class OrdersService {
           contactPhone: dto.contactPhone,
           confirmedAt: new Date(),
           items: {
-            create: cart.items.map((it) => ({
-              productId: it.productId,
-              name: it.product.name,
-              unitPrice: it.unitPrice,
-              quantity: it.quantity,
-              lineTotal: it.unitPrice * BigInt(it.quantity),
-            })),
+            create: cart.items.map((it) => {
+              // Çarşı'da OrderItem fiyatı güncel ürün fiyatı (kırılımla uyumlu)
+              const up = isCarsi ? it.product.price : it.unitPrice;
+              return {
+                productId: it.productId,
+                name: it.product.name,
+                unitPrice: up,
+                quantity: it.quantity,
+                lineTotal: up * BigInt(it.quantity),
+              };
+            }),
           },
         },
         include: { items: true },
@@ -187,7 +215,7 @@ export class OrdersService {
         ],
       });
 
-      // Teslimat kaydı (havuzda, kurye bekliyor)
+      // Teslimat kaydı (havuzda bekliyor). Çarşı = DicleFul kargo havuzu.
       await tx.delivery.create({
         data: { orderId: created.id, fee: deliveryFee, status: DeliveryStatus.PENDING },
       });
