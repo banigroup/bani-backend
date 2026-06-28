@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "products" ADD COLUMN     "hizmetKdvTutari" BIGINT NOT NULL DEFAULT 0,
+ADD COLUMN     "kargoTutari" BIGINT NOT NULL DEFAULT 0,
+ADD COLUMN     "komisyonTutari" BIGINT NOT NULL DEFAULT 0,
+ADD COLUMN     "malKdvTutari" BIGINT NOT NULL DEFAULT 0;
