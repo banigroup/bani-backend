@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
+import { Role } from '@prisma/client';
 import { FinanceService } from './finance.service';
 import { TopupDto } from './dto/topup.dto';
 import { WithdrawDto } from './dto/withdraw.dto';
@@ -10,7 +11,7 @@ import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorat
 @Controller('finance')
 @UseGuards(JwtAuthGuard)
 export class FinanceController {
-  constructor(private readonly finance: FinanceService) {}
+  constructor(private readonly finance: FinanceService) { }
 
   @Get('wallet')
   wallet(@CurrentUser() user: AuthUser) {
@@ -35,5 +36,25 @@ export class FinanceController {
   @Post('transfer')
   transfer(@CurrentUser() user: AuthUser, @Body() dto: TransferDto, @Req() req: Request) {
     return this.finance.transfer(user.id, dto, req.ip);
+  }
+
+  // Dikey bazlı P&L raporu (admin/süper admin) — admin panelinden çağrılır.
+  // İsteğe bağlı tarih filtresi: ?from=2026-06-01&to=2026-06-30
+  @Get('report/business-units')
+  businessUnitReport(
+    @CurrentUser() user: AuthUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const roles = user.roles ?? [];
+    if (!roles.includes(Role.SUPER_ADMIN) && !roles.includes(Role.ADMIN)) {
+      throw new ForbiddenException('Bu rapor için admin yetkisi gerekli');
+    }
+    const parse = (s?: string) => {
+      if (!s) return undefined;
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? undefined : d;
+    };
+    return this.finance.businessUnitReport(parse(from), parse(to));
   }
 }
