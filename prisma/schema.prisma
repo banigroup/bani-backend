@@ -55,6 +55,9 @@ model User {
     orders           Order[]
   deliveries       Delivery[] @relation("CourierDeliveries")
 
+  verdigiYukler    YukIlani[]   @relation("VerdigiYukler")
+  aracIlanlari     AracIlani[]  @relation("AracIlanlari")
+  verdigiTeklifler YukTeklif[]  @relation("VerdigiTeklifler")
   @@index([phone])
   @@map("users")
 }
@@ -509,3 +512,99 @@ model Delivery {
   @@index([status])
   @@map("deliveries")
 }
+
+// ============================================================
+// BANİLOAD — Yuk/Arac Ilani + Teklif + Eslestirme (Faz 1)
+// (Model/alan adlari Latin harfli Turkce; ekranda tam Turkce gosterilir)
+// ============================================================
+
+enum YukIlaniDurum {
+  ACIK          // ilan acik, teklif bekliyor
+  TEKLIF_ALINDI // en az bir teklif geldi
+  ESLESTI       // teklif kabul edildi, tasiyici belli
+  TASINIYOR     // yuk yolda
+  TAMAMLANDI    // teslim edildi, komisyon islendi
+  IPTAL         // ilan iptal
+}
+
+enum AracTipi {
+  TIR
+  KAMYON
+  KAMYONET
+  TENTELI
+  FRIGORIFIK
+  KAPALI_KASA
+  ACIK_KASA
+  LOWBED
+}
+
+enum AracIlaniDurum {
+  MUSAIT // bosta, yuk ariyor
+  DOLU   // bir ise atandi
+  PASIF  // tasiyici kapatti
+}
+
+enum YukTeklifDurum {
+  BEKLIYOR     // yuk veren degerlendirsin
+  KABUL        // kabul edildi (ilan ESLESTI olur)
+  RED          // reddedildi / baska teklif kabul edildi
+  GERI_CEKILDI // tasiyici teklifini cekti
+}
+
+model YukIlani {
+  id               String @id @default (uuid()) @db.Uuid
+  veren            User @relation("VerdigiYukler", fields: [verenId], references: [id])
+  verenId          String @db.Uuid
+  nereden          String        // il/ilce (or. "Istanbul / Tuzla")
+  nereye           String
+  yukTipi          String        // "Paletli Urun", "Tekstil", "Mobilya"...
+  tonajKg          Int           // kilogram cinsinden
+  aracTipiIhtiyaci AracTipi ?     // istenen arac tipi (opsiyonel)
+    yuklemeTarihi    DateTime
+  aciklama         String ?
+    butceKurus       BigInt ?       // yuk verenin tahmini butcesi (opsiyonel)
+      durum            YukIlaniDurum @default (ACIK)
+  seciliTeklif     YukTeklif ? @relation("SeciliTeklif", fields: [seciliTeklifId], references: [id])
+  seciliTeklifId   String ? @unique @db.Uuid
+  teklifler        YukTeklif[]   @relation("IlanTeklifleri")
+  createdAt        DateTime @default (now())
+  updatedAt        DateTime @updatedAt
+  @@index([durum])
+  @@index([verenId])
+  @@map("yuk_ilanlari")
+}
+
+model AracIlani {
+  id          String @id @default (uuid()) @db.Uuid
+  tasiyici    User @relation("AracIlanlari", fields: [tasiyiciId], references: [id])
+  tasiyiciId  String @db.Uuid
+  aracTipi    AracTipi
+  nereden     String         // cikis bolgesi
+  nereye      String         // gidecegi yon
+  cikisTarihi DateTime
+  kapasiteKg  Int
+  durum       AracIlaniDurum @default (MUSAIT)
+  createdAt   DateTime @default (now())
+  updatedAt   DateTime @updatedAt
+  @@index([durum])
+  @@index([tasiyiciId])
+  @@map("arac_ilanlari")
+}
+
+model YukTeklif {
+  id          String @id @default (uuid()) @db.Uuid
+  yukIlani    YukIlani @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id])
+  yukIlaniId  String @db.Uuid
+  tasiyici    User @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
+  tasiyiciId  String @db.Uuid
+  fiyatKurus  BigInt         // tasiyicinin teklif ettigi tasima bedeli (kurus)
+  mesaj       String ?
+    durum       YukTeklifDurum @default (BEKLIYOR)
+  seciliOlan  YukIlani ? @relation("SeciliTeklif")
+  createdAt   DateTime @default (now())
+  updatedAt   DateTime @updatedAt
+  @@index([yukIlaniId])
+  @@index([tasiyiciId])
+  @@map("yuk_teklifleri")
+}
+
