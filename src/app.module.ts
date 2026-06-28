@@ -14,6 +14,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { CartModule } from './cart/cart.module';
 import { OrdersModule } from './orders/orders.module';
 import { DeliveryModule } from './delivery/delivery.module';
+import { LoadModule } from './load/load.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
     CartModule,
     OrdersModule,
     DeliveryModule,
+    LoadModule,
     SuperadminModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
