@@ -288,19 +288,9 @@ export class LoadService {
       // ASSET-LIGHT: Tasima bedeli (or. 50.000) platforma GIRMEZ; taraflar kendi
       // arasinda oder. BaniLoad yalnizca %5 komisyonu tasiyicidan alacak yazar.
       // Cift tarafli kayit: tasiyici cuzdani DEBIT (komisyon borcu) / platform CREDIT (gelir).
-      const tasiyiciWallet = await this.wallet.getOrCreateUserWallet(tasiyiciId);
-      const platformWallet = await this.wallet.getSystemWallet(WalletType.PLATFORM);
-
-      await this.ledger.postWithTx(tx, {
-        type: TransactionType.FEE,
-        businessUnit: BusinessUnit.LOAD,
-        reference: `load:${ilanId}:settle`,
-        description: 'BaniLoad taşıma komisyonu (%5)',
-        lines: [
-          { walletId: tasiyiciWallet.id, direction: EntryDirection.DEBIT, amount: komisyon },
-          { walletId: platformWallet.id, direction: EntryDirection.CREDIT, amount: komisyon },
-        ],
-      });
+      // ASSET-LIGHT: Komisyon ledger'a yazilmaz; borc komisyonBorcu() ile
+      // (tamamlanan tasimalar - onaylanan odemeler) hesaplanir. Boylece
+      // tasiyici cuzdaninda bakiye olmadan da tasima tamamlanir.
 
       return { ilan: guncel, tasimaBedeli, komisyon };
     });
