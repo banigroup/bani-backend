@@ -92,8 +92,12 @@ export class CatalogService {
     // KDV orani: acik verildiyse o, yoksa kategori+isimden otomatik
     const kdvOrani = await this.kdvOraniBelirle(dto.kdvOrani, dto.name, dto.categoryId);
 
+    // Komisyon orani magazadan (merkezi): commissionRate binde (800=%8) -> yuzde (/100 -> 8n)
+    const magaza1 = await this.prisma.store.findUnique({ where: { id: storeId }, select: { commissionRate: true } });
+    const komisyonOran1 = BigInt(magaza1?.commissionRate ?? 800) / 100n;
+
     // Vitrin fiyati + ayristirilmis muhasebe kalemleri
-    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli, kdvOrani);
+    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli, kdvOrani, komisyonOran1);
     if (!hesap.ok) throw new BadRequestException(hesap.sebep);
 
     return this.prisma.product.create({
@@ -136,7 +140,11 @@ export class CatalogService {
     // (otomatik tanima sadece create'te; update'te admin/saticinin kararina dokunmuyoruz)
     const kdvOrani = dto.kdvOrani ?? product.kdvOrani;
 
-    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli, kdvOrani);
+    // Komisyon orani magazadan (merkezi)
+    const magaza2 = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { commissionRate: true } });
+    const komisyonOran2 = BigInt(magaza2?.commissionRate ?? 800) / 100n;
+
+    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli, kdvOrani, komisyonOran2);
     if (!hesap.ok) throw new BadRequestException(hesap.sebep);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

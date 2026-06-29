@@ -185,7 +185,7 @@ export function kdvOraniBul(urunAdi: string, kategoriAdi?: string): KdvBilgi {
 // ============================================================
 // 3) Vitrin fiyatı + ayrıştırılmış muhasebe kalemleri
 // ============================================================
-const KOMISYON_ORAN = 8n; // %8 — net (KDV hariç) üzerinden (Bani Çarşı)
+const KOMISYON_ORAN_VARSAYILAN = 8n; // %8 varsayilan — store.commissionRate gelmezse (Bani Çarşı)
 const HIZMET_KDV_ORAN = 20n; // %20 — komisyon (+ A modelinde kargo) üzerinden
 
 export type FiyatSonuc =
@@ -215,11 +215,12 @@ export function vitrinFiyatHesapla(
   kg: number,
   satisModeli: string,
   kdvOrani: number,
+  komisyonOran: bigint = KOMISYON_ORAN_VARSAYILAN,
 ): FiyatSonuc {
   if (netKurus < 0n) return { ok: false, sebep: 'Net fiyat geçersiz' };
 
   const kargoKurus = kargoKurusHesapla(desi, kg);
-  const komisyonKurus = (netKurus * KOMISYON_ORAN) / 100n;
+  const komisyonKurus = (netKurus * komisyonOran) / 100n;
 
   // Malın KDV'si: satıcının beyanı. Net × kategori oranı.
   const malKdvKurus = (netKurus * BigInt(kdvOrani)) / 100n;
