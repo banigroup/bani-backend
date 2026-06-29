@@ -58,6 +58,7 @@ model User {
   verdigiYukler    YukIlani[]   @relation("VerdigiYukler")
   aracIlanlari     AracIlani[]  @relation("AracIlanlari")
   verdigiTeklifler YukTeklif[]  @relation("VerdigiTeklifler")
+  komisyonOdemeleri KomisyonOdeme[] @relation("KomisyonOdemeleri")
   @@index([phone])
   @@map("users")
 }
@@ -606,5 +607,38 @@ model YukTeklif {
   @@index([yukIlaniId])
   @@index([tasiyiciId])
   @@map("yuk_teklifleri")
+}
+
+// ============================================================
+// BANİLOAD — Komisyon Odeme + Borc Takibi (Faz 1 tahsilat)
+// Borc = (TAMAMLANDI tasimalarin %5 toplami) - (ONAYLANDI odemeler)
+// ============================================================
+
+enum KomisyonOdemeYontem {
+  HAVALE // EFT/havale + admin onayi (su an aktif)
+  KART   // POS entegrasyonu sonrasi aktif olacak
+}
+
+enum KomisyonOdemeDurum {
+  BEKLIYOR  // havale bildirildi, admin onayi bekliyor
+  ONAYLANDI // admin onayladi, borc dustu
+  RED       // reddedildi
+}
+
+model KomisyonOdeme {
+  id          String @id @default (uuid()) @db.Uuid
+  tasiyici    User @relation("KomisyonOdemeleri", fields: [tasiyiciId], references: [id])
+  tasiyiciId  String @db.Uuid
+  tutarKurus  BigInt              // odenen komisyon tutari (kurus)
+  yontem      KomisyonOdemeYontem @default (HAVALE)
+  durum       KomisyonOdemeDurum @default (BEKLIYOR)
+  dekont      String ?             // havale dekont/aciklama (kullanici girer)
+    adminNot    String ?             // admin onay/red notu
+      onaylayanId String ? @db.Uuid
+  createdAt   DateTime @default (now())
+  updatedAt   DateTime @updatedAt
+  @@index([tasiyiciId])
+  @@index([durum])
+  @@map("komisyon_odemeleri")
 }
 

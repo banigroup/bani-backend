@@ -4,6 +4,7 @@ import {
 import {
   Role, WalletType, TransactionType, EntryDirection, BusinessUnit,
   YukIlaniDurum, AracIlaniDurum, YukTeklifDurum, AracTipi,
+  KomisyonOdemeYontem, KomisyonOdemeDurum,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
@@ -12,9 +13,12 @@ import { AuthUser } from '../common/decorators/current-user.decorator';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
 import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
+import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
 
 // BaniLoad komisyon orani: binde 500 = %5
 const LOAD_KOMISYON_BINDE = 500n;
+// Komisyon borc esigi: bu tutari gecince yeni is alinamaz (kurus). 5.000 TL
+const KOMISYON_BORC_ESIGI_KURUS = 500000n;
 
 @Injectable()
 export class LoadService {
@@ -97,6 +101,7 @@ export class LoadService {
   // ============ ARAC ILANI (tasiyici) ============
 
   async aracIlaniOlustur(user: AuthUser, dto: AracIlaniOlusturDto) {
+    await this.erisimKontrolu(user.id); // komisyon borc kilidi
     return this.prisma.aracIlani.create({
       data: {
         tasiyiciId: user.id,
@@ -138,6 +143,7 @@ export class LoadService {
   // ============ TEKLIF (tasiyici verir) ============
 
   async teklifVer(user: AuthUser, dto: TeklifVerDto) {
+    await this.erisimKontrolu(user.id); // komisyon borc kilidi
     const ilan = await this.prisma.yukIlani.findUnique({ where: { id: dto.yukIlaniId } });
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
     if (ilan.verenId === user.id) throw new BadRequestException('Kendi ilanınıza teklif veremezsiniz');
@@ -294,4 +300,135 @@ export class LoadService {
       return { ilan: guncel, tasimaBedeli, komisyon };
     });
   }
+
+  // ============================================================
+  // KOMISYON BORC + TAHSILAT (Faz 1: havale + admin onayi)
+  // Borc = (TAMAMLANDI tasimalarin %5 komisyonu) - (ONAYLANDI odemeler)
+  // POS entegrasyonu sonrasi KART yolu acilacak.
+  // ============================================================
+
+  // Tasiyicinin biriken komisyon borcu (kurus)
+  async komisyonBorcu(userId: string): Promise < bigint > {
+  // 1) Tamamlanan tasimalarda bu kisi tasiyici ise: komisyon = fiyat * %5
+  const tamamlanan = await this.prisma.yukIlani.findMany({
+    where: {
+      durum: YukIlaniDurum.TAMAMLANDI,
+      seciliTeklif: { tasiyiciId: userId },
+    },
+    include: { seciliTeklif: true },
+  });
+  let tahakkuk = 0n;
+  for(const ilan of tamamlanan) {
+    if (ilan.seciliTeklif) {
+      tahakkuk += (ilan.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n;
+    }
+  }
+    // 2) Onaylanmis odemeler
+    const odemeler = await this.prisma.komisyonOdeme.aggregate({
+    where: { tasiyiciId: userId, durum: KomisyonOdemeDurum.ONAYLANDI },
+    _sum: { tutarKurus: true },
+  });
+  const odenen = odemeler._sum.tutarKurus ?? 0n;
+  const borc = tahakkuk - odenen;
+  return borc > 0n ? borc : 0n;
+}
+
+  // UI icin borc durumu (borc, esik, kilitli mi)
+  async komisyonDurumu(user: AuthUser) {
+  const borc = await this.komisyonBorcu(user.id);
+  return {
+    borcKurus: borc.toString(),
+    esikKurus: KOMISYON_BORC_ESIGI_KURUS.toString(),
+    kilitli: borc >= KOMISYON_BORC_ESIGI_KURUS,
+  };
+}
+
+  // Erisim kontrolu: borc esigi asildiysa yeni is engellenir
+  private async erisimKontrolu(userId: string) {
+  const borc = await this.komisyonBorcu(userId);
+  if (borc >= KOMISYON_BORC_ESIGI_KURUS) {
+    const tl = (Number(borc) / 100).toFixed(2);
+    throw new ForbiddenException(
+      `Biriken komisyon borcunuz ${tl} TL. Devam edebilmek için ödemenizi yapın.`,
+    );
+  }
+}
+
+  // Tasiyici havale bildirimi olusturur (admin onayi bekler)
+  async komisyonBildir(user: AuthUser, dto: KomisyonBildirDto) {
+  if (dto.yontem === KomisyonOdemeYontem.KART) {
+    throw new BadRequestException('Kart ile ödeme yakında aktif olacak. Şimdilik havale/EFT kullanın.');
+  }
+  if (dto.tutarKurus <= 0) throw new BadRequestException('Tutar pozitif olmalı');
+  return this.prisma.komisyonOdeme.create({
+    data: {
+      tasiyiciId: user.id,
+      tutarKurus: BigInt(dto.tutarKurus),
+      yontem: KomisyonOdemeYontem.HAVALE,
+      durum: KomisyonOdemeDurum.BEKLIYOR,
+      dekont: dto.dekont ?? null,
+    },
+  });
+}
+
+  // Tasiyicinin kendi odeme bildirimleri
+  async odemelerim(user: AuthUser) {
+  return this.prisma.komisyonOdeme.findMany({
+    where: { tasiyiciId: user.id },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+  // ---- Admin ----
+
+  private isAdmin(user: AuthUser): boolean {
+  return user.roles.includes(Role.ADMIN) || user.roles.includes(Role.SUPER_ADMIN);
+}
+
+  // Admin: bekleyen tum odeme bildirimleri
+  async bekleyenOdemeler(user: AuthUser) {
+  if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+  return this.prisma.komisyonOdeme.findMany({
+    where: { durum: KomisyonOdemeDurum.BEKLIYOR },
+    orderBy: { createdAt: 'asc' },
+    include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true } } },
+  });
+}
+
+  // Admin: odemeyi onayla (borc duser, kilit acilir)
+  async komisyonOnayla(user: AuthUser, odemeId: string, adminNot ?: string) {
+  if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+  const odeme = await this.prisma.komisyonOdeme.findUnique({ where: { id: odemeId } });
+  if (!odeme) throw new NotFoundException('Ödeme bildirimi bulunamadı');
+  if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
+    throw new ConflictException('Bu bildirim zaten işlenmiş');
+  }
+  return this.prisma.komisyonOdeme.update({
+    where: { id: odemeId },
+    data: {
+      durum: KomisyonOdemeDurum.ONAYLANDI,
+      onaylayanId: user.id,
+      adminNot: adminNot ?? null,
+    },
+  });
+}
+
+  // Admin: odemeyi reddet
+  async komisyonReddet(user: AuthUser, odemeId: string, adminNot ?: string) {
+  if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+  const odeme = await this.prisma.komisyonOdeme.findUnique({ where: { id: odemeId } });
+  if (!odeme) throw new NotFoundException('Ödeme bildirimi bulunamadı');
+  if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
+    throw new ConflictException('Bu bildirim zaten işlenmiş');
+  }
+  return this.prisma.komisyonOdeme.update({
+    where: { id: odemeId },
+    data: {
+      durum: KomisyonOdemeDurum.RED,
+      onaylayanId: user.id,
+      adminNot: adminNot ?? null,
+    },
+  });
+}
+
 }

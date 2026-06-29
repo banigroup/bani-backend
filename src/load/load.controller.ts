@@ -7,6 +7,7 @@ import { LoadService } from './load.service';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
 import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
+import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
 
 @Controller('load')
 @UseGuards(JwtAuthGuard)
@@ -91,4 +92,36 @@ export class LoadController {
   tasimaTamamla(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.load.tasimaTamamla(user, id);
   }
+
+// ----- Komisyon borc + tahsilat -----
+@Get('komisyon/durum') // tasiyici: borc durumu (borc, esik, kilitli)
+komisyonDurum(@CurrentUser() user: AuthUser) {
+  return this.load.komisyonDurumu(user);
+}
+
+@Post('komisyon/bildir') // tasiyici: havale bildirimi
+komisyonBildir(@CurrentUser() user: AuthUser, @Body() dto: KomisyonBildirDto) {
+  return this.load.komisyonBildir(user, dto);
+}
+
+@Get('komisyon/odemelerim') // tasiyici: kendi bildirimleri
+komisyonOdemelerim(@CurrentUser() user: AuthUser) {
+  return this.load.odemelerim(user);
+}
+
+@Get('komisyon/bekleyenler') // admin: onay bekleyen bildirimler
+komisyonBekleyenler(@CurrentUser() user: AuthUser) {
+  return this.load.bekleyenOdemeler(user);
+}
+
+@Patch('komisyon/:id/onayla') // admin
+komisyonOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
+  return this.load.komisyonOnayla(user, id, body?.adminNot);
+}
+
+@Patch('komisyon/:id/reddet') // admin
+komisyonReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
+  return this.load.komisyonReddet(user, id, body?.adminNot);
+}
+
 }
