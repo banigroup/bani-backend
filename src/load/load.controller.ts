@@ -1,6 +1,8 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, UseGuards,
+  Controller, Get, Post, Patch, Body, Param, UseGuards, Req,
 } from '@nestjs/common';
+import { Request } from 'express';
+import { SozlesmeTipi } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { LoadService } from './load.service';
@@ -8,6 +10,7 @@ import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
 import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
 import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
+import { SozlesmeOnaylaDto } from './dto/sozlesme-onayla.dto';
 
 @Controller('load')
 @UseGuards(JwtAuthGuard)
@@ -78,8 +81,10 @@ export class LoadController {
   }
 
   @Patch('teklif/:id/kabul') // ESLESTIRME
-  teklifKabul(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.load.teklifKabul(user, id);
+  teklifKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
+    const cihaz = req.headers['user-agent'];
+    return this.load.teklifKabul(user, id, ip, cihaz);
   }
 
   // ----- Is akisi -----
@@ -122,6 +127,20 @@ komisyonOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() b
 @Patch('komisyon/:id/reddet') // admin
 komisyonReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
   return this.load.komisyonReddet(user, id, body?.adminNot);
+}
+
+
+// ----- Sozlesme onay (B modeli) -----
+@Get('sozlesme/durum/:tip') // kullanici: belirli tip icin onay durumu
+sozlesmeDurum(@CurrentUser() user: AuthUser, @Param('tip') tip: SozlesmeTipi) {
+  return this.load.sozlesmeDurumu(user, tip);
+}
+
+@Post('sozlesme/onayla') // kullanici: uyelik sozlesmesini onayla (IP/cihaz sunucudan)
+sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @Req() req: Request) {
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
+  const cihaz = req.headers['user-agent'];
+  return this.load.sozlesmeOnayla(user, dto.sozlesmeTipi, ip, cihaz);
 }
 
 }

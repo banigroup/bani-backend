@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import {
   Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException,
 } from '@nestjs/common';
@@ -5,6 +6,7 @@ import {
   Role, WalletType, TransactionType, EntryDirection, BusinessUnit,
   YukIlaniDurum, AracIlaniDurum, YukTeklifDurum, AracTipi,
   KomisyonOdemeYontem, KomisyonOdemeDurum,
+  SozlesmeTipi,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
@@ -31,6 +33,7 @@ export class LoadService {
   // ============ YUK ILANI (yuk veren) ============
 
   async ilanOlustur(user: AuthUser, dto: YukIlaniOlusturDto) {
+    await this.sozlesmeKontrolu(user.id, SozlesmeTipi.YUK_VEREN); // onaysiz ilan engeli
     return this.prisma.yukIlani.create({
       data: {
         verenId: user.id,
@@ -102,6 +105,7 @@ export class LoadService {
 
   async aracIlaniOlustur(user: AuthUser, dto: AracIlaniOlusturDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
+    await this.sozlesmeKontrolu(user.id, SozlesmeTipi.TASIYICI); // onaysiz teklif engeli
     return this.prisma.aracIlani.create({
       data: {
         tasiyiciId: user.id,
@@ -144,6 +148,7 @@ export class LoadService {
 
   async teklifVer(user: AuthUser, dto: TeklifVerDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
+    await this.sozlesmeKontrolu(user.id, SozlesmeTipi.TASIYICI); // onaysiz teklif engeli
     const ilan = await this.prisma.yukIlani.findUnique({ where: { id: dto.yukIlaniId } });
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
     if (ilan.verenId === user.id) throw new BadRequestException('Kendi ilanınıza teklif veremezsiniz');
@@ -203,7 +208,7 @@ export class LoadService {
 
   // ============ KABUL = ESLESTIRMENIN KALBI (yuk veren kabul eder) ============
 
-  async teklifKabul(user: AuthUser, teklifId: string) {
+  async teklifKabul(user: AuthUser, teklifId: string, ip?: string, cihaz?: string) {
     const teklif = await this.prisma.yukTeklif.findUnique({
       where: { id: teklifId },
       include: { yukIlani: true },
@@ -222,7 +227,7 @@ export class LoadService {
       // 1) Secilen teklif KABUL
       await tx.yukTeklif.update({
         where: { id: teklif.id },
-        data: { durum: YukTeklifDurum.KABUL },
+        data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null },
       });
       // 2) Ayni ilandaki diger BEKLEYEN teklifler RED
       await tx.yukTeklif.updateMany({
@@ -429,6 +434,73 @@ export class LoadService {
       adminNot: adminNot ?? null,
     },
   });
+}
+
+
+  // ============================================================
+  // SOZLESME ONAY (B modeli: uyelikte tek onay + is delili)
+  // Metin GECICI taslak; avukat onayindan sonra SURUM guncellenir.
+  // ============================================================
+
+  // Gecerli sozlesme surumleri (avukat metni degisince burayi guncelle)
+  // Surum degisince kullanicilar yeniden onaylamak zorunda kalir.
+  private readonly SOZLESME_SURUM: Record<SozlesmeTipi, string> = {
+  [SozlesmeTipi.TASIYICI]: 'v1-taslak',
+  [SozlesmeTipi.YUK_VEREN]: 'v1-taslak',
+};
+
+  // Metin hash'i: avukat onayli metin sisteme konunca gercek hash ile degisecek.
+  // Simdilik surum bazli sabit placeholder (taslak oldugu icin).
+  private metinHashUret(tip: SozlesmeTipi, surum: string): string {
+  return createHash('sha256').update(`baniload:${tip}:${surum}`).digest('hex');
+}
+
+  // Kullanicinin gecerli surum onayi var mi?
+  async sozlesmeOnayliMi(userId: string, tip: SozlesmeTipi): Promise < boolean > {
+  const surum = this.SOZLESME_SURUM[tip];
+  const onay = await this.prisma.sozlesmeOnay.findUnique({
+    where: { kullaniciId_sozlesmeTipi_surum: { kullaniciId: userId, sozlesmeTipi: tip, surum } },
+  });
+  return !!onay;
+}
+
+  // UI icin onay durumu
+  async sozlesmeDurumu(user: AuthUser, tip: SozlesmeTipi) {
+  const surum = this.SOZLESME_SURUM[tip];
+  const onayli = await this.sozlesmeOnayliMi(user.id, tip);
+  return { sozlesmeTipi: tip, gecerliSurum: surum, onayli };
+}
+
+  // Kullanici sozlesmeyi onaylar (uyelikte bir kez; surum degisirse tekrar)
+  async sozlesmeOnayla(user: AuthUser, tip: SozlesmeTipi, ip ?: string, cihaz ?: string) {
+  const surum = this.SOZLESME_SURUM[tip];
+  const metinHash = this.metinHashUret(tip, surum);
+  // Idempotent: ayni surum ikinci kez onaylanirsa mevcut kaydi dondur
+  const mevcut = await this.prisma.sozlesmeOnay.findUnique({
+    where: { kullaniciId_sozlesmeTipi_surum: { kullaniciId: user.id, sozlesmeTipi: tip, surum } },
+  });
+  if (mevcut) return mevcut;
+  return this.prisma.sozlesmeOnay.create({
+    data: {
+      kullaniciId: user.id,
+      sozlesmeTipi: tip,
+      surum,
+      metinHash,
+      ip: ip ?? null,
+      cihaz: cihaz ?? null,
+    },
+  });
+}
+
+  // Onaysiz is engeli: gecerli surum onayi yoksa hata firlat
+  private async sozlesmeKontrolu(userId: string, tip: SozlesmeTipi) {
+  const onayli = await this.sozlesmeOnayliMi(userId, tip);
+  if (!onayli) {
+    const ad = tip === SozlesmeTipi.TASIYICI ? 'Taşıyıcı' : 'Yük Veren';
+    throw new ForbiddenException(
+      `Devam edebilmek için ${ad} Üyelik Sözleşmesi'ni onaylamanız gerekir.`,
+    );
+  }
 }
 
 }
