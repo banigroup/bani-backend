@@ -185,7 +185,7 @@ export function kdvOraniBul(urunAdi: string, kategoriAdi?: string): KdvBilgi {
 // ============================================================
 // 3) Vitrin fiyatı + ayrıştırılmış muhasebe kalemleri
 // ============================================================
-const KOMISYON_ORAN = 15n; // %15 — net (KDV hariç) üzerinden
+const KOMISYON_ORAN = 8n; // %8 — net (KDV hariç) üzerinden (Bani Çarşı)
 const HIZMET_KDV_ORAN = 20n; // %20 — komisyon (+ A modelinde kargo) üzerinden
 
 export type FiyatSonuc =
@@ -193,7 +193,7 @@ export type FiyatSonuc =
     ok: true;
     vitrinKurus: bigint; // müşterinin ödediği (tam liraya YUKARI yuvarlı)
     netKurus: bigint; // satıcının net fiyatı
-    komisyonKurus: bigint; // platform komisyonu = net × %15
+    komisyonKurus: bigint; // platform komisyonu = net × %8
     kargoKurus: bigint; // gömülü kargo (DicleFul tarifesi)
     malKdvKurus: bigint; // SATICININ KDV'si = net × kategori oranı
     hizmetKdvKurus: bigint; // PLATFORMUN KDV'si = (komisyon[+kargo]) × %20
