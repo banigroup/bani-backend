@@ -20,7 +20,7 @@ import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
 // BaniLoad komisyon orani: binde 500 = %5
 const LOAD_KOMISYON_BINDE = 500n;
 // Komisyon borc esigi: bu tutari gecince yeni is alinamaz (kurus). 5.000 TL
-const KOMISYON_BORC_ESIGI_KURUS = 500000n;
+const KOMISYON_BORC_ESIGI_KURUS = 1n; // sifir tolerans: odenmemis komisyon varsa yeni is yok
 
 @Injectable()
 export class LoadService {
