@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 // ===================== RBAC — 12 ROL =====================
@@ -32,45 +32,46 @@ enum UserStatus {
 }
 
 model User {
-  id            String @id @default (uuid()) @db.Uuid
-  phone         String @unique
-  phoneVerified Boolean @default (false)
-  email         String ? @unique
-  name          String ?
-    surname       String ?
-      passwordHash  String ?
-        roles         Role[]     @default ([CUSTOMER])
-  status        UserStatus @default (PENDING)
-  createdAt     DateTime @default (now())
-  updatedAt     DateTime @updatedAt
-  deletedAt     DateTime ?
+  id            String     @id @default(uuid()) @db.Uuid
+  phone         String     @unique
+  phoneVerified Boolean    @default(false)
+  email         String?    @unique
+  name          String?
+  surname       String?
+  passwordHash  String?
+  roles         Role[]     @default([CUSTOMER])
+  status        UserStatus @default(PENDING)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
 
-    otpRequests      OtpRequest[]
+  otpRequests      OtpRequest[]
   refreshTokens    RefreshToken[]
   addresses        Address[]
   wallets          Wallet[]
   socialIdentities SocialIdentity[]
   ownedStores      Store[]
-  cart             Cart ?
-    orders           Order[]
-  deliveries       Delivery[] @relation("CourierDeliveries")
+  cart             Cart?
+  orders           Order[]
+  deliveries       Delivery[]       @relation("CourierDeliveries")
 
-  verdigiYukler    YukIlani[]   @relation("VerdigiYukler")
-  aracIlanlari     AracIlani[]  @relation("AracIlanlari")
-  verdigiTeklifler YukTeklif[]  @relation("VerdigiTeklifler")
+  verdigiYukler     YukIlani[]      @relation("VerdigiYukler")
+  aracIlanlari      AracIlani[]     @relation("AracIlanlari")
+  verdigiTeklifler  YukTeklif[]     @relation("VerdigiTeklifler")
   komisyonOdemeleri KomisyonOdeme[] @relation("KomisyonOdemeleri")
-  sozlesmeOnaylari SozlesmeOnay[] @relation("SozlesmeOnaylari")
+  sozlesmeOnaylari  SozlesmeOnay[]  @relation("SozlesmeOnaylari")
+
   @@index([phone])
   @@map("users")
 }
 
 model SocialIdentity {
-  id         String @id @default (uuid()) @db.Uuid
-  userId     String @db.Uuid
-  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   provider   String
   providerId String
-  createdAt  DateTime @default (now())
+  createdAt  DateTime @default(now())
 
   @@unique([provider, providerId])
   @@index([userId])
@@ -85,31 +86,31 @@ enum OtpPurpose {
 }
 
 model OtpRequest {
-  id         String @id @default (uuid()) @db.Uuid
+  id         String     @id @default(uuid()) @db.Uuid
   phone      String
   codeHash   String
-  purpose    OtpPurpose @default (LOGIN)
-  attempts   Int @default (0)
-  consumedAt DateTime ?
-    expiresAt  DateTime
-  createdAt  DateTime @default (now())
-  userId     String ? @db.Uuid
-  user       User ? @relation(fields: [userId], references: [id])
+  purpose    OtpPurpose @default(LOGIN)
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime   @default(now())
+  userId     String?    @db.Uuid
+  user       User?      @relation(fields: [userId], references: [id])
 
   @@index([phone, createdAt])
   @@map("otp_requests")
 }
 
 model RefreshToken {
-  id        String @id @default (uuid()) @db.Uuid
-  userId    String @db.Uuid
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String @unique
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
   expiresAt DateTime
-  revokedAt DateTime ?
-    userAgent String ?
-      ip        String ?
-        createdAt DateTime @default (now())
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@map("refresh_tokens")
@@ -124,29 +125,29 @@ enum AddressType {
 }
 
 model Address {
-  id           String @id @default (uuid()) @db.Uuid
-  userId       String @db.Uuid
-  user         User @relation(fields: [userId], references: [id], onDelete: Cascade)
-    type AddressType @default (HOME)
-  title        String ?
-    fullName     String ?
-      phone        String ?
-        country      String @default ("TR")
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @db.Uuid
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         AddressType @default(HOME)
+  title        String?
+  fullName     String?
+  phone        String?
+  country      String      @default("TR")
   city         String
-  district     String ?
-    neighborhood String ?
-      line1        String
-  line2        String ?
-    postalCode   String ?
-      latitude     Float ?
-        longitude    Float ?
-          isDefault    Boolean @default (false)
-  createdAt    DateTime @default (now())
-  updatedAt    DateTime @updatedAt
-  deletedAt    DateTime ?
+  district     String?
+  neighborhood String?
+  line1        String
+  line2        String?
+  postalCode   String?
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
 
-    @@index([userId])
-    @@map("addresses")
+  @@index([userId])
+  @@map("addresses")
 }
 
 // ===================== FİNANS (double-entry) =====================
@@ -164,14 +165,14 @@ enum WalletType {
 }
 
 model Wallet {
-  id        String @id @default (uuid()) @db.Uuid
-  userId    String ? @db.Uuid
-  user      User ? @relation(fields: [userId], references: [id])
-  type WalletType @default (USER)
-  currency  Currency @default (TRY)
-  balance   BigInt @default (0)
-  createdAt DateTime @default (now())
-  updatedAt DateTime @updatedAt
+  id        String     @id @default(uuid()) @db.Uuid
+  userId    String?    @db.Uuid
+  user      User?      @relation(fields: [userId], references: [id])
+  type      WalletType @default(USER)
+  currency  Currency   @default(TRY)
+  balance   BigInt     @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   entries LedgerEntry[]
 
@@ -207,22 +208,22 @@ enum BusinessUnit {
 }
 
 model Transaction {
-  id           String @id @default (uuid()) @db.Uuid
-    type TransactionType
-  status       TransactionStatus @default (PENDING)
-  currency     Currency @default (TRY)
+  id           String            @id @default(uuid()) @db.Uuid
+  type         TransactionType
+  status       TransactionStatus @default(PENDING)
+  currency     Currency          @default(TRY)
   amount       BigInt
-  orderNo      String ?
-    businessUnit BusinessUnit ?
-      commission   BigInt @default (0)
-  vat          BigInt @default (0)
-  deliveryFee  BigInt @default (0)
-  netRevenue   BigInt @default (0)
-  reference    String ? @unique
-  description  String ?
-    metadata     Json ?
-      createdAt    DateTime @default (now())
-  updatedAt    DateTime @updatedAt
+  orderNo      String?
+  businessUnit BusinessUnit?
+  commission   BigInt            @default(0)
+  vat          BigInt            @default(0)
+  deliveryFee  BigInt            @default(0)
+  netRevenue   BigInt            @default(0)
+  reference    String?           @unique
+  description  String?
+  metadata     Json?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   entries LedgerEntry[]
 
@@ -238,15 +239,15 @@ enum EntryDirection {
 }
 
 model LedgerEntry {
-  id            String @id @default (uuid()) @db.Uuid
-  transactionId String @db.Uuid
-  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  walletId      String @db.Uuid
-  wallet        Wallet @relation(fields: [walletId], references: [id])
+  id            String         @id @default(uuid()) @db.Uuid
+  transactionId String         @db.Uuid
+  transaction   Transaction    @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  walletId      String         @db.Uuid
+  wallet        Wallet         @relation(fields: [walletId], references: [id])
   direction     EntryDirection
   amount        BigInt
   balanceAfter  BigInt
-  createdAt     DateTime @default (now())
+  createdAt     DateTime       @default(now())
 
   @@index([walletId])
   @@index([transactionId])
@@ -255,14 +256,14 @@ model LedgerEntry {
 
 // ===================== DENETİM =====================
 model AuditLog {
-  id        String @id @default (uuid()) @db.Uuid
-  actorId   String ? @db.Uuid
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @db.Uuid
   action    String
-  entity    String ?
-    entityId  String ?
-      ip        String ?
-        metadata  Json ?
-          createdAt DateTime @default (now())
+  entity    String?
+  entityId  String?
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now())
 
   @@index([actorId])
   @@index([entity, entityId])
@@ -279,29 +280,29 @@ enum StoreType {
 }
 
 model Store {
-  id             String @id @default (uuid()) @db.Uuid
-  ownerId        String @db.Uuid
-  owner          User @relation(fields: [ownerId], references: [id])
+  id             String       @id @default(uuid()) @db.Uuid
+  ownerId        String       @db.Uuid
+  owner          User         @relation(fields: [ownerId], references: [id])
   name           String
-  slug           String @unique
-    type StoreType    @default (MARKET)
-  businessUnit   BusinessUnit @default (MARKET)
-  description    String ?
-    logoUrl        String ?
-      phone          String ?
-        city           String ?
-          district       String ?
-            line1          String ?
-              latitude       Float ?
-                longitude      Float ?
-                  commissionRate Int @default (1000) // binde (1000 = %10)
-  minOrder       BigInt @default (0)
-  isActive       Boolean @default (true)
-  createdAt      DateTime @default (now())
-  updatedAt      DateTime @updatedAt
-  deletedAt      DateTime ?
+  slug           String       @unique
+  type           StoreType    @default(MARKET)
+  businessUnit   BusinessUnit @default(MARKET)
+  description    String?
+  logoUrl        String?
+  phone          String?
+  city           String?
+  district       String?
+  line1          String?
+  latitude       Float?
+  longitude      Float?
+  commissionRate Int          @default(1000) // binde (1000 = %10)
+  minOrder       BigInt       @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
 
-    categories Category[]
+  categories Category[]
   products   Product[]
   orders     Order[]
 
@@ -311,17 +312,17 @@ model Store {
 }
 
 model Category {
-  id        String @id @default (uuid()) @db.Uuid
-  storeId   String @db.Uuid
-  store     Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  id        String     @id @default(uuid()) @db.Uuid
+  storeId   String     @db.Uuid
+  store     Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
   name      String
   slug      String
-  parentId  String ? @db.Uuid
-  parent    Category ? @relation("CategoryTree", fields: [parentId], references: [id])
+  parentId  String?    @db.Uuid
+  parent    Category?  @relation("CategoryTree", fields: [parentId], references: [id])
   children  Category[] @relation("CategoryTree")
-  sortOrder Int @default (0)
-  isActive  Boolean @default (true)
-  createdAt DateTime @default (now())
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
 
   products Product[]
 
@@ -331,35 +332,35 @@ model Category {
 }
 
 model Product {
-  id          String @id @default (uuid()) @db.Uuid
-  storeId     String @db.Uuid
-  store       Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  categoryId  String ? @db.Uuid
-  category    Category ? @relation(fields: [categoryId], references: [id])
-  name        String
-  slug        String
-  description String ?
-    sku         String ?
-      imageUrl    String ?
-        price       BigInt // kuruş (minor units)
-  currency    Currency @default (TRY)
-  stock       Int @default (0)
-  unit        String ? @default ("adet")
-  desi        Float @default (0) // kargo: hacimsel ağırlık (desi)
-  weightKg    Float @default (0) // kargo: fiili ağırlık (kg)
-  komisyonTutari  BigInt @default (0) // muhasebe: komisyon (kuruş) = net × %15
-  kargoTutari     BigInt @default (0) // muhasebe: gömülü kargo + yuvarlama (kuruş)
-  malKdvTutari    BigInt @default (0) // muhasebe: satıcı KDV'si = net × kategori oranı
-  hizmetKdvTutari BigInt @default (0) // muhasebe: platform KDV'si = (komisyon+kargo) × %20
-  netFiyat    BigInt @default (0) // satıcının girdiği net fiyat (kuruş)
-  kdvOrani    Int @default (20) // ürün KDV oranı: 1 / 10 / 20
-  satisModeli String @default ("A") // A=kendi ürün, B=dropshipping
-  isActive    Boolean @default (true)
-  createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime ?
+  id              String    @id @default(uuid()) @db.Uuid
+  storeId         String    @db.Uuid
+  store           Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  categoryId      String?   @db.Uuid
+  category        Category? @relation(fields: [categoryId], references: [id])
+  name            String
+  slug            String
+  description     String?
+  sku             String?
+  imageUrl        String?
+  price           BigInt // kuruş (minor units)
+  currency        Currency  @default(TRY)
+  stock           Int       @default(0)
+  unit            String?   @default("adet")
+  desi            Float     @default(0) // kargo: hacimsel ağırlık (desi)
+  weightKg        Float     @default(0) // kargo: fiili ağırlık (kg)
+  komisyonTutari  BigInt    @default(0) // muhasebe: komisyon (kuruş) = net × %15
+  kargoTutari     BigInt    @default(0) // muhasebe: gömülü kargo + yuvarlama (kuruş)
+  malKdvTutari    BigInt    @default(0) // muhasebe: satıcı KDV'si = net × kategori oranı
+  hizmetKdvTutari BigInt    @default(0) // muhasebe: platform KDV'si = (komisyon+kargo) × %20
+  netFiyat        BigInt    @default(0) // satıcının girdiği net fiyat (kuruş)
+  kdvOrani        Int       @default(20) // ürün KDV oranı: 1 / 10 / 20
+  satisModeli     String    @default("A") // A=kendi ürün, B=dropshipping
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
 
-    cartItems CartItem[]
+  cartItems CartItem[]
 
   @@unique([storeId, slug])
   @@index([storeId, isActive])
@@ -368,11 +369,11 @@ model Product {
 }
 
 model Cart {
-  id        String @id @default (uuid()) @db.Uuid
-  userId    String @unique @db.Uuid
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeId   String ? @db.Uuid
-  createdAt DateTime @default (now())
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId   String?  @db.Uuid
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   items CartItem[]
@@ -381,14 +382,14 @@ model Cart {
 }
 
 model CartItem {
-  id        String @id @default (uuid()) @db.Uuid
-  cartId    String @db.Uuid
-  cart      Cart @relation(fields: [cartId], references: [id], onDelete: Cascade)
-  productId String @db.Uuid
-  product   Product @relation(fields: [productId], references: [id])
-  quantity  Int @default (1)
+  id        String   @id @default(uuid()) @db.Uuid
+  cartId    String   @db.Uuid
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int      @default(1)
   unitPrice BigInt // ürünün sepete eklendiği andaki fiyatı (kuruş)
-  createdAt DateTime @default (now())
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([cartId, productId])
@@ -416,48 +417,48 @@ enum PaymentStatus {
 }
 
 model Order {
-  id            String @id @default (uuid()) @db.Uuid
-  orderNo       String @unique
-  userId        String @db.Uuid
-  user          User @relation(fields: [userId], references: [id])
-  storeId       String @db.Uuid
-  store         Store @relation(fields: [storeId], references: [id])
-  businessUnit  BusinessUnit @default (MARKET)
-  status        OrderStatus @default (CONFIRMED)
-  paymentStatus PaymentStatus @default (PAID)
+  id            String        @id @default(uuid()) @db.Uuid
+  orderNo       String        @unique
+  userId        String        @db.Uuid
+  user          User          @relation(fields: [userId], references: [id])
+  storeId       String        @db.Uuid
+  store         Store         @relation(fields: [storeId], references: [id])
+  businessUnit  BusinessUnit  @default(MARKET)
+  status        OrderStatus   @default(CONFIRMED)
+  paymentStatus PaymentStatus @default(PAID)
 
   subtotal    BigInt // mal toplamı (kuruş)
-  deliveryFee BigInt @default (0)
-  discount    BigInt @default (0)
+  deliveryFee BigInt @default(0)
+  discount    BigInt @default(0)
   total       BigInt // müşterinin ödediği = subtotal + deliveryFee - discount
-  commission  BigInt @default (0) // platform komisyonu
-  vat         BigInt @default (0) // komisyon içindeki KDV (raporlama)
-  netRevenue  BigInt @default (0) // satıcı hakedişi = subtotal - commission
+  commission  BigInt @default(0) // platform komisyonu
+  vat         BigInt @default(0) // komisyon içindeki KDV (raporlama)
+  netRevenue  BigInt @default(0) // satıcı hakedişi = subtotal - commission
 
-  addressId   String ? @db.Uuid
-  addressText String ?
-    contactPhone String ? // teslimat adresi anlık kopyası
-      note        String ?
-        placedAt    DateTime @default (now())
-  confirmedAt DateTime ?
-    deliveredAt DateTime ?
-      cancelledAt DateTime ?
-        createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
+  addressId    String?   @db.Uuid
+  addressText  String?
+  contactPhone String? // teslimat adresi anlık kopyası
+  note         String?
+  placedAt     DateTime  @default(now())
+  confirmedAt  DateTime?
+  deliveredAt  DateTime?
+  cancelledAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   items    OrderItem[]
-  delivery Delivery ?
+  delivery Delivery?
 
-    @@index([userId])
-    @@index([storeId, status])
-    @@index([orderNo])
-    @@map("orders")
+  @@index([userId])
+  @@index([storeId, status])
+  @@index([orderNo])
+  @@map("orders")
 }
 
 model OrderItem {
-  id        String @id @default (uuid()) @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
   orderId   String @db.Uuid
-  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productId String @db.Uuid
   name      String // anlık kopya
   unitPrice BigInt // anlık kopya (kuruş)
@@ -493,22 +494,22 @@ enum KargoFirmasi {
 }
 
 model Delivery {
-  id          String @id @default (uuid()) @db.Uuid
-  orderId     String @unique @db.Uuid
-  order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  courierId   String ? @db.Uuid
-  courier     User ? @relation("CourierDeliveries", fields: [courierId], references: [id])
-  status      DeliveryStatus @default (PENDING)
-  fee         BigInt @default (0) // kurye hakedişi (= order.deliveryFee)
-  note        String ?
-    yontem       DeliveryYontem @default (KENDI) // kendi kuryesi mi, aracı kurum mu
-  kargoFirmasi KargoFirmasi ?                  // ARACI ise hangi firma
-    takipNo      String ? @unique         // aracı firmanın takip no'su (public takip anahtarı)
-  assignedAt  DateTime ?
-    pickedUpAt  DateTime ?
-      deliveredAt DateTime ?
-        createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
+  id           String         @id @default(uuid()) @db.Uuid
+  orderId      String         @unique @db.Uuid
+  order        Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierId    String?        @db.Uuid
+  courier      User?          @relation("CourierDeliveries", fields: [courierId], references: [id])
+  status       DeliveryStatus @default(PENDING)
+  fee          BigInt         @default(0) // kurye hakedişi (= order.deliveryFee)
+  note         String?
+  yontem       DeliveryYontem @default(KENDI) // kendi kuryesi mi, aracı kurum mu
+  kargoFirmasi KargoFirmasi? // ARACI ise hangi firma
+  takipNo      String?        @unique // aracı firmanın takip no'su (public takip anahtarı)
+  assignedAt   DateTime?
+  pickedUpAt   DateTime?
+  deliveredAt  DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
   @@index([courierId, status])
   @@index([status])
@@ -521,12 +522,12 @@ model Delivery {
 // ============================================================
 
 enum YukIlaniDurum {
-  ACIK          // ilan acik, teklif bekliyor
+  ACIK // ilan acik, teklif bekliyor
   TEKLIF_ALINDI // en az bir teklif geldi
-  ESLESTI       // teklif kabul edildi, tasiyici belli
-  TASINIYOR     // yuk yolda
-  TAMAMLANDI    // teslim edildi, komisyon islendi
-  IPTAL         // ilan iptal
+  ESLESTI // teklif kabul edildi, tasiyici belli
+  TASINIYOR // yuk yolda
+  TAMAMLANDI // teslim edildi, komisyon islendi
+  IPTAL // ilan iptal
 }
 
 enum AracTipi {
@@ -542,73 +543,76 @@ enum AracTipi {
 
 enum AracIlaniDurum {
   MUSAIT // bosta, yuk ariyor
-  DOLU   // bir ise atandi
-  PASIF  // tasiyici kapatti
+  DOLU // bir ise atandi
+  PASIF // tasiyici kapatti
 }
 
 enum YukTeklifDurum {
-  BEKLIYOR     // yuk veren degerlendirsin
-  KABUL        // kabul edildi (ilan ESLESTI olur)
-  RED          // reddedildi / baska teklif kabul edildi
+  BEKLIYOR // yuk veren degerlendirsin
+  KABUL // kabul edildi (ilan ESLESTI olur)
+  RED // reddedildi / baska teklif kabul edildi
   GERI_CEKILDI // tasiyici teklifini cekti
 }
 
 model YukIlani {
-  id               String @id @default (uuid()) @db.Uuid
-  veren            User @relation("VerdigiYukler", fields: [verenId], references: [id])
-  verenId          String @db.Uuid
-  nereden          String        // il/ilce (or. "Istanbul / Tuzla")
+  id               String        @id @default(uuid()) @db.Uuid
+  veren            User          @relation("VerdigiYukler", fields: [verenId], references: [id])
+  verenId          String        @db.Uuid
+  nereden          String // il/ilce (or. "Istanbul / Tuzla")
   nereye           String
-  yukTipi          String        // "Paletli Urun", "Tekstil", "Mobilya"...
-  tonajKg          Int           // kilogram cinsinden
-  aracTipiIhtiyaci AracTipi ?     // istenen arac tipi (opsiyonel)
-    yuklemeTarihi    DateTime
-  aciklama         String ?
-    butceKurus       BigInt ?       // yuk verenin tahmini butcesi (opsiyonel)
-      durum            YukIlaniDurum @default (ACIK)
-  seciliTeklif     YukTeklif ? @relation("SeciliTeklif", fields: [seciliTeklifId], references: [id])
-  seciliTeklifId   String ? @unique @db.Uuid
+  yukTipi          String // "Paletli Urun", "Tekstil", "Mobilya"...
+  tonajKg          Int // kilogram cinsinden
+  aracTipiIhtiyaci AracTipi? // istenen arac tipi (opsiyonel)
+  yuklemeTarihi    DateTime
+  aciklama         String?
+  butceKurus       BigInt? // yuk verenin tahmini butcesi (opsiyonel)
+  durum            YukIlaniDurum @default(ACIK)
+  seciliTeklif     YukTeklif?    @relation("SeciliTeklif", fields: [seciliTeklifId], references: [id])
+  seciliTeklifId   String?       @unique @db.Uuid
   teklifler        YukTeklif[]   @relation("IlanTeklifleri")
-  createdAt        DateTime @default (now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
   @@index([durum])
   @@index([verenId])
   @@map("yuk_ilanlari")
 }
 
 model AracIlani {
-  id          String @id @default (uuid()) @db.Uuid
-  tasiyici    User @relation("AracIlanlari", fields: [tasiyiciId], references: [id])
-  tasiyiciId  String @db.Uuid
+  id          String         @id @default(uuid()) @db.Uuid
+  tasiyici    User           @relation("AracIlanlari", fields: [tasiyiciId], references: [id])
+  tasiyiciId  String         @db.Uuid
   aracTipi    AracTipi
-  nereden     String         // cikis bolgesi
-  nereye      String         // gidecegi yon
+  nereden     String // cikis bolgesi
+  nereye      String // gidecegi yon
   cikisTarihi DateTime
   kapasiteKg  Int
-  durum       AracIlaniDurum @default (MUSAIT)
-  createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
+  durum       AracIlaniDurum @default(MUSAIT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
   @@index([durum])
   @@index([tasiyiciId])
   @@map("arac_ilanlari")
 }
 
 model YukTeklif {
-  id          String @id @default (uuid()) @db.Uuid
-  yukIlani    YukIlani @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id])
-  yukIlaniId  String @db.Uuid
-  tasiyici    User @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
-  tasiyiciId  String @db.Uuid
-  fiyatKurus  BigInt         // tasiyicinin teklif ettigi tasima bedeli (kurus)
-  mesaj       String ?
+  id          String         @id @default(uuid()) @db.Uuid
+  yukIlani    YukIlani       @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id])
+  yukIlaniId  String         @db.Uuid
+  tasiyici    User           @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
+  tasiyiciId  String         @db.Uuid
+  fiyatKurus  BigInt // tasiyicinin teklif ettigi tasima bedeli (kurus)
+  mesaj       String?
   // Is delili: teklif KABUL edildiginde damgalanir (B modeli - eslesme kaniti)
-  kabulTarihi DateTime ?
-  kabulIp     String ?
-    kabulCihaz  String ?
-    durum       YukTeklifDurum @default (BEKLIYOR)
-  seciliOlan  YukIlani ? @relation("SeciliTeklif")
-  createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
+  kabulTarihi DateTime?
+  kabulIp     String?
+  kabulCihaz  String?
+  durum       YukTeklifDurum @default(BEKLIYOR)
+  seciliOlan  YukIlani?      @relation("SeciliTeklif")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
   @@index([yukIlaniId])
   @@index([tasiyiciId])
   @@map("yuk_teklifleri")
@@ -621,27 +625,28 @@ model YukTeklif {
 
 enum KomisyonOdemeYontem {
   HAVALE // EFT/havale + admin onayi (su an aktif)
-  KART   // POS entegrasyonu sonrasi aktif olacak
+  KART // POS entegrasyonu sonrasi aktif olacak
 }
 
 enum KomisyonOdemeDurum {
-  BEKLIYOR  // havale bildirildi, admin onayi bekliyor
+  BEKLIYOR // havale bildirildi, admin onayi bekliyor
   ONAYLANDI // admin onayladi, borc dustu
-  RED       // reddedildi
+  RED // reddedildi
 }
 
 model KomisyonOdeme {
-  id          String @id @default (uuid()) @db.Uuid
-  tasiyici    User @relation("KomisyonOdemeleri", fields: [tasiyiciId], references: [id])
-  tasiyiciId  String @db.Uuid
-  tutarKurus  BigInt              // odenen komisyon tutari (kurus)
-  yontem      KomisyonOdemeYontem @default (HAVALE)
-  durum       KomisyonOdemeDurum @default (BEKLIYOR)
-  dekont      String ?             // havale dekont/aciklama (kullanici girer)
-    adminNot    String ?             // admin onay/red notu
-      onaylayanId String ? @db.Uuid
-  createdAt   DateTime @default (now())
-  updatedAt   DateTime @updatedAt
+  id          String              @id @default(uuid()) @db.Uuid
+  tasiyici    User                @relation("KomisyonOdemeleri", fields: [tasiyiciId], references: [id])
+  tasiyiciId  String              @db.Uuid
+  tutarKurus  BigInt // odenen komisyon tutari (kurus)
+  yontem      KomisyonOdemeYontem @default(HAVALE)
+  durum       KomisyonOdemeDurum  @default(BEKLIYOR)
+  dekont      String? // havale dekont/aciklama (kullanici girer)
+  adminNot    String? // admin onay/red notu
+  onaylayanId String?             @db.Uuid
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
   @@index([tasiyiciId])
   @@index([durum])
   @@map("komisyon_odemeleri")
@@ -655,24 +660,73 @@ model KomisyonOdeme {
 // ============================================================
 
 enum SozlesmeTipi {
-  TASIYICI  // tasiyici (CARRIER) uyelik sozlesmesi
+  TASIYICI // tasiyici (CARRIER) uyelik sozlesmesi
   YUK_VEREN // yuk veren (LOAD_CUSTOMER) uyelik sozlesmesi
 }
 
 model SozlesmeOnay {
-  id           String @id @default (uuid()) @db.Uuid
-  kullanici    User @relation("SozlesmeOnaylari", fields: [kullaniciId], references: [id])
-  kullaniciId  String @db.Uuid
+  id           String       @id @default(uuid()) @db.Uuid
+  kullanici    User         @relation("SozlesmeOnaylari", fields: [kullaniciId], references: [id])
+  kullaniciId  String       @db.Uuid
   sozlesmeTipi SozlesmeTipi
-  surum        String       // onaylanan metin surumu (or. "v1-taslak"); avukat degisince artar
-  metinHash    String       // onaylanan metnin SHA-256 hash'i (degismedi kaniti)
-  ip           String ?      // onayin geldigi IP (kanit)
-    cihaz        String ?      // user-agent / cihaz (kanit)
-      onayTarihi   DateTime @default (now())
-  createdAt    DateTime @default (now())
+  surum        String // onaylanan metin surumu (or. "v1-taslak"); avukat degisince artar
+  metinHash    String // onaylanan metnin SHA-256 hash'i (degismedi kaniti)
+  ip           String? // onayin geldigi IP (kanit)
+  cihaz        String? // user-agent / cihaz (kanit)
+  onayTarihi   DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+
   // Her kullanici, her sozlesme tipinin her surumunu BIR KEZ onaylar
   @@unique([kullaniciId, sozlesmeTipi, surum])
   @@index([kullaniciId])
   @@map("sozlesme_onaylari")
 }
 
+// ============================================================
+//  PARTNER BASVURULARI — satici / franchise / restoran / kurye
+//  Tek tablo, tip ayrimli. Tum alanlar opsiyonel (tipe gore dolar).
+// ============================================================
+
+enum PartnerBasvuruTip {
+  SELLER // Carsi satici basvurusu
+  FRANCHISE // Coffee franchise basvurusu
+  RESTAURANT // Restoran (Yemek) basvurusu
+  COURIER // Kurye basvurusu
+}
+
+enum PartnerBasvuruDurum {
+  BEKLIYOR // yeni geldi, incelenmedi
+  INCELENDI // admin baktı
+  ONAYLANDI // kabul edildi
+  RED // reddedildi
+}
+
+model PartnerBasvuru {
+  id    String              @id @default(uuid()) @db.Uuid
+  tip   PartnerBasvuruTip
+  durum PartnerBasvuruDurum @default(BEKLIYOR)
+
+  // Ortak alanlar (tum formlarda var)
+  adSoyad String
+  telefon String
+  il      String?
+
+  // Tipe ozel alanlar (opsiyonel)
+  isletme      String? // SELLER: isletme adi
+  restoran     String? // RESTAURANT: restoran adi
+  butce        String? // FRANCHISE: yatirim butcesi
+  aracTipi     String? // COURIER: arac tipi (motor/bisiklet/araba - serbest)
+  businessUnit BusinessUnit? // SELLER icin CARSI vb.
+
+  // Kanit / iletisim
+  not   String? // admin notu
+  ip    String?
+  cihaz String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tip])
+  @@index([durum])
+  @@map("partner_basvurulari")
+}

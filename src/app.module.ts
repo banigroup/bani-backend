@@ -16,6 +16,7 @@ import { OrdersModule } from './orders/orders.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { LoadModule } from './load/load.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
+import { PartnerModule } from './partner/partner.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
@@ -32,6 +33,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
     OrdersModule,
     DeliveryModule,
     LoadModule,
+    PartnerModule,
     SuperadminModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
