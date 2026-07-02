@@ -59,6 +59,25 @@ export class LoadService {
     });
   }
 
+  // Vitrin (giris gerektirmez): son acik ilanlar, sadece guvenli ozet alanlari
+  async vitrinSonIlanlar() {
+    return this.prisma.yukIlani.findMany({
+      where: { durum: YukIlaniDurum.ACIK },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+      select: {
+        id: true,
+        nereden: true,
+        nereye: true,
+        yukTipi: true,
+        tonajKg: true,
+        aracTipiIhtiyaci: true,
+        yuklemeTarihi: true,
+        createdAt: true,
+      },
+    });
+  }
+
   // Yuk verenin kendi ilanlari (tekliflerle birlikte)
   async ilanlarim(user: AuthUser) {
     return this.prisma.yukIlani.findMany({
