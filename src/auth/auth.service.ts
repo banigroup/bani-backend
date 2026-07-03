@@ -17,7 +17,7 @@ export class AuthService {
 
   async requestOtp(phone: string) {
     const code = await this.otp.issue(phone);
-    const devCode = process.env.NODE_ENV !== 'production' ? code : undefined;
+    const devCode = (process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_CODE === 'true') ? code : undefined;
     return { sent: true, devCode };
   }
 
