@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { UserStatus, Role } from '@prisma/client';
+import { UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp/otp.service';
 import { TokenService } from './tokens/token.service';
@@ -21,19 +21,12 @@ export class AuthService {
     return { sent: true, devCode };
   }
 
-  async verifyOtp(phone: string, code: string, meta: ReqMeta, roller?: string[]) {
+  async verifyOtp(phone: string, code: string, meta: ReqMeta) {
     await this.otp.verify(phone, code);
     const user = await this.prisma.user.upsert({
       where: { phone },
       update: { phoneVerified: true, status: UserStatus.ACTIVE },
-      create: {
-        phone, phoneVerified: true, status: UserStatus.ACTIVE,
-        roles: (() => {
-          const izinli = ['LOAD_CUSTOMER', 'CARRIER'];
-          const secilen = (roller || []).filter((r) => izinli.includes(r)) as Role[];
-          return secilen.length ? secilen : [Role.CUSTOMER];
-        })(),
-      },
+      create: { phone, phoneVerified: true, status: UserStatus.ACTIVE },
     });
     const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles: user.roles });
     const refreshToken = await this.tokens.issueRefresh(user.id, meta);

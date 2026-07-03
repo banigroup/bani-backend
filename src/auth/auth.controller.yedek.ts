@@ -25,7 +25,7 @@ export class AuthController {
   @HttpCode(200)
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   verifyOtp(@Body() dto: VerifyOtpDto, @Req() req: Request) {
-    return this.auth.verifyOtp(dto.phone, dto.code, meta(req), dto.roller);
+    return this.auth.verifyOtp(dto.phone, dto.code, meta(req));
   }
 
   @Post('guest-session')

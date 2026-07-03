@@ -1,4 +1,4 @@
-import { IsString, Length, Matches, IsOptional, IsArray } from 'class-validator';
+import { IsString, Length, Matches } from 'class-validator';
 
 export class VerifyOtpDto {
   @IsString()
@@ -8,8 +8,4 @@ export class VerifyOtpDto {
   @IsString()
   @Length(4, 8)
   code!: string;
-
-  @IsOptional()
-  @IsArray()
-  roller?: string[];
 }
