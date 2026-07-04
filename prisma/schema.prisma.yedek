@@ -60,9 +60,6 @@ model User {
   verdigiTeklifler  YukTeklif[]     @relation("VerdigiTeklifler")
   komisyonOdemeleri KomisyonOdeme[] @relation("KomisyonOdemeleri")
   sozlesmeOnaylari  SozlesmeOnay[]  @relation("SozlesmeOnaylari")
-  loadFirmaProfil   LoadFirmaProfil?
-  loadTasiyiciProfil LoadTasiyiciProfil?
-  loadBelgeler      LoadBelge[]
 
   @@index([phone])
   @@map("users")
@@ -732,68 +729,4 @@ model PartnerBasvuru {
   @@index([tip])
   @@index([durum])
   @@map("partner_basvurulari")
-}
-
-// ============ BANİLOAD KYC PROFİLLERİ ============
-
-enum LoadBelgeTipi {
-  EHLIYET
-  SRC
-  K_BELGE
-  ARAC_RUHSAT
-  SIGORTA
-  VERGI_LEVHASI
-  IMZA_SIRKULERI
-  DIGER
-}
-
-enum LoadBelgeDurum {
-  BEKLIYOR
-  ONAYLANDI
-  REDDEDILDI
-}
-
-model LoadFirmaProfil {
-  id            String   @id @default(uuid()) @db.Uuid
-  user          User     @relation(fields: [userId], references: [id])
-  userId        String   @unique @db.Uuid
-  unvan         String
-  vergiDairesi  String
-  vkn           String
-  yetkiliAd     String
-  yetkiliSoyad  String
-  email         String
-  adres         String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  @@map("load_firma_profilleri")
-}
-
-model LoadTasiyiciProfil {
-  id         String   @id @default(uuid()) @db.Uuid
-  user       User     @relation(fields: [userId], references: [id])
-  userId     String   @unique @db.Uuid
-  ad         String
-  soyad      String
-  tcKimlik   String
-  email      String
-  plaka      String
-  ehliyetNo  String
-  srcNo      String
-  kBelgeNo   String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  @@map("load_tasiyici_profilleri")
-}
-
-model LoadBelge {
-  id           String         @id @default(uuid()) @db.Uuid
-  user         User           @relation(fields: [userId], references: [id])
-  userId       String         @db.Uuid
-  tip          LoadBelgeTipi
-  dosyaUrl     String
-  durum        LoadBelgeDurum @default(BEKLIYOR)
-  createdAt    DateTime       @default(now())
-  @@index([userId])
-  @@map("load_belgeleri")
 }
