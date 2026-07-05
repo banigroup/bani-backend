@@ -568,4 +568,36 @@ export class LoadService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  // ============ ADMIN: BELGE ONAY ============
+  async bekleyenBelgeler(user: AuthUser) {
+    if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    return this.prisma.loadBelge.findMany({
+      where: { durum: 'BEKLIYOR' as any },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: {
+            id: true, phone: true, roles: true,
+            loadFirmaProfil: { select: { unvan: true, vkn: true, yetkiliAd: true, yetkiliSoyad: true } },
+            loadTasiyiciProfil: { select: { ad: true, soyad: true, tcKimlik: true, plaka: true } },
+          },
+        },
+      },
+    });
+  }
+
+  async belgeOnayla(user: AuthUser, belgeId: string) {
+    if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    const belge = await this.prisma.loadBelge.findUnique({ where: { id: belgeId } });
+    if (!belge) throw new NotFoundException('Belge bulunamadı');
+    return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'ONAYLANDI' as any } });
+  }
+
+  async belgeReddet(user: AuthUser, belgeId: string) {
+    if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    const belge = await this.prisma.loadBelge.findUnique({ where: { id: belgeId } });
+    if (!belge) throw new NotFoundException('Belge bulunamadı');
+    return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'REDDEDILDI' as any } });
+  }
 }

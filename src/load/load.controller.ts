@@ -175,4 +175,20 @@ sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @R
   belgelerim(@CurrentUser() user: AuthUser) {
     return this.load.belgelerim(user);
   }
+
+  // ----- ADMIN: Belge onay -----
+  @Get('admin/belgeler/bekleyenler')
+  bekleyenBelgeler(@CurrentUser() user: AuthUser) {
+    return this.load.bekleyenBelgeler(user);
+  }
+
+  @Patch('belge/:id/onayla')
+  belgeOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.load.belgeOnayla(user, id);
+  }
+
+  @Patch('belge/:id/reddet')
+  belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.load.belgeReddet(user, id);
+  }
 }
