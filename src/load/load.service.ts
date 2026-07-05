@@ -512,4 +512,44 @@ export class LoadService {
   }
 }
 
+
+  // ============ KYC PROFIL KAYDET ============
+  async profilKaydet(user: AuthUser, dto: any) {
+    const kullanici = await this.prisma.user.findUnique({ where: { id: user.id } });
+    if (!kullanici) throw new NotFoundException('Kullanıcı bulunamadı');
+    const roller = kullanici.roles || [];
+    if (roller.includes(Role.LOAD_CUSTOMER)) {
+      if (!dto.firma) throw new BadRequestException('Firma bilgileri zorunludur');
+      const f = dto.firma;
+      await this.prisma.loadFirmaProfil.upsert({
+        where: { userId: user.id },
+        update: { unvan: f.unvan, vergiDairesi: f.vergiDairesi, vkn: f.vkn, yetkiliAd: f.yetkiliAd, yetkiliSoyad: f.yetkiliSoyad, email: f.email, adres: f.adres },
+        create: { userId: user.id, unvan: f.unvan, vergiDairesi: f.vergiDairesi, vkn: f.vkn, yetkiliAd: f.yetkiliAd, yetkiliSoyad: f.yetkiliSoyad, email: f.email, adres: f.adres },
+      });
+    }
+    if (roller.includes(Role.CARRIER)) {
+      if (!dto.tasiyici) throw new BadRequestException('Taşıyıcı bilgileri zorunludur');
+      const t = dto.tasiyici;
+      await this.prisma.loadTasiyiciProfil.upsert({
+        where: { userId: user.id },
+        update: { ad: t.ad, soyad: t.soyad, tcKimlik: t.tcKimlik, email: t.email, plaka: t.plaka, ehliyetNo: t.ehliyetNo, srcNo: t.srcNo, kBelgeNo: t.kBelgeNo },
+        create: { userId: user.id, ad: t.ad, soyad: t.soyad, tcKimlik: t.tcKimlik, email: t.email, plaka: t.plaka, ehliyetNo: t.ehliyetNo, srcNo: t.srcNo, kBelgeNo: t.kBelgeNo },
+      });
+    }
+    return { ok: true };
+  }
+
+  async profilDurumu(user: AuthUser) {
+    const kullanici = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      include: { loadFirmaProfil: true, loadTasiyiciProfil: true },
+    });
+    if (!kullanici) throw new NotFoundException('Kullanıcı bulunamadı');
+    const roller = kullanici.roles || [];
+    const firmaGerekli = roller.includes(Role.LOAD_CUSTOMER);
+    const tasiyiciGerekli = roller.includes(Role.CARRIER);
+    const firmaTamam = !firmaGerekli || !!kullanici.loadFirmaProfil;
+    const tasiyiciTamam = !tasiyiciGerekli || !!kullanici.loadTasiyiciProfil;
+    return { firmaGerekli, tasiyiciGerekli, firmaTamam, tasiyiciTamam, tamam: firmaTamam && tasiyiciTamam };
+  }
 }

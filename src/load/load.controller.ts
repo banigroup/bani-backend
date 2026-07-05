@@ -11,6 +11,7 @@ import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
 import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
 import { SozlesmeOnaylaDto } from './dto/sozlesme-onayla.dto';
+import { LoadProfilKaydetDto } from './dto/load-profil-kaydet.dto';
 
 @Controller('load')
 @UseGuards(JwtAuthGuard)
@@ -143,4 +144,15 @@ sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @R
   return this.load.sozlesmeOnayla(user, dto.sozlesmeTipi, ip, cihaz);
 }
 
+
+  // ----- KYC Profil -----
+  @Post('profil')
+  profilKaydet(@CurrentUser() user: AuthUser, @Body() dto: LoadProfilKaydetDto) {
+    return this.load.profilKaydet(user, dto);
+  }
+
+  @Get('profil/durum')
+  profilDurumu(@CurrentUser() user: AuthUser) {
+    return this.load.profilDurumu(user);
+  }
 }
