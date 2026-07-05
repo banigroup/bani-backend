@@ -532,8 +532,8 @@ export class LoadService {
       const t = dto.tasiyici;
       await this.prisma.loadTasiyiciProfil.upsert({
         where: { userId: user.id },
-        update: { ad: t.ad, soyad: t.soyad, tcKimlik: t.tcKimlik, email: t.email, plaka: t.plaka, ehliyetNo: t.ehliyetNo, srcNo: t.srcNo, kBelgeNo: t.kBelgeNo },
-        create: { userId: user.id, ad: t.ad, soyad: t.soyad, tcKimlik: t.tcKimlik, email: t.email, plaka: t.plaka, ehliyetNo: t.ehliyetNo, srcNo: t.srcNo, kBelgeNo: t.kBelgeNo },
+        update: { ad: t.ad, soyad: t.soyad, tcKimlik: t.tcKimlik, email: t.email || '', plaka: t.plaka, ehliyetNo: t.ehliyetNo, srcNo: t.srcNo, kBelgeNo: t.kBelgeNo },
+        create: { userId: user.id, ad: t.ad, soyad: t.soyad, tcKimlik: t.tcKimlik, email: t.email || '', plaka: t.plaka, ehliyetNo: t.ehliyetNo, srcNo: t.srcNo, kBelgeNo: t.kBelgeNo },
       });
     }
     return { ok: true };

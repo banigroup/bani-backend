@@ -34,8 +34,8 @@ export class TasiyiciProfilDto {
   @IsString() @Matches(/^[0-9]{11}$/, { message: 'TC Kimlik No 11 haneli rakam olmalı' })
   tcKimlik!: string;
 
-  @IsEmail({}, { message: 'Geçerli bir e-posta girin' })
-  email!: string;
+  @IsOptional() @IsString()
+  email?: string;
 
   @IsString() @MinLength(4, { message: 'Plaka en az 4 karakter olmalı' })
   plaka!: string;
