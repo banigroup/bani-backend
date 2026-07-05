@@ -552,4 +552,20 @@ export class LoadService {
     const tasiyiciTamam = !tasiyiciGerekli || !!kullanici.loadTasiyiciProfil;
     return { firmaGerekli, tasiyiciGerekli, firmaTamam, tasiyiciTamam, tamam: firmaTamam && tasiyiciTamam };
   }
+
+  // ============ KYC BELGE (Cloudinary) ============
+  async belgeKaydet(user: AuthUser, tip: string, dosyaUrl: string) {
+    const gecerliTipler = ['EHLIYET', 'SRC', 'K_BELGE', 'ARAC_RUHSAT', 'SIGORTA', 'VERGI_LEVHASI', 'IMZA_SIRKULERI', 'DIGER'];
+    if (!gecerliTipler.includes(tip)) throw new BadRequestException('Geçersiz belge tipi');
+    return this.prisma.loadBelge.create({
+      data: { userId: user.id, tip: tip as any, dosyaUrl, durum: 'BEKLIYOR' as any },
+    });
+  }
+
+  async belgelerim(user: AuthUser) {
+    return this.prisma.loadBelge.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 }

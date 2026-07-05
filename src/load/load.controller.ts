@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, UseGuards, Req,
+  Controller, Get, Post, Patch, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { SozlesmeTipi } from '@prisma/client';
@@ -12,6 +12,8 @@ import { TeklifVerDto } from './dto/teklif-ver.dto';
 import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
 import { SozlesmeOnaylaDto } from './dto/sozlesme-onayla.dto';
 import { LoadProfilKaydetDto } from './dto/load-profil-kaydet.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { cloudinaryUpload } from './cloudinary.util';
 
 @Controller('load')
 @UseGuards(JwtAuthGuard)
@@ -154,5 +156,23 @@ sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @R
   @Get('profil/durum')
   profilDurumu(@CurrentUser() user: AuthUser) {
     return this.load.profilDurumu(user);
+  }
+
+  // ----- KYC Belge yukleme (Cloudinary) -----
+  @Post('belge')
+  @UseInterceptors(FileInterceptor('dosya'))
+  async belgeYukle(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() dosya: any,
+    @Body('tip') tip: string,
+  ) {
+    if (!dosya) throw new BadRequestException('Dosya gerekli');
+    const url = await cloudinaryUpload(dosya.buffer, `baniload/${user.id}`);
+    return this.load.belgeKaydet(user, tip, url);
+  }
+
+  @Get('belgelerim')
+  belgelerim(@CurrentUser() user: AuthUser) {
+    return this.load.belgelerim(user);
   }
 }
