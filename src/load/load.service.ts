@@ -84,6 +84,25 @@ export class LoadService {
     });
   }
 
+  // Vitrin (giris gerektirmez): son musait araclar, guvenli ozet alanlari
+  async vitrinSonAraclar() {
+    return this.prisma.aracIlani.findMany({
+      where: { durum: AracIlaniDurum.MUSAIT, cikisTarihi: { gte: this.bugunBasi() } },
+      orderBy: { cikisTarihi: 'asc' },
+      take: 6,
+      select: {
+        id: true,
+        nereden: true,
+        nereye: true,
+        aracTipi: true,
+        kapasiteKg: true,
+        cikisTarihi: true,
+        beklenenFiyatKurus: true,
+        createdAt: true,
+      },
+    });
+  }
+
   // Yuk verenin kendi ilanlari (tekliflerle birlikte)
   async ilanlarim(user: AuthUser) {
     return this.prisma.yukIlani.findMany({
