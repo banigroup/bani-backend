@@ -558,6 +558,11 @@ enum YukTeklifDurum {
   GERI_CEKILDI // tasiyici teklifini cekti
 }
 
+enum TeklifTaraf {
+  TASIYICI
+  FIRMA
+}
+
 model YukIlani {
   id               String        @id @default(uuid()) @db.Uuid
   veren            User          @relation("VerdigiYukler", fields: [verenId], references: [id])
@@ -628,20 +633,21 @@ model YukTeklif {
 }
 
 model AracTeklif {
-  id          String         @id @default(uuid()) @db.Uuid
-  aracIlani   AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id])
-  aracIlaniId String         @db.Uuid
-  veren       User           @relation("VerdigiAracTeklifleri", fields: [verenId], references: [id])
-  verenId     String         @db.Uuid
-  fiyatKurus  BigInt // firmanin teklif ettigi navlun (kurus)
-  mesaj       String?
-  kabulTarihi DateTime?
-  kabulIp     String?
-  kabulCihaz  String?
-  durum       YukTeklifDurum @default(BEKLIYOR)
-  seciliOlan  AracIlani?     @relation("SeciliAracTeklif")
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id            String         @id @default(uuid()) @db.Uuid
+  aracIlani     AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id])
+  aracIlaniId   String         @db.Uuid
+  veren         User           @relation("VerdigiAracTeklifleri", fields: [verenId], references: [id])
+  verenId       String         @db.Uuid
+  fiyatKurus    BigInt // firmanin teklif ettigi navlun (kurus)
+  mesaj         String?
+  kabulTarihi   DateTime?
+  kabulIp       String?
+  kabulCihaz    String?
+  durum         YukTeklifDurum @default(BEKLIYOR)
+  beklenenTaraf TeklifTaraf    @default(TASIYICI) // kimin onayi bekleniyor
+  seciliOlan    AracIlani?     @relation("SeciliAracTeklif")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   @@index([aracIlaniId])
   @@index([verenId])

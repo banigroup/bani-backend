@@ -96,6 +96,11 @@ export class LoadController {
     return this.load.aracTeklifReddet(user, id);
   }
 
+  @Patch('arac-teklif/:id/karsi')
+  aracKarsiTeklif(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { yeniFiyatKurus: number }) {
+    return this.load.aracKarsiTeklif(user, id, body.yeniFiyatKurus);
+  }
+
   // ----- Teklif -----
   @Post('teklif')
   teklifVer(@CurrentUser() user: AuthUser, @Body() dto: TeklifVerDto) {

@@ -211,7 +211,12 @@ export class LoadService {
     const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: teklifId }, include: { aracIlani: true } });
     if (!teklif) throw new NotFoundException('Teklif bulunamadi');
     const ilan = teklif.aracIlani;
-    if (ilan.tasiyiciId !== user.id) throw new ForbiddenException('Bu arac ilani size ait degil');
+    const kamyoncuMu = ilan.tasiyiciId === user.id;
+    const firmaMi = teklif.verenId === user.id;
+    if (!kamyoncuMu && !firmaMi) throw new ForbiddenException('Bu teklif sizinle ilgili degil');
+    // beklenenTaraf'in onayi bekleniyor: TASIYICI ise kamyoncu, FIRMA ise firma onaylayabilir
+    if (teklif.beklenenTaraf === 'TASIYICI' && !kamyoncuMu) throw new ForbiddenException('Su an karsi tarafin yanitini bekliyor');
+    if (teklif.beklenenTaraf === 'FIRMA' && !firmaMi) throw new ForbiddenException('Su an karsi tarafin yanitini bekliyor');
     if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Bu teklif degerlendirilemez (zaten islenmis)');
     if (ilan.durum !== AracIlaniDurum.MUSAIT) throw new ConflictException('Bu arac icin artik eslestirme yapilamaz');
     return this.prisma.$transaction(async (tx) => {
@@ -228,9 +233,31 @@ export class LoadService {
   async aracTeklifReddet(user: AuthUser, teklifId: string) {
     const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: teklifId }, include: { aracIlani: true } });
     if (!teklif) throw new NotFoundException('Teklif bulunamadi');
-    if (teklif.aracIlani.tasiyiciId !== user.id) throw new ForbiddenException('Bu arac ilani size ait degil');
+    const kamyoncuMu = teklif.aracIlani.tasiyiciId === user.id;
+    const firmaMi = teklif.verenId === user.id;
+    if (!kamyoncuMu && !firmaMi) throw new ForbiddenException('Bu teklif sizinle ilgili degil');
     if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Sadece bekleyen teklif reddedilebilir');
     return this.prisma.aracTeklif.update({ where: { id: teklifId }, data: { durum: YukTeklifDurum.RED } });
+  }
+
+  // KARSI TEKLIF: fiyati gunceller, onay sirasini karsi tarafa gecirir
+  async aracKarsiTeklif(user: AuthUser, teklifId: string, yeniFiyatKurus: number) {
+    const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: teklifId }, include: { aracIlani: true } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    const ilan = teklif.aracIlani;
+    const kamyoncuMu = ilan.tasiyiciId === user.id;
+    const firmaMi = teklif.verenId === user.id;
+    if (!kamyoncuMu && !firmaMi) throw new ForbiddenException('Bu teklif sizinle ilgili degil');
+    if (teklif.beklenenTaraf === 'TASIYICI' && !kamyoncuMu) throw new ForbiddenException('Su an karsi tarafin yanitini bekliyor');
+    if (teklif.beklenenTaraf === 'FIRMA' && !firmaMi) throw new ForbiddenException('Su an karsi tarafin yanitini bekliyor');
+    if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Bu teklif icin karsi teklif verilemez');
+    if (yeniFiyatKurus <= 0) throw new BadRequestException('Fiyat pozitif olmali');
+    // sira karsi tarafa gecer
+    const yeniTaraf = kamyoncuMu ? 'FIRMA' : 'TASIYICI';
+    return this.prisma.aracTeklif.update({
+      where: { id: teklifId },
+      data: { fiyatKurus: BigInt(yeniFiyatKurus), beklenenTaraf: yeniTaraf as any },
+    });
   }
 
     // ============ TEKLIF (tasiyici verir) ============
