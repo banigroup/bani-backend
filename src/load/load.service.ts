@@ -133,6 +133,8 @@ export class LoadService {
         nereye: dto.nereye,
         cikisTarihi: new Date(dto.cikisTarihi),
         kapasiteKg: dto.kapasiteKg,
+        beklenenFiyatKurus: dto.beklenenFiyatKurus != null ? BigInt(dto.beklenenFiyatKurus) : null,
+        aciklama: dto.aciklama ?? null,
         durum: AracIlaniDurum.MUSAIT,
       },
     });
@@ -150,6 +152,13 @@ export class LoadService {
     return this.prisma.aracIlani.findMany({
       where: { tasiyiciId: user.id },
       orderBy: { createdAt: 'desc' },
+      include: {
+        teklifler: {
+          orderBy: { fiyatKurus: 'desc' },
+          include: { veren: { select: { id: true, name: true, surname: true, phone: true } } },
+        },
+        seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true } } } },
+      },
     });
   }
 
@@ -163,7 +172,68 @@ export class LoadService {
     });
   }
 
-  // ============ TEKLIF (tasiyici verir) ============
+
+  // ============ ARAC TEKLIF SISTEMI (firma -> arac, kamyoncu onaylar) ============
+
+  async aracTeklifVer(user: AuthUser, dto: { aracIlaniId: string; fiyatKurus: number; mesaj?: string }) {
+    await this.sozlesmeKontrolu(user.id, SozlesmeTipi.YUK_VEREN);
+    const ilan = await this.prisma.aracIlani.findUnique({ where: { id: dto.aracIlaniId } });
+    if (!ilan) throw new NotFoundException('Arac ilani bulunamadi');
+    if (ilan.tasiyiciId === user.id) throw new BadRequestException('Kendi araciniza teklif veremezsiniz');
+    if (ilan.durum !== AracIlaniDurum.MUSAIT) throw new ConflictException('Bu araca artik teklif verilemez');
+    if (dto.fiyatKurus <= 0) throw new BadRequestException('Teklif tutari pozitif olmali');
+    const mevcut = await this.prisma.aracTeklif.findFirst({
+      where: { aracIlaniId: dto.aracIlaniId, verenId: user.id, durum: YukTeklifDurum.BEKLIYOR },
+    });
+    if (mevcut) throw new ConflictException('Bu araca zaten bekleyen bir teklifiniz var');
+    return this.prisma.aracTeklif.create({
+      data: { aracIlaniId: dto.aracIlaniId, verenId: user.id, fiyatKurus: BigInt(dto.fiyatKurus), mesaj: dto.mesaj ?? null, durum: YukTeklifDurum.BEKLIYOR },
+    });
+  }
+
+  async aracTeklifGeriCek(user: AuthUser, teklifId: string) {
+    const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: teklifId } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    if (teklif.verenId !== user.id) throw new ForbiddenException('Bu teklif size ait degil');
+    if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Sadece bekleyen teklif geri cekilebilir');
+    return this.prisma.aracTeklif.update({ where: { id: teklifId }, data: { durum: YukTeklifDurum.GERI_CEKILDI } });
+  }
+
+  async aracTekliflerim(user: AuthUser) {
+    return this.prisma.aracTeklif.findMany({
+      where: { verenId: user.id },
+      orderBy: { createdAt: 'desc' },
+      include: { aracIlani: { select: { id: true, nereden: true, nereye: true, aracTipi: true, durum: true } } },
+    });
+  }
+
+  async aracTeklifKabul(user: AuthUser, teklifId: string, ip?: string, cihaz?: string) {
+    const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: teklifId }, include: { aracIlani: true } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    const ilan = teklif.aracIlani;
+    if (ilan.tasiyiciId !== user.id) throw new ForbiddenException('Bu arac ilani size ait degil');
+    if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Bu teklif degerlendirilemez (zaten islenmis)');
+    if (ilan.durum !== AracIlaniDurum.MUSAIT) throw new ConflictException('Bu arac icin artik eslestirme yapilamaz');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.aracTeklif.update({ where: { id: teklif.id }, data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null } });
+      await tx.aracTeklif.updateMany({ where: { aracIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
+      return tx.aracIlani.update({
+        where: { id: ilan.id },
+        data: { durum: AracIlaniDurum.DOLU, seciliTeklifId: teklif.id },
+        include: { seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true } } } } },
+      });
+    });
+  }
+
+  async aracTeklifReddet(user: AuthUser, teklifId: string) {
+    const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: teklifId }, include: { aracIlani: true } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    if (teklif.aracIlani.tasiyiciId !== user.id) throw new ForbiddenException('Bu arac ilani size ait degil');
+    if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Sadece bekleyen teklif reddedilebilir');
+    return this.prisma.aracTeklif.update({ where: { id: teklifId }, data: { durum: YukTeklifDurum.RED } });
+  }
+
+    // ============ TEKLIF (tasiyici verir) ============
 
   async teklifVer(user: AuthUser, dto: TeklifVerDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi

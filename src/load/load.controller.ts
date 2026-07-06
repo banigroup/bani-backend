@@ -67,6 +67,35 @@ export class LoadController {
     return this.load.aracIlaniKapat(user, id);
   }
 
+
+  // ----- Arac Teklif (firma -> arac, kamyoncu onaylar) -----
+  @Post('arac-teklif')
+  aracTeklifVer(@CurrentUser() user: AuthUser, @Body() dto: { aracIlaniId: string; fiyatKurus: number; mesaj?: string }) {
+    return this.load.aracTeklifVer(user, dto);
+  }
+
+  @Get('arac-tekliflerim')
+  aracTekliflerim(@CurrentUser() user: AuthUser) {
+    return this.load.aracTekliflerim(user);
+  }
+
+  @Patch('arac-teklif/:id/geri-cek')
+  aracTeklifGeriCek(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.load.aracTeklifGeriCek(user, id);
+  }
+
+  @Patch('arac-teklif/:id/kabul')
+  aracTeklifKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || undefined;
+    const cihaz = (req.headers['user-agent'] as string) || undefined;
+    return this.load.aracTeklifKabul(user, id, ip, cihaz);
+  }
+
+  @Patch('arac-teklif/:id/reddet')
+  aracTeklifReddet(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.load.aracTeklifReddet(user, id);
+  }
+
   // ----- Teklif -----
   @Post('teklif')
   teklifVer(@CurrentUser() user: AuthUser, @Body() dto: TeklifVerDto) {

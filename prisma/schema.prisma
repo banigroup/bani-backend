@@ -55,14 +55,15 @@ model User {
   orders           Order[]
   deliveries       Delivery[]       @relation("CourierDeliveries")
 
-  verdigiYukler     YukIlani[]      @relation("VerdigiYukler")
-  aracIlanlari      AracIlani[]     @relation("AracIlanlari")
-  verdigiTeklifler  YukTeklif[]     @relation("VerdigiTeklifler")
-  komisyonOdemeleri KomisyonOdeme[] @relation("KomisyonOdemeleri")
-  sozlesmeOnaylari  SozlesmeOnay[]  @relation("SozlesmeOnaylari")
-  loadFirmaProfil   LoadFirmaProfil?
-  loadTasiyiciProfil LoadTasiyiciProfil?
-  loadBelgeler      LoadBelge[]
+  verdigiYukler         YukIlani[]          @relation("VerdigiYukler")
+  aracIlanlari          AracIlani[]         @relation("AracIlanlari")
+  verdigiTeklifler      YukTeklif[]         @relation("VerdigiTeklifler")
+  verdigiAracTeklifleri AracTeklif[]        @relation("VerdigiAracTeklifleri")
+  komisyonOdemeleri     KomisyonOdeme[]     @relation("KomisyonOdemeleri")
+  sozlesmeOnaylari      SozlesmeOnay[]      @relation("SozlesmeOnaylari")
+  loadFirmaProfil       LoadFirmaProfil?
+  loadTasiyiciProfil    LoadTasiyiciProfil?
+  loadBelgeler          LoadBelge[]
 
   @@index([phone])
   @@map("users")
@@ -582,17 +583,22 @@ model YukIlani {
 }
 
 model AracIlani {
-  id          String         @id @default(uuid()) @db.Uuid
-  tasiyici    User           @relation("AracIlanlari", fields: [tasiyiciId], references: [id])
-  tasiyiciId  String         @db.Uuid
-  aracTipi    AracTipi
-  nereden     String // cikis bolgesi
-  nereye      String // gidecegi yon
-  cikisTarihi DateTime
-  kapasiteKg  Int
-  durum       AracIlaniDurum @default(MUSAIT)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                 String         @id @default(uuid()) @db.Uuid
+  tasiyici           User           @relation("AracIlanlari", fields: [tasiyiciId], references: [id])
+  tasiyiciId         String         @db.Uuid
+  aracTipi           AracTipi
+  nereden            String // cikis bolgesi
+  nereye             String // gidecegi yon
+  cikisTarihi        DateTime
+  kapasiteKg         Int
+  beklenenFiyatKurus BigInt? // tasiyicinin bekledigi navlun (opsiyonel)
+  aciklama           String?
+  durum              AracIlaniDurum @default(MUSAIT)
+  seciliTeklif       AracTeklif?    @relation("SeciliAracTeklif", fields: [seciliTeklifId], references: [id])
+  seciliTeklifId     String?        @unique @db.Uuid
+  teklifler          AracTeklif[]   @relation("AracIlanTeklifleri")
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   @@index([durum])
   @@index([tasiyiciId])
@@ -619,6 +625,27 @@ model YukTeklif {
   @@index([yukIlaniId])
   @@index([tasiyiciId])
   @@map("yuk_teklifleri")
+}
+
+model AracTeklif {
+  id          String         @id @default(uuid()) @db.Uuid
+  aracIlani   AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id])
+  aracIlaniId String         @db.Uuid
+  veren       User           @relation("VerdigiAracTeklifleri", fields: [verenId], references: [id])
+  verenId     String         @db.Uuid
+  fiyatKurus  BigInt // firmanin teklif ettigi navlun (kurus)
+  mesaj       String?
+  kabulTarihi DateTime?
+  kabulIp     String?
+  kabulCihaz  String?
+  durum       YukTeklifDurum @default(BEKLIYOR)
+  seciliOlan  AracIlani?     @relation("SeciliAracTeklif")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([aracIlaniId])
+  @@index([verenId])
+  @@map("arac_teklifleri")
 }
 
 // ============================================================
@@ -754,46 +781,49 @@ enum LoadBelgeDurum {
 }
 
 model LoadFirmaProfil {
-  id            String   @id @default(uuid()) @db.Uuid
-  user          User     @relation(fields: [userId], references: [id])
-  userId        String   @unique @db.Uuid
-  unvan         String
-  vergiDairesi  String
-  vkn           String
-  yetkiliAd     String
-  yetkiliSoyad  String
-  email         String
-  adres         String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(uuid()) @db.Uuid
+  user         User     @relation(fields: [userId], references: [id])
+  userId       String   @unique @db.Uuid
+  unvan        String
+  vergiDairesi String
+  vkn          String
+  yetkiliAd    String
+  yetkiliSoyad String
+  email        String
+  adres        String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
   @@map("load_firma_profilleri")
 }
 
 model LoadTasiyiciProfil {
-  id         String   @id @default(uuid()) @db.Uuid
-  user       User     @relation(fields: [userId], references: [id])
-  userId     String   @unique @db.Uuid
-  ad         String
-  soyad      String
-  tcKimlik   String
-  email      String
-  plaka      String
-  ehliyetNo  String
-  srcNo      String
-  kBelgeNo   String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(uuid()) @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String   @unique @db.Uuid
+  ad        String
+  soyad     String
+  tcKimlik  String
+  email     String
+  plaka     String
+  ehliyetNo String
+  srcNo     String
+  kBelgeNo  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@map("load_tasiyici_profilleri")
 }
 
 model LoadBelge {
-  id           String         @id @default(uuid()) @db.Uuid
-  user         User           @relation(fields: [userId], references: [id])
-  userId       String         @db.Uuid
-  tip          LoadBelgeTipi
-  dosyaUrl     String
-  durum        LoadBelgeDurum @default(BEKLIYOR)
-  createdAt    DateTime       @default(now())
+  id        String         @id @default(uuid()) @db.Uuid
+  user      User           @relation(fields: [userId], references: [id])
+  userId    String         @db.Uuid
+  tip       LoadBelgeTipi
+  dosyaUrl  String
+  durum     LoadBelgeDurum @default(BEKLIYOR)
+  createdAt DateTime       @default(now())
+
   @@index([userId])
   @@map("load_belgeleri")
 }
