@@ -51,9 +51,15 @@ export class LoadService {
   }
 
   // Acik yuk ilanlari (tasiyici bunlari gorur, teklif verir)
+  private bugunBasi(): Date {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
   async acikIlanlar() {
     return this.prisma.yukIlani.findMany({
-      where: { durum: { in: [YukIlaniDurum.ACIK, YukIlaniDurum.TEKLIF_ALINDI] } },
+      where: { durum: { in: [YukIlaniDurum.ACIK, YukIlaniDurum.TEKLIF_ALINDI] }, yuklemeTarihi: { gte: this.bugunBasi() } },
       orderBy: { createdAt: 'desc' },
       include: { _count: { select: { teklifler: true } } },
     });
@@ -62,7 +68,7 @@ export class LoadService {
   // Vitrin (giris gerektirmez): son acik ilanlar, sadece guvenli ozet alanlari
   async vitrinSonIlanlar() {
     return this.prisma.yukIlani.findMany({
-      where: { durum: YukIlaniDurum.ACIK },
+      where: { durum: YukIlaniDurum.ACIK, yuklemeTarihi: { gte: this.bugunBasi() } },
       orderBy: { createdAt: 'desc' },
       take: 6,
       select: {
@@ -142,7 +148,7 @@ export class LoadService {
 
   async musaitAraclar() {
     return this.prisma.aracIlani.findMany({
-      where: { durum: AracIlaniDurum.MUSAIT },
+      where: { durum: AracIlaniDurum.MUSAIT, cikisTarihi: { gte: this.bugunBasi() } },
       orderBy: { cikisTarihi: 'asc' },
       include: { tasiyici: { select: { id: true, name: true, surname: true } } },
     });
