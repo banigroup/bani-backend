@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import {
   Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import {
   Role, WalletType, TransactionType, EntryDirection, BusinessUnit,
   YukIlaniDurum, AracIlaniDurum, YukTeklifDurum, AracTipi,
@@ -51,6 +52,30 @@ export class LoadService {
   }
 
   // Acik yuk ilanlari (tasiyici bunlari gorur, teklif verir)
+  // Her saat basi calisir: suresi dolmus + eslesmemis ilanlari siler (finans girmeyenler)
+  @Cron(CronExpression.EVERY_HOUR)
+  async otomatikTemizlik() {
+    const now = new Date();
+    const yirmiDortSaatOnce = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    // Yuk: ACIK/TEKLIF_ALINDI (eslesmemis) + yuklemeTarihi 24h+ gecti -> sil
+    const yukSilinen = await this.prisma.yukIlani.deleteMany({
+      where: {
+        durum: { in: [YukIlaniDurum.ACIK, YukIlaniDurum.TEKLIF_ALINDI] },
+        yuklemeTarihi: { lt: yirmiDortSaatOnce },
+      },
+    });
+    // Arac: MUSAIT (eslesmemis) + cikisTarihi 24h+ gecti -> sil
+    const aracSilinen = await this.prisma.aracIlani.deleteMany({
+      where: {
+        durum: AracIlaniDurum.MUSAIT,
+        cikisTarihi: { lt: yirmiDortSaatOnce },
+      },
+    });
+    if (yukSilinen.count > 0 || aracSilinen.count > 0) {
+      console.log(`[otomatikTemizlik] Silinen: ${yukSilinen.count} yuk, ${aracSilinen.count} arac ilani`);
+    }
+  }
+
   private bugunBasi(): Date {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
