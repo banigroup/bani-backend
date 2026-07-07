@@ -305,7 +305,7 @@ export class LoadService {
     if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Bu teklif degerlendirilemez (zaten islenmis)');
     if (ilan.durum !== AracIlaniDurum.MUSAIT) throw new ConflictException('Bu arac icin artik eslestirme yapilamaz');
     return this.prisma.$transaction(async (tx) => {
-      await tx.aracTeklif.update({ where: { id: teklif.id }, data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null } });
+      await tx.aracTeklif.update({ where: { id: teklif.id }, data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null, ilkTalepKurus: teklif.ilkTalepKurus ?? ilan.beklenenFiyatKurus ?? null, ilkTeklifKurus: teklif.ilkTeklifKurus ?? teklif.fiyatKurus, gerceklesenKurus: teklif.fiyatKurus } });
       await tx.aracTeklif.updateMany({ where: { aracIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
       return tx.aracIlani.update({
         where: { id: ilan.id },
@@ -337,11 +337,20 @@ export class LoadService {
     if (teklif.beklenenTaraf === 'FIRMA' && !firmaMi) throw new ForbiddenException('Su an karsi tarafin yanitini bekliyor');
     if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Bu teklif icin karsi teklif verilemez');
     if (yeniFiyatKurus <= 0) throw new BadRequestException('Fiyat pozitif olmali');
+    if (teklif.elSayisi >= 3) throw new ConflictException('Teklifi netlestirin: 3 el pazarlik doldu, artik yalnizca kabul veya ret verebilirsiniz');
     // sira karsi tarafa gecer
     const yeniTaraf = kamyoncuMu ? 'FIRMA' : 'TASIYICI';
+    const ilkTalep = teklif.ilkTalepKurus ?? ilan.beklenenFiyatKurus ?? null;
+    const ilkTeklif = teklif.ilkTeklifKurus ?? teklif.fiyatKurus;
     return this.prisma.aracTeklif.update({
       where: { id: teklifId },
-      data: { fiyatKurus: BigInt(yeniFiyatKurus), beklenenTaraf: yeniTaraf as any },
+      data: {
+        fiyatKurus: BigInt(yeniFiyatKurus),
+        beklenenTaraf: yeniTaraf as any,
+        elSayisi: { increment: 1 },
+        ilkTalepKurus: ilkTalep,
+        ilkTeklifKurus: ilkTeklif,
+      },
     });
   }
 
@@ -425,10 +434,18 @@ export class LoadService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      // 1) Secilen teklif KABUL
+      // 1) Secilen teklif KABUL (+ 3 tutar: ilk talep / ilk teklif / gerceklesen)
       await tx.yukTeklif.update({
         where: { id: teklif.id },
-        data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null },
+        data: {
+          durum: YukTeklifDurum.KABUL,
+          kabulTarihi: new Date(),
+          kabulIp: ip ?? null,
+          kabulCihaz: cihaz ?? null,
+          ilkTalepKurus: teklif.ilkTalepKurus ?? ilan.butceKurus ?? null,
+          ilkTeklifKurus: teklif.ilkTeklifKurus ?? teklif.fiyatKurus,
+          gerceklesenKurus: teklif.fiyatKurus,
+        },
       });
       // 2) Ayni ilandaki diger BEKLEYEN teklifler RED
       await tx.yukTeklif.updateMany({
@@ -445,7 +462,51 @@ export class LoadService {
     });
   }
 
-  // ============ IS AKISI: tasima basla / tamamla (+%5 komisyon) ============
+  // ============ PAZARLIK: yuk teklifi RED + KARSI TEKLIF ============
+  // Yuk ilaninda: kamyoncu(tasiyici) teklif verir, firma(veren) onaylar.
+  // beklenenTaraf FIRMA ise firma, TASIYICI ise kamyoncu aksiyon alabilir.
+  async teklifReddet(user: AuthUser, teklifId: string) {
+    const teklif = await this.prisma.yukTeklif.findUnique({ where: { id: teklifId }, include: { yukIlani: true } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    const ilan = teklif.yukIlani;
+    const firmaMi = ilan.verenId === user.id;
+    const kamyoncuMu = teklif.tasiyiciId === user.id;
+    if (!firmaMi && !kamyoncuMu) throw new ForbiddenException('Bu teklif sizinle ilgili degil');
+    if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Sadece bekleyen teklif reddedilebilir');
+    // Ret: teklif RED olur; karsi taraf yeni teklif verebilir (pazarlik surer, ilan acik kalir)
+    return this.prisma.yukTeklif.update({ where: { id: teklifId }, data: { durum: YukTeklifDurum.RED } });
+  }
+
+  // KARSI TEKLIF: fiyati gunceller, el sayisini artirir, siriyi karsi tarafa gecirir
+  async yukKarsiTeklif(user: AuthUser, teklifId: string, yeniFiyatKurus: number) {
+    const teklif = await this.prisma.yukTeklif.findUnique({ where: { id: teklifId }, include: { yukIlani: true } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    const ilan = teklif.yukIlani;
+    const firmaMi = ilan.verenId === user.id;
+    const kamyoncuMu = teklif.tasiyiciId === user.id;
+    if (!firmaMi && !kamyoncuMu) throw new ForbiddenException('Bu teklif sizinle ilgili degil');
+    if (teklif.beklenenTaraf === 'FIRMA' && !firmaMi) throw new ForbiddenException('Su an karsi tarafin yanitini bekliyor');
+    if (teklif.beklenenTaraf === 'TASIYICI' && !kamyoncuMu) throw new ForbiddenException('Su an karsi tarafin yanitini bekliyor');
+    if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Bu teklif icin karsi teklif verilemez');
+    if (yeniFiyatKurus <= 0) throw new BadRequestException('Fiyat pozitif olmali');
+    if (teklif.elSayisi >= 3) throw new ConflictException('Teklifi netlestirin: 3 el pazarlik doldu, artik yalnizca kabul veya ret verebilirsiniz');
+    // ilk tutarlari sakla (pazarlik gecmisi icin), el sayisini artir
+    const ilkTalep = teklif.ilkTalepKurus ?? ilan.butceKurus ?? null;
+    const ilkTeklif = teklif.ilkTeklifKurus ?? teklif.fiyatKurus;
+    const yeniTaraf = firmaMi ? 'TASIYICI' : 'FIRMA';
+    return this.prisma.yukTeklif.update({
+      where: { id: teklifId },
+      data: {
+        fiyatKurus: BigInt(yeniFiyatKurus),
+        beklenenTaraf: yeniTaraf as any,
+        elSayisi: { increment: 1 },
+        ilkTalepKurus: ilkTalep,
+        ilkTeklifKurus: ilkTeklif,
+      },
+    });
+  }
+
+    // ============ IS AKISI: tasima basla / tamamla (+%5 komisyon) ============
 
   async tasimaBasla(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.yukIlani.findUnique({ where: { id: ilanId }, include: { seciliTeklif: true } });

@@ -124,6 +124,14 @@ export class LoadController {
     return this.load.teklifKabul(user, id, ip, cihaz);
   }
 
+  @Patch('teklif/:id/reddet')
+  teklifReddet(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.load.teklifReddet(user, id);
+  }
+  @Patch('teklif/:id/karsi')
+  yukKarsiTeklif(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { yeniFiyatKurus: number }) {
+    return this.load.yukKarsiTeklif(user, id, body.yeniFiyatKurus);
+  }
   // ----- Is akisi -----
   @Patch('ilan/:id/basla')
   tasimaBasla(@CurrentUser() user: AuthUser, @Param('id') id: string) {

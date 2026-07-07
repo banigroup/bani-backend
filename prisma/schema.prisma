@@ -611,21 +611,26 @@ model AracIlani {
 }
 
 model YukTeklif {
-  id          String         @id @default(uuid()) @db.Uuid
-  yukIlani    YukIlani       @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id])
-  yukIlaniId  String         @db.Uuid
-  tasiyici    User           @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
-  tasiyiciId  String         @db.Uuid
-  fiyatKurus  BigInt // tasiyicinin teklif ettigi tasima bedeli (kurus)
-  mesaj       String?
+  id               String         @id @default(uuid()) @db.Uuid
+  yukIlani         YukIlani       @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id])
+  yukIlaniId       String         @db.Uuid
+  tasiyici         User           @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
+  tasiyiciId       String         @db.Uuid
+  fiyatKurus       BigInt // tasiyicinin teklif ettigi tasima bedeli (kurus)
+  mesaj            String?
   // Is delili: teklif KABUL edildiginde damgalanir (B modeli - eslesme kaniti)
-  kabulTarihi DateTime?
-  kabulIp     String?
-  kabulCihaz  String?
-  durum       YukTeklifDurum @default(BEKLIYOR)
-  seciliOlan  YukIlani?      @relation("SeciliTeklif")
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  kabulTarihi      DateTime?
+  kabulIp          String?
+  kabulCihaz       String?
+  durum            YukTeklifDurum @default(BEKLIYOR)
+  beklenenTaraf    TeklifTaraf    @default(TASIYICI) // pazarlik: kimin onayi bekleniyor
+  elSayisi         Int            @default(0) // pazarlik el sayisi (3 sinirinda uyari)
+  ilkTalepKurus    BigInt? // ilan verenin ilk talebi
+  ilkTeklifKurus   BigInt? // teklif verenin ilk teklifi
+  gerceklesenKurus BigInt? // anlasilan son tutar (kabul aninda)
+  seciliOlan       YukIlani?      @relation("SeciliTeklif")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   @@index([yukIlaniId])
   @@index([tasiyiciId])
@@ -633,21 +638,25 @@ model YukTeklif {
 }
 
 model AracTeklif {
-  id            String         @id @default(uuid()) @db.Uuid
-  aracIlani     AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id])
-  aracIlaniId   String         @db.Uuid
-  veren         User           @relation("VerdigiAracTeklifleri", fields: [verenId], references: [id])
-  verenId       String         @db.Uuid
-  fiyatKurus    BigInt // firmanin teklif ettigi navlun (kurus)
-  mesaj         String?
-  kabulTarihi   DateTime?
-  kabulIp       String?
-  kabulCihaz    String?
-  durum         YukTeklifDurum @default(BEKLIYOR)
-  beklenenTaraf TeklifTaraf    @default(TASIYICI) // kimin onayi bekleniyor
-  seciliOlan    AracIlani?     @relation("SeciliAracTeklif")
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id               String         @id @default(uuid()) @db.Uuid
+  aracIlani        AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id])
+  aracIlaniId      String         @db.Uuid
+  veren            User           @relation("VerdigiAracTeklifleri", fields: [verenId], references: [id])
+  verenId          String         @db.Uuid
+  fiyatKurus       BigInt // firmanin teklif ettigi navlun (kurus)
+  mesaj            String?
+  kabulTarihi      DateTime?
+  kabulIp          String?
+  kabulCihaz       String?
+  durum            YukTeklifDurum @default(BEKLIYOR)
+  beklenenTaraf    TeklifTaraf    @default(TASIYICI) // kimin onayi bekleniyor
+  elSayisi         Int            @default(0) // pazarlik el sayisi (3 sinirinda uyari)
+  ilkTalepKurus    BigInt? // ilan verenin ilk talebi
+  ilkTeklifKurus   BigInt? // teklif verenin ilk teklifi
+  gerceklesenKurus BigInt? // anlasilan son tutar (kabul aninda)
+  seciliOlan       AracIlani?     @relation("SeciliAracTeklif")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   @@index([aracIlaniId])
   @@index([verenId])
