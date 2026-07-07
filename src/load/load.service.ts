@@ -103,6 +103,41 @@ export class LoadService {
     });
   }
 
+  // ===== ILAN BORSASI (public, sayfali, filtreli) =====
+  async ilanBorsasi(params: { sayfa?: number; nereden?: string; nereye?: string; aracTipi?: string }) {
+    const sayfa = Math.max(1, Number(params.sayfa) || 1);
+    const adet = 20;
+    const where: any = { durum: YukIlaniDurum.ACIK, yuklemeTarihi: { gte: this.bugunBasi() } };
+    if (params.nereden) where.nereden = { contains: params.nereden, mode: 'insensitive' };
+    if (params.nereye) where.nereye = { contains: params.nereye, mode: 'insensitive' };
+    if (params.aracTipi) where.aracTipiIhtiyaci = params.aracTipi as any;
+    const [kayitlar, toplam] = await Promise.all([
+      this.prisma.yukIlani.findMany({
+        where, orderBy: { createdAt: 'desc' }, skip: (sayfa - 1) * adet, take: adet,
+        select: { id: true, nereden: true, nereye: true, yukTipi: true, tonajKg: true, aracTipiIhtiyaci: true, yuklemeTarihi: true, createdAt: true },
+      }),
+      this.prisma.yukIlani.count({ where }),
+    ]);
+    return { kayitlar, toplam, sayfa, adet, sayfaSayisi: Math.ceil(toplam / adet) };
+  }
+
+  async aracBorsasi(params: { sayfa?: number; nereden?: string; nereye?: string; aracTipi?: string }) {
+    const sayfa = Math.max(1, Number(params.sayfa) || 1);
+    const adet = 20;
+    const where: any = { durum: AracIlaniDurum.MUSAIT, cikisTarihi: { gte: this.bugunBasi() } };
+    if (params.nereden) where.nereden = { contains: params.nereden, mode: 'insensitive' };
+    if (params.nereye) where.nereye = { contains: params.nereye, mode: 'insensitive' };
+    if (params.aracTipi) where.aracTipi = params.aracTipi as any;
+    const [kayitlar, toplam] = await Promise.all([
+      this.prisma.aracIlani.findMany({
+        where, orderBy: { cikisTarihi: 'asc' }, skip: (sayfa - 1) * adet, take: adet,
+        select: { id: true, nereden: true, nereye: true, aracTipi: true, kapasiteKg: true, cikisTarihi: true, beklenenFiyatKurus: true, createdAt: true },
+      }),
+      this.prisma.aracIlani.count({ where }),
+    ]);
+    return { kayitlar, toplam, sayfa, adet, sayfaSayisi: Math.ceil(toplam / adet) };
+  }
+
   // Yuk verenin kendi ilanlari (tekliflerle birlikte)
   async ilanlarim(user: AuthUser) {
     return this.prisma.yukIlani.findMany({
