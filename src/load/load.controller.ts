@@ -222,7 +222,7 @@ sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @R
   }
 
   @Patch('belge/:id/reddet')
-  belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.load.belgeReddet(user, id);
+  belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { gerekce?: string }) {
+    return this.load.belgeReddet(user, id, body?.gerekce);
   }
 }

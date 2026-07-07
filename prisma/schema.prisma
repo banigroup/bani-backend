@@ -822,13 +822,14 @@ model LoadTasiyiciProfil {
 }
 
 model LoadBelge {
-  id        String         @id @default(uuid()) @db.Uuid
-  user      User           @relation(fields: [userId], references: [id])
-  userId    String         @db.Uuid
-  tip       LoadBelgeTipi
-  dosyaUrl  String
-  durum     LoadBelgeDurum @default(BEKLIYOR)
-  createdAt DateTime       @default(now())
+  id         String         @id @default(uuid()) @db.Uuid
+  user       User           @relation(fields: [userId], references: [id])
+  userId     String         @db.Uuid
+  tip        LoadBelgeTipi
+  dosyaUrl   String
+  durum      LoadBelgeDurum @default(BEKLIYOR)
+  redGerekce String?
+  createdAt  DateTime       @default(now())
 
   @@index([userId])
   @@map("load_belgeleri")

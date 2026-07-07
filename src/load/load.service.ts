@@ -716,10 +716,10 @@ export class LoadService {
     return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'ONAYLANDI' as any } });
   }
 
-  async belgeReddet(user: AuthUser, belgeId: string) {
+  async belgeReddet(user: AuthUser, belgeId: string, gerekce?: string) {
     if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
     const belge = await this.prisma.loadBelge.findUnique({ where: { id: belgeId } });
     if (!belge) throw new NotFoundException('Belge bulunamadı');
-    return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'REDDEDILDI' as any } });
+    return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'REDDEDILDI' as any, redGerekce: gerekce ?? null } });
   }
 }
