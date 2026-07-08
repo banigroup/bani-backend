@@ -7,8 +7,7 @@ import {
   Role, WalletType, TransactionType, EntryDirection, BusinessUnit,
   YukIlaniDurum, AracIlaniDurum, YukTeklifDurum, AracTipi,
   KomisyonOdemeYontem, KomisyonOdemeDurum,
-  SozlesmeTipi,
-} from '@prisma/client';
+  SozlesmeTipi, LoadBelgeTipi, LoadBelgeDurum } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
@@ -35,6 +34,7 @@ export class LoadService {
 
   async ilanOlustur(user: AuthUser, dto: YukIlaniOlusturDto) {
     await this.sozlesmeKontrolu(user.id, SozlesmeTipi.YUK_VEREN); // onaysiz ilan engeli
+    await this.belgeKontrolu(user.id, 'FIRMA'); // KYC yetki kilidi
     return this.prisma.yukIlani.create({
       data: {
         verenId: user.id,
@@ -210,6 +210,7 @@ export class LoadService {
   async aracIlaniOlustur(user: AuthUser, dto: AracIlaniOlusturDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
     await this.sozlesmeKontrolu(user.id, SozlesmeTipi.TASIYICI); // onaysiz teklif engeli
+    await this.belgeKontrolu(user.id, 'TASIYICI'); // KYC yetki kilidi
     return this.prisma.aracIlani.create({
       data: {
         tasiyiciId: user.id,
@@ -262,6 +263,7 @@ export class LoadService {
 
   async aracTeklifVer(user: AuthUser, dto: { aracIlaniId: string; fiyatKurus: number; mesaj?: string }) {
     await this.sozlesmeKontrolu(user.id, SozlesmeTipi.YUK_VEREN);
+    await this.belgeKontrolu(user.id, 'FIRMA'); // KYC yetki kilidi
     const ilan = await this.prisma.aracIlani.findUnique({ where: { id: dto.aracIlaniId } });
     if (!ilan) throw new NotFoundException('Arac ilani bulunamadi');
     if (ilan.tasiyiciId === user.id) throw new BadRequestException('Kendi araciniza teklif veremezsiniz');
@@ -359,6 +361,7 @@ export class LoadService {
   async teklifVer(user: AuthUser, dto: TeklifVerDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
     await this.sozlesmeKontrolu(user.id, SozlesmeTipi.TASIYICI); // onaysiz teklif engeli
+    await this.belgeKontrolu(user.id, 'TASIYICI'); // KYC yetki kilidi
     const ilan = await this.prisma.yukIlani.findUnique({ where: { id: dto.yukIlaniId } });
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
     if (ilan.verenId === user.id) throw new BadRequestException('Kendi ilanınıza teklif veremezsiniz');
@@ -601,6 +604,26 @@ export class LoadService {
 }
 
   // Erisim kontrolu: borc esigi asildiysa yeni is engellenir
+  // KYC YETKI KILIDI (KYC_KILIT_AKTIF=true iken calisir; degilse kapi acik)
+  // Firma: VERGI_LEVHASI | Nakliyeci (cift rol): VERGI_LEVHASI (firma ile ayni) | Kamyoncu: EHLIYET + ARAC_RUHSAT
+  private async belgeKontrolu(userId: string, islemRol: 'FIRMA' | 'TASIYICI') {
+    if (process.env.KYC_KILIT_AKTIF !== 'true') return; // anahtar kapali
+    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { roles: true } });
+    const roller: string[] = (u?.roles as any) || [];
+    const nakliyeciMi = roller.includes('LOAD_CUSTOMER') && roller.includes('CARRIER');
+    const zorunlu = (islemRol === 'FIRMA' || nakliyeciMi)
+      ? [LoadBelgeTipi.VERGI_LEVHASI]
+      : [LoadBelgeTipi.EHLIYET, LoadBelgeTipi.ARAC_RUHSAT];
+    const onayli = await this.prisma.loadBelge.findMany({
+      where: { userId, tip: { in: zorunlu }, durum: LoadBelgeDurum.ONAYLANDI },
+      select: { tip: true },
+    });
+    const onayliTipler = new Set(onayli.map((b) => b.tip));
+    const eksik = zorunlu.filter((t) => !onayliTipler.has(t));
+    if (eksik.length > 0) {
+      throw new ForbiddenException('Eksik/onaysiz belge: ' + eksik.join(', ') + '. Belgeleriniz onaylanmadan bu islemi yapamazsiniz.');
+    }
+  }
   private async erisimKontrolu(userId: string) {
   const borc = await this.komisyonBorcu(userId);
   if (borc >= KOMISYON_BORC_ESIGI_KURUS) {
