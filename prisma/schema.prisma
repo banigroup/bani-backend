@@ -564,23 +564,25 @@ enum TeklifTaraf {
 }
 
 model YukIlani {
-  id               String        @id @default(uuid()) @db.Uuid
-  veren            User          @relation("VerdigiYukler", fields: [verenId], references: [id])
-  verenId          String        @db.Uuid
-  nereden          String // il/ilce (or. "Istanbul / Tuzla")
-  nereye           String
-  yukTipi          String // "Paletli Urun", "Tekstil", "Mobilya"...
-  tonajKg          Int // kilogram cinsinden
-  aracTipiIhtiyaci AracTipi? // istenen arac tipi (opsiyonel)
-  yuklemeTarihi    DateTime
-  aciklama         String?
-  butceKurus       BigInt? // yuk verenin tahmini butcesi (opsiyonel)
-  durum            YukIlaniDurum @default(ACIK)
-  seciliTeklif     YukTeklif?    @relation("SeciliTeklif", fields: [seciliTeklifId], references: [id])
-  seciliTeklifId   String?       @unique @db.Uuid
-  teklifler        YukTeklif[]   @relation("IlanTeklifleri")
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id                String        @id @default(uuid()) @db.Uuid
+  veren             User          @relation("VerdigiYukler", fields: [verenId], references: [id])
+  verenId           String        @db.Uuid
+  nereden           String // il/ilce (or. "Istanbul / Tuzla")
+  nereye            String
+  yukTipi           String // "Paletli Urun", "Tekstil", "Mobilya"...
+  tonajKg           Int // kilogram cinsinden
+  aracTipiIhtiyaci  AracTipi? // istenen arac tipi (opsiyonel)
+  yuklemeTarihi     DateTime
+  aciklama          String?
+  butceKurus        BigInt? // yuk verenin tahmini butcesi (opsiyonel)
+  durum             YukIlaniDurum @default(ACIK)
+  seciliTeklif      YukTeklif?    @relation("SeciliTeklif", fields: [seciliTeklifId], references: [id])
+  seciliTeklifId    String?       @unique @db.Uuid
+  teklifler         YukTeklif[]   @relation("IlanTeklifleri")
+  teslimBeyanTarihi DateTime? // kamyoncu 'teslim ettim' dedigi an
+  teslimOnayTarihi  DateTime? // firma onayladigi an (= gercek teslim tarihi)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   @@index([durum])
   @@index([verenId])

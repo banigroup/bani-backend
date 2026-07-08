@@ -513,12 +513,12 @@ export class LoadService {
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
     if (!ilan.seciliTeklif) throw new ConflictException('Önce bir teklif kabul edilmeli');
     // Yuk veren ya da secili tasiyici baslatabilir
-    const yetkili = ilan.verenId === user.id || ilan.seciliTeklif.tasiyiciId === user.id;
-    if (!yetkili) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    const kamyoncuMu = ilan.seciliTeklif.tasiyiciId === user.id;
+    if (!kamyoncuMu) throw new ForbiddenException('Teslim beyanini sadece tasiyici yapabilir');
     if (ilan.durum !== YukIlaniDurum.ESLESTI) throw new ConflictException('İlan eşleşmiş durumda değil');
     return this.prisma.yukIlani.update({
       where: { id: ilanId },
-      data: { durum: YukIlaniDurum.TASINIYOR },
+      data: { durum: YukIlaniDurum.TASINIYOR, teslimBeyanTarihi: new Date() },
     });
   }
 
@@ -530,8 +530,8 @@ export class LoadService {
     });
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
     if (!ilan.seciliTeklif) throw new ConflictException('Eşleşmiş teklif yok');
-    const yetkili = ilan.verenId === user.id || ilan.seciliTeklif.tasiyiciId === user.id;
-    if (!yetkili) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    const firmaMi = ilan.verenId === user.id;
+      if (!firmaMi) throw new ForbiddenException('Teslim onayini sadece yuk veren firma yapabilir');
     if (ilan.durum !== YukIlaniDurum.TASINIYOR) {
       throw new ConflictException('Sadece taşınan ilan tamamlanabilir');
     }
@@ -544,7 +544,7 @@ export class LoadService {
       // Ilan TAMAMLANDI
       const guncel = await tx.yukIlani.update({
         where: { id: ilanId },
-        data: { durum: YukIlaniDurum.TAMAMLANDI },
+        data: { durum: YukIlaniDurum.TAMAMLANDI, teslimOnayTarihi: new Date() },
       });
 
       // ASSET-LIGHT: Tasima bedeli (or. 50.000) platforma GIRMEZ; taraflar kendi
