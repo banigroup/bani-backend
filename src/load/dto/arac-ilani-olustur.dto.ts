@@ -7,5 +7,6 @@ export class AracIlaniOlusturDto {
   @IsDateString() cikisTarihi!: string;
   @IsInt() @Min(1) kapasiteKg!: number;
   @IsOptional() @IsInt() @Min(1) beklenenFiyatKurus?: number;
+  @IsOptional() @IsString() plaka?: string;
   @IsOptional() @IsString() aciklama?: string;
 }

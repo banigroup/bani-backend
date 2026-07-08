@@ -597,6 +597,7 @@ model AracIlani {
   nereden            String // cikis bolgesi
   nereye             String // gidecegi yon
   cikisTarihi        DateTime
+  plaka              String?
   kapasiteKg         Int
   beklenenFiyatKurus BigInt? // tasiyicinin bekledigi navlun (opsiyonel)
   aciklama           String?
@@ -619,6 +620,9 @@ model YukTeklif {
   tasiyici         User           @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
   tasiyiciId       String         @db.Uuid
   fiyatKurus       BigInt // tasiyicinin teklif ettigi tasima bedeli (kurus)
+  plaka            String?
+  surucuAdi        String?
+  surucuTel        String?
   mesaj            String?
   // Is delili: teklif KABUL edildiginde damgalanir (B modeli - eslesme kaniti)
   kabulTarihi      DateTime?

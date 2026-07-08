@@ -7,7 +7,8 @@ import {
   Role, WalletType, TransactionType, EntryDirection, BusinessUnit,
   YukIlaniDurum, AracIlaniDurum, YukTeklifDurum, AracTipi,
   KomisyonOdemeYontem, KomisyonOdemeDurum,
-  SozlesmeTipi, LoadBelgeTipi, LoadBelgeDurum } from '@prisma/client';
+  SozlesmeTipi, LoadBelgeTipi, LoadBelgeDurum
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
@@ -211,6 +212,7 @@ export class LoadService {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
     await this.sozlesmeKontrolu(user.id, SozlesmeTipi.TASIYICI); // onaysiz teklif engeli
     await this.belgeKontrolu(user.id, 'TASIYICI'); // KYC yetki kilidi
+    const aprofil = await this.prisma.loadTasiyiciProfil.findUnique({ where: { userId: user.id }, select: { plaka: true } });
     return this.prisma.aracIlani.create({
       data: {
         tasiyiciId: user.id,
@@ -219,6 +221,7 @@ export class LoadService {
         nereye: dto.nereye,
         cikisTarihi: new Date(dto.cikisTarihi),
         kapasiteKg: dto.kapasiteKg,
+        plaka: dto.plaka ?? aprofil?.plaka ?? null,
         beklenenFiyatKurus: dto.beklenenFiyatKurus != null ? BigInt(dto.beklenenFiyatKurus) : null,
         aciklama: dto.aciklama ?? null,
         durum: AracIlaniDurum.MUSAIT,
@@ -356,7 +359,7 @@ export class LoadService {
     });
   }
 
-    // ============ TEKLIF (tasiyici verir) ============
+  // ============ TEKLIF (tasiyici verir) ============
 
   async teklifVer(user: AuthUser, dto: TeklifVerDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
@@ -376,6 +379,8 @@ export class LoadService {
     });
     if (mevcut) throw new ConflictException('Bu ilana zaten bekleyen bir teklifiniz var');
 
+    // Plaka: dto'da yoksa tasiyici profilinden otomatik (nakliyeci sofor bilgisi girebilir)
+    const tprofil = await this.prisma.loadTasiyiciProfil.findUnique({ where: { userId: user.id }, select: { plaka: true } });
     return this.prisma.$transaction(async (tx) => {
       const teklif = await tx.yukTeklif.create({
         data: {
@@ -383,6 +388,9 @@ export class LoadService {
           tasiyiciId: user.id,
           fiyatKurus: BigInt(dto.fiyatKurus),
           mesaj: dto.mesaj ?? null,
+          plaka: dto.plaka ?? tprofil?.plaka ?? null,
+          surucuAdi: dto.surucuAdi ?? null,
+          surucuTel: dto.surucuTel ?? null,
           durum: YukTeklifDurum.BEKLIYOR,
         },
       });
@@ -415,7 +423,7 @@ export class LoadService {
     return this.prisma.yukTeklif.findMany({
       where: { tasiyiciId: user.id },
       orderBy: { createdAt: 'desc' },
-      include: { yukIlani: { select: { id: true, nereden: true, nereye: true, yukTipi: true, durum: true } } },
+      include: { yukIlani: { select: { id: true, nereden: true, nereye: true, yukTipi: true, durum: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, veren: { select: { name: true, surname: true, phone: true, loadFirmaProfil: { select: { unvan: true } } } } } } },
     });
   }
 
@@ -509,7 +517,7 @@ export class LoadService {
     });
   }
 
-    // ============ IS AKISI: tasima basla / tamamla (+%5 komisyon) ============
+  // ============ IS AKISI: tasima basla / tamamla (+%5 komisyon) ============
 
   async tasimaBasla(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.yukIlani.findUnique({ where: { id: ilanId }, include: { seciliTeklif: true } });
@@ -534,7 +542,7 @@ export class LoadService {
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
     if (!ilan.seciliTeklif) throw new ConflictException('Eşleşmiş teklif yok');
     const firmaMi = ilan.verenId === user.id;
-      if (!firmaMi) throw new ForbiddenException('Teslim onayini sadece yuk veren firma yapabilir');
+    if (!firmaMi) throw new ForbiddenException('Teslim onayini sadece yuk veren firma yapabilir');
     if (ilan.durum !== YukIlaniDurum.TASINIYOR) {
       throw new ConflictException('Sadece taşınan ilan tamamlanabilir');
     }
@@ -568,40 +576,40 @@ export class LoadService {
   // ============================================================
 
   // Tasiyicinin biriken komisyon borcu (kurus)
-  async komisyonBorcu(userId: string): Promise < bigint > {
-  // 1) Tamamlanan tasimalarda bu kisi tasiyici ise: komisyon = fiyat * %5
-  const tamamlanan = await this.prisma.yukIlani.findMany({
-    where: {
-      durum: YukIlaniDurum.TAMAMLANDI,
-      seciliTeklif: { tasiyiciId: userId },
-    },
-    include: { seciliTeklif: true },
-  });
-  let tahakkuk = 0n;
-  for(const ilan of tamamlanan) {
-    if (ilan.seciliTeklif) {
-      tahakkuk += (ilan.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n;
+  async komisyonBorcu(userId: string): Promise<bigint> {
+    // 1) Tamamlanan tasimalarda bu kisi tasiyici ise: komisyon = fiyat * %5
+    const tamamlanan = await this.prisma.yukIlani.findMany({
+      where: {
+        durum: YukIlaniDurum.TAMAMLANDI,
+        seciliTeklif: { tasiyiciId: userId },
+      },
+      include: { seciliTeklif: true },
+    });
+    let tahakkuk = 0n;
+    for (const ilan of tamamlanan) {
+      if (ilan.seciliTeklif) {
+        tahakkuk += (ilan.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n;
+      }
     }
-  }
     // 2) Onaylanmis odemeler
     const odemeler = await this.prisma.komisyonOdeme.aggregate({
-    where: { tasiyiciId: userId, durum: KomisyonOdemeDurum.ONAYLANDI },
-    _sum: { tutarKurus: true },
-  });
-  const odenen = odemeler._sum.tutarKurus ?? 0n;
-  const borc = tahakkuk - odenen;
-  return borc > 0n ? borc : 0n;
-}
+      where: { tasiyiciId: userId, durum: KomisyonOdemeDurum.ONAYLANDI },
+      _sum: { tutarKurus: true },
+    });
+    const odenen = odemeler._sum.tutarKurus ?? 0n;
+    const borc = tahakkuk - odenen;
+    return borc > 0n ? borc : 0n;
+  }
 
   // UI icin borc durumu (borc, esik, kilitli mi)
   async komisyonDurumu(user: AuthUser) {
-  const borc = await this.komisyonBorcu(user.id);
-  return {
-    borcKurus: borc.toString(),
-    esikKurus: KOMISYON_BORC_ESIGI_KURUS.toString(),
-    kilitli: borc >= KOMISYON_BORC_ESIGI_KURUS,
-  };
-}
+    const borc = await this.komisyonBorcu(user.id);
+    return {
+      borcKurus: borc.toString(),
+      esikKurus: KOMISYON_BORC_ESIGI_KURUS.toString(),
+      kilitli: borc >= KOMISYON_BORC_ESIGI_KURUS,
+    };
+  }
 
   // Erisim kontrolu: borc esigi asildiysa yeni is engellenir
   // KYC YETKI KILIDI (KYC_KILIT_AKTIF=true iken calisir; degilse kapi acik)
@@ -625,91 +633,91 @@ export class LoadService {
     }
   }
   private async erisimKontrolu(userId: string) {
-  const borc = await this.komisyonBorcu(userId);
-  if (borc >= KOMISYON_BORC_ESIGI_KURUS) {
-    const tl = (Number(borc) / 100).toFixed(2);
-    throw new ForbiddenException(
-      `Biriken komisyon borcunuz ${tl} TL. Devam edebilmek için ödemenizi yapın.`,
-    );
+    const borc = await this.komisyonBorcu(userId);
+    if (borc >= KOMISYON_BORC_ESIGI_KURUS) {
+      const tl = (Number(borc) / 100).toFixed(2);
+      throw new ForbiddenException(
+        `Biriken komisyon borcunuz ${tl} TL. Devam edebilmek için ödemenizi yapın.`,
+      );
+    }
   }
-}
 
   // Tasiyici havale bildirimi olusturur (admin onayi bekler)
   async komisyonBildir(user: AuthUser, dto: KomisyonBildirDto) {
-  if (dto.yontem === KomisyonOdemeYontem.KART) {
-    throw new BadRequestException('Kart ile ödeme yakında aktif olacak. Şimdilik havale/EFT kullanın.');
+    if (dto.yontem === KomisyonOdemeYontem.KART) {
+      throw new BadRequestException('Kart ile ödeme yakında aktif olacak. Şimdilik havale/EFT kullanın.');
+    }
+    if (dto.tutarKurus <= 0) throw new BadRequestException('Tutar pozitif olmalı');
+    return this.prisma.komisyonOdeme.create({
+      data: {
+        tasiyiciId: user.id,
+        tutarKurus: BigInt(dto.tutarKurus),
+        yontem: KomisyonOdemeYontem.HAVALE,
+        durum: KomisyonOdemeDurum.BEKLIYOR,
+        dekont: dto.dekont ?? null,
+      },
+    });
   }
-  if (dto.tutarKurus <= 0) throw new BadRequestException('Tutar pozitif olmalı');
-  return this.prisma.komisyonOdeme.create({
-    data: {
-      tasiyiciId: user.id,
-      tutarKurus: BigInt(dto.tutarKurus),
-      yontem: KomisyonOdemeYontem.HAVALE,
-      durum: KomisyonOdemeDurum.BEKLIYOR,
-      dekont: dto.dekont ?? null,
-    },
-  });
-}
 
   // Tasiyicinin kendi odeme bildirimleri
   async odemelerim(user: AuthUser) {
-  return this.prisma.komisyonOdeme.findMany({
-    where: { tasiyiciId: user.id },
-    orderBy: { createdAt: 'desc' },
-  });
-}
+    return this.prisma.komisyonOdeme.findMany({
+      where: { tasiyiciId: user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
   // ---- Admin ----
 
   private isAdmin(user: AuthUser): boolean {
-  return user.roles.includes(Role.ADMIN) || user.roles.includes(Role.SUPER_ADMIN);
-}
+    return user.roles.includes(Role.ADMIN) || user.roles.includes(Role.SUPER_ADMIN);
+  }
 
   // Admin: bekleyen tum odeme bildirimleri
   async bekleyenOdemeler(user: AuthUser) {
-  if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
-  return this.prisma.komisyonOdeme.findMany({
-    where: { durum: KomisyonOdemeDurum.BEKLIYOR },
-    orderBy: { createdAt: 'asc' },
-    include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true } } },
-  });
-}
+    if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    return this.prisma.komisyonOdeme.findMany({
+      where: { durum: KomisyonOdemeDurum.BEKLIYOR },
+      orderBy: { createdAt: 'asc' },
+      include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true } } },
+    });
+  }
 
   // Admin: odemeyi onayla (borc duser, kilit acilir)
-  async komisyonOnayla(user: AuthUser, odemeId: string, adminNot ?: string) {
-  if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
-  const odeme = await this.prisma.komisyonOdeme.findUnique({ where: { id: odemeId } });
-  if (!odeme) throw new NotFoundException('Ödeme bildirimi bulunamadı');
-  if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
-    throw new ConflictException('Bu bildirim zaten işlenmiş');
+  async komisyonOnayla(user: AuthUser, odemeId: string, adminNot?: string) {
+    if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    const odeme = await this.prisma.komisyonOdeme.findUnique({ where: { id: odemeId } });
+    if (!odeme) throw new NotFoundException('Ödeme bildirimi bulunamadı');
+    if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
+      throw new ConflictException('Bu bildirim zaten işlenmiş');
+    }
+    return this.prisma.komisyonOdeme.update({
+      where: { id: odemeId },
+      data: {
+        durum: KomisyonOdemeDurum.ONAYLANDI,
+        onaylayanId: user.id,
+        adminNot: adminNot ?? null,
+      },
+    });
   }
-  return this.prisma.komisyonOdeme.update({
-    where: { id: odemeId },
-    data: {
-      durum: KomisyonOdemeDurum.ONAYLANDI,
-      onaylayanId: user.id,
-      adminNot: adminNot ?? null,
-    },
-  });
-}
 
   // Admin: odemeyi reddet
-  async komisyonReddet(user: AuthUser, odemeId: string, adminNot ?: string) {
-  if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
-  const odeme = await this.prisma.komisyonOdeme.findUnique({ where: { id: odemeId } });
-  if (!odeme) throw new NotFoundException('Ödeme bildirimi bulunamadı');
-  if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
-    throw new ConflictException('Bu bildirim zaten işlenmiş');
+  async komisyonReddet(user: AuthUser, odemeId: string, adminNot?: string) {
+    if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
+    const odeme = await this.prisma.komisyonOdeme.findUnique({ where: { id: odemeId } });
+    if (!odeme) throw new NotFoundException('Ödeme bildirimi bulunamadı');
+    if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
+      throw new ConflictException('Bu bildirim zaten işlenmiş');
+    }
+    return this.prisma.komisyonOdeme.update({
+      where: { id: odemeId },
+      data: {
+        durum: KomisyonOdemeDurum.RED,
+        onaylayanId: user.id,
+        adminNot: adminNot ?? null,
+      },
+    });
   }
-  return this.prisma.komisyonOdeme.update({
-    where: { id: odemeId },
-    data: {
-      durum: KomisyonOdemeDurum.RED,
-      onaylayanId: user.id,
-      adminNot: adminNot ?? null,
-    },
-  });
-}
 
 
   // ============================================================
@@ -720,63 +728,63 @@ export class LoadService {
   // Gecerli sozlesme surumleri (avukat metni degisince burayi guncelle)
   // Surum degisince kullanicilar yeniden onaylamak zorunda kalir.
   private readonly SOZLESME_SURUM: Record<SozlesmeTipi, string> = {
-  [SozlesmeTipi.TASIYICI]: 'v1-taslak',
-  [SozlesmeTipi.YUK_VEREN]: 'v1-taslak',
-};
+    [SozlesmeTipi.TASIYICI]: 'v1-taslak',
+    [SozlesmeTipi.YUK_VEREN]: 'v1-taslak',
+  };
 
   // Metin hash'i: avukat onayli metin sisteme konunca gercek hash ile degisecek.
   // Simdilik surum bazli sabit placeholder (taslak oldugu icin).
   private metinHashUret(tip: SozlesmeTipi, surum: string): string {
-  return createHash('sha256').update(`baniload:${tip}:${surum}`).digest('hex');
-}
+    return createHash('sha256').update(`baniload:${tip}:${surum}`).digest('hex');
+  }
 
   // Kullanicinin gecerli surum onayi var mi?
-  async sozlesmeOnayliMi(userId: string, tip: SozlesmeTipi): Promise < boolean > {
-  const surum = this.SOZLESME_SURUM[tip];
-  const onay = await this.prisma.sozlesmeOnay.findUnique({
-    where: { kullaniciId_sozlesmeTipi_surum: { kullaniciId: userId, sozlesmeTipi: tip, surum } },
-  });
-  return !!onay;
-}
+  async sozlesmeOnayliMi(userId: string, tip: SozlesmeTipi): Promise<boolean> {
+    const surum = this.SOZLESME_SURUM[tip];
+    const onay = await this.prisma.sozlesmeOnay.findUnique({
+      where: { kullaniciId_sozlesmeTipi_surum: { kullaniciId: userId, sozlesmeTipi: tip, surum } },
+    });
+    return !!onay;
+  }
 
   // UI icin onay durumu
   async sozlesmeDurumu(user: AuthUser, tip: SozlesmeTipi) {
-  const surum = this.SOZLESME_SURUM[tip];
-  const onayli = await this.sozlesmeOnayliMi(user.id, tip);
-  return { sozlesmeTipi: tip, gecerliSurum: surum, onayli };
-}
+    const surum = this.SOZLESME_SURUM[tip];
+    const onayli = await this.sozlesmeOnayliMi(user.id, tip);
+    return { sozlesmeTipi: tip, gecerliSurum: surum, onayli };
+  }
 
   // Kullanici sozlesmeyi onaylar (uyelikte bir kez; surum degisirse tekrar)
-  async sozlesmeOnayla(user: AuthUser, tip: SozlesmeTipi, ip ?: string, cihaz ?: string) {
-  const surum = this.SOZLESME_SURUM[tip];
-  const metinHash = this.metinHashUret(tip, surum);
-  // Idempotent: ayni surum ikinci kez onaylanirsa mevcut kaydi dondur
-  const mevcut = await this.prisma.sozlesmeOnay.findUnique({
-    where: { kullaniciId_sozlesmeTipi_surum: { kullaniciId: user.id, sozlesmeTipi: tip, surum } },
-  });
-  if (mevcut) return mevcut;
-  return this.prisma.sozlesmeOnay.create({
-    data: {
-      kullaniciId: user.id,
-      sozlesmeTipi: tip,
-      surum,
-      metinHash,
-      ip: ip ?? null,
-      cihaz: cihaz ?? null,
-    },
-  });
-}
+  async sozlesmeOnayla(user: AuthUser, tip: SozlesmeTipi, ip?: string, cihaz?: string) {
+    const surum = this.SOZLESME_SURUM[tip];
+    const metinHash = this.metinHashUret(tip, surum);
+    // Idempotent: ayni surum ikinci kez onaylanirsa mevcut kaydi dondur
+    const mevcut = await this.prisma.sozlesmeOnay.findUnique({
+      where: { kullaniciId_sozlesmeTipi_surum: { kullaniciId: user.id, sozlesmeTipi: tip, surum } },
+    });
+    if (mevcut) return mevcut;
+    return this.prisma.sozlesmeOnay.create({
+      data: {
+        kullaniciId: user.id,
+        sozlesmeTipi: tip,
+        surum,
+        metinHash,
+        ip: ip ?? null,
+        cihaz: cihaz ?? null,
+      },
+    });
+  }
 
   // Onaysiz is engeli: gecerli surum onayi yoksa hata firlat
   private async sozlesmeKontrolu(userId: string, tip: SozlesmeTipi) {
-  const onayli = await this.sozlesmeOnayliMi(userId, tip);
-  if (!onayli) {
-    const ad = tip === SozlesmeTipi.TASIYICI ? 'Taşıyıcı' : 'Yük Veren';
-    throw new ForbiddenException(
-      `Devam edebilmek için ${ad} Üyelik Sözleşmesi'ni onaylamanız gerekir.`,
-    );
+    const onayli = await this.sozlesmeOnayliMi(userId, tip);
+    if (!onayli) {
+      const ad = tip === SozlesmeTipi.TASIYICI ? 'Taşıyıcı' : 'Yük Veren';
+      throw new ForbiddenException(
+        `Devam edebilmek için ${ad} Üyelik Sözleşmesi'ni onaylamanız gerekir.`,
+      );
+    }
   }
-}
 
 
   // ============ KYC PROFIL KAYDET ============
