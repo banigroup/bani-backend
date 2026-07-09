@@ -320,6 +320,31 @@ export class LoadService {
     });
   }
 
+  // ARAC TESLIM BEYANI: sadece arac sahibi kamyoncu, DOLU arac
+  async aracTeslimBeyan(user: AuthUser, aracId: string) {
+    const ilan = await this.prisma.aracIlani.findUnique({ where: { id: aracId }, include: { seciliTeklif: true } });
+    if (!ilan) throw new NotFoundException('Arac ilani bulunamadi');
+    if (!ilan.seciliTeklif) throw new ConflictException('Eslesmis teklif yok');
+    if (ilan.tasiyiciId !== user.id) throw new ForbiddenException('Teslim beyanini sadece arac sahibi yapabilir');
+    if (ilan.durum !== AracIlaniDurum.DOLU) throw new ConflictException('Sadece dolu (eslesmis) arac teslim edilebilir');
+    if (ilan.teslimOnayTarihi) throw new ConflictException('Bu is zaten tamamlanmis');
+    return this.prisma.aracIlani.update({ where: { id: aracId }, data: { teslimBeyanTarihi: new Date() } });
+  }
+
+  // ARAC TESLIM ONAYI: sadece teklifi veren firma; %5 komisyon (arac sahibi kamyoncudan)
+  async aracTeslimOnay(user: AuthUser, aracId: string) {
+    const ilan = await this.prisma.aracIlani.findUnique({ where: { id: aracId }, include: { seciliTeklif: true } });
+    if (!ilan) throw new NotFoundException('Arac ilani bulunamadi');
+    if (!ilan.seciliTeklif) throw new ConflictException('Eslesmis teklif yok');
+    const firmaMi = ilan.seciliTeklif.verenId === user.id;
+    if (!firmaMi) throw new ForbiddenException('Teslim onayini sadece teklifi veren firma yapabilir');
+    if (!ilan.teslimBeyanTarihi) throw new ConflictException('Once arac sahibi teslim beyani yapmali');
+    if (ilan.teslimOnayTarihi) throw new ConflictException('Bu is zaten tamamlanmis');
+    const komisyon = (ilan.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n; // %5, arac sahibinden
+    const guncel = await this.prisma.aracIlani.update({ where: { id: aracId }, data: { teslimOnayTarihi: new Date() } });
+    return { arac: guncel, komisyon };
+  }
+
   async aracTeklifReddet(user: AuthUser, teklifId: string) {
     const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: teklifId }, include: { aracIlani: true } });
     if (!teklif) throw new NotFoundException('Teklif bulunamadi');
@@ -589,6 +614,16 @@ export class LoadService {
     for (const ilan of tamamlanan) {
       if (ilan.seciliTeklif) {
         tahakkuk += (ilan.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n;
+      }
+    }
+    // 1b) Arac islerinde bu kisi arac sahibi (tasiyici) ise: teslim onaylanmis araclar
+    const aracTamam = await this.prisma.aracIlani.findMany({
+      where: { tasiyiciId: userId, durum: AracIlaniDurum.DOLU, teslimOnayTarihi: { not: null } },
+      include: { seciliTeklif: true },
+    });
+    for (const ar of aracTamam) {
+      if (ar.seciliTeklif) {
+        tahakkuk += (ar.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n;
       }
     }
     // 2) Onaylanmis odemeler

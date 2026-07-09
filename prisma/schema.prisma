@@ -598,6 +598,8 @@ model AracIlani {
   nereye             String // gidecegi yon
   cikisTarihi        DateTime
   plaka              String?
+  teslimBeyanTarihi  DateTime? // kamyoncu teslim beyani
+  teslimOnayTarihi   DateTime? // firma onayi (= teslim tarihi)
   kapasiteKg         Int
   beklenenFiyatKurus BigInt? // tasiyicinin bekledigi navlun (opsiyonel)
   aciklama           String?

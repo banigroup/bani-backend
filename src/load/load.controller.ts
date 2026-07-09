@@ -18,7 +18,7 @@ import { cloudinaryUpload } from './cloudinary.util';
 @Controller('load')
 @UseGuards(JwtAuthGuard)
 export class LoadController {
-  constructor(private readonly load: LoadService) {}
+  constructor(private readonly load: LoadService) { }
 
   // ----- Yuk ilani -----
   @Post('ilan')
@@ -101,6 +101,16 @@ export class LoadController {
     return this.load.aracKarsiTeklif(user, id, body.yeniFiyatKurus);
   }
 
+  @Patch('arac/:id/teslim-beyan') // kamyoncu (arac sahibi) teslim ettim
+  aracTeslimBeyan(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.load.aracTeslimBeyan(user, id);
+  }
+
+  @Patch('arac/:id/teslim-onay') // firma (teklifi veren) teslim onayla + komisyon
+  aracTeslimOnay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.load.aracTeslimOnay(user, id);
+  }
+
   // ----- Teklif -----
   @Post('teklif')
   teklifVer(@CurrentUser() user: AuthUser, @Body() dto: TeklifVerDto) {
@@ -143,50 +153,50 @@ export class LoadController {
     return this.load.tasimaTamamla(user, id);
   }
 
-// ----- Komisyon borc + tahsilat -----
-@Get('komisyon/durum') // tasiyici: borc durumu (borc, esik, kilitli)
-komisyonDurum(@CurrentUser() user: AuthUser) {
-  return this.load.komisyonDurumu(user);
-}
+  // ----- Komisyon borc + tahsilat -----
+  @Get('komisyon/durum') // tasiyici: borc durumu (borc, esik, kilitli)
+  komisyonDurum(@CurrentUser() user: AuthUser) {
+    return this.load.komisyonDurumu(user);
+  }
 
-@Post('komisyon/bildir') // tasiyici: havale bildirimi
-komisyonBildir(@CurrentUser() user: AuthUser, @Body() dto: KomisyonBildirDto) {
-  return this.load.komisyonBildir(user, dto);
-}
+  @Post('komisyon/bildir') // tasiyici: havale bildirimi
+  komisyonBildir(@CurrentUser() user: AuthUser, @Body() dto: KomisyonBildirDto) {
+    return this.load.komisyonBildir(user, dto);
+  }
 
-@Get('komisyon/odemelerim') // tasiyici: kendi bildirimleri
-komisyonOdemelerim(@CurrentUser() user: AuthUser) {
-  return this.load.odemelerim(user);
-}
+  @Get('komisyon/odemelerim') // tasiyici: kendi bildirimleri
+  komisyonOdemelerim(@CurrentUser() user: AuthUser) {
+    return this.load.odemelerim(user);
+  }
 
-@Get('komisyon/bekleyenler') // admin: onay bekleyen bildirimler
-komisyonBekleyenler(@CurrentUser() user: AuthUser) {
-  return this.load.bekleyenOdemeler(user);
-}
+  @Get('komisyon/bekleyenler') // admin: onay bekleyen bildirimler
+  komisyonBekleyenler(@CurrentUser() user: AuthUser) {
+    return this.load.bekleyenOdemeler(user);
+  }
 
-@Patch('komisyon/:id/onayla') // admin
-komisyonOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
-  return this.load.komisyonOnayla(user, id, body?.adminNot);
-}
+  @Patch('komisyon/:id/onayla') // admin
+  komisyonOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
+    return this.load.komisyonOnayla(user, id, body?.adminNot);
+  }
 
-@Patch('komisyon/:id/reddet') // admin
-komisyonReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
-  return this.load.komisyonReddet(user, id, body?.adminNot);
-}
+  @Patch('komisyon/:id/reddet') // admin
+  komisyonReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
+    return this.load.komisyonReddet(user, id, body?.adminNot);
+  }
 
 
-// ----- Sozlesme onay (B modeli) -----
-@Get('sozlesme/durum/:tip') // kullanici: belirli tip icin onay durumu
-sozlesmeDurum(@CurrentUser() user: AuthUser, @Param('tip') tip: SozlesmeTipi) {
-  return this.load.sozlesmeDurumu(user, tip);
-}
+  // ----- Sozlesme onay (B modeli) -----
+  @Get('sozlesme/durum/:tip') // kullanici: belirli tip icin onay durumu
+  sozlesmeDurum(@CurrentUser() user: AuthUser, @Param('tip') tip: SozlesmeTipi) {
+    return this.load.sozlesmeDurumu(user, tip);
+  }
 
-@Post('sozlesme/onayla') // kullanici: uyelik sozlesmesini onayla (IP/cihaz sunucudan)
-sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @Req() req: Request) {
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
-  const cihaz = req.headers['user-agent'];
-  return this.load.sozlesmeOnayla(user, dto.sozlesmeTipi, ip, cihaz);
-}
+  @Post('sozlesme/onayla') // kullanici: uyelik sozlesmesini onayla (IP/cihaz sunucudan)
+  sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @Req() req: Request) {
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
+    const cihaz = req.headers['user-agent'];
+    return this.load.sozlesmeOnayla(user, dto.sozlesmeTipi, ip, cihaz);
+  }
 
 
   // ----- KYC Profil -----
