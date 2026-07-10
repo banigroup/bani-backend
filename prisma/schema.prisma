@@ -617,7 +617,7 @@ model AracIlani {
 
 model YukTeklif {
   id               String         @id @default(uuid()) @db.Uuid
-  yukIlani         YukIlani       @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id])
+  yukIlani         YukIlani       @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id], onDelete: Cascade)
   yukIlaniId       String         @db.Uuid
   tasiyici         User           @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
   tasiyiciId       String         @db.Uuid
@@ -647,7 +647,7 @@ model YukTeklif {
 
 model AracTeklif {
   id               String         @id @default(uuid()) @db.Uuid
-  aracIlani        AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id])
+  aracIlani        AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id], onDelete: Cascade)
   aracIlaniId      String         @db.Uuid
   veren            User           @relation("VerdigiAracTeklifleri", fields: [verenId], references: [id])
   verenId          String         @db.Uuid
