@@ -277,7 +277,7 @@ export class LoadService {
     });
     if (mevcut) throw new ConflictException('Bu araca zaten bekleyen bir teklifiniz var');
     return this.prisma.aracTeklif.create({
-      data: { aracIlaniId: dto.aracIlaniId, verenId: user.id, fiyatKurus: BigInt(dto.fiyatKurus), mesaj: dto.mesaj ?? null, durum: YukTeklifDurum.BEKLIYOR },
+      data: { aracIlaniId: dto.aracIlaniId, verenId: user.id, fiyatKurus: BigInt(dto.fiyatKurus), mesaj: dto.mesaj ?? null, durum: YukTeklifDurum.BEKLIYOR, beklenenTaraf: 'TASIYICI' as any },
     });
   }
 
