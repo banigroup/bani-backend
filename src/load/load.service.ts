@@ -417,6 +417,7 @@ export class LoadService {
           surucuAdi: dto.surucuAdi ?? null,
           surucuTel: dto.surucuTel ?? null,
           durum: YukTeklifDurum.BEKLIYOR,
+          beklenenTaraf: 'FIRMA' as any,
         },
       });
       // Ilan ilk teklifi aldiysa durumu guncelle
