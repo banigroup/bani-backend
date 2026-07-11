@@ -172,7 +172,7 @@ export class LoadService {
       include: {
         teklifler: {
           orderBy: { fiyatKurus: 'asc' },
-          include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true } } },
+          include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } },
         },
       },
     });
@@ -184,9 +184,9 @@ export class LoadService {
       include: {
         teklifler: {
           orderBy: { fiyatKurus: 'asc' },
-          include: { tasiyici: { select: { id: true, name: true, surname: true } } },
+          include: { tasiyici: { select: { id: true, name: true, surname: true, puanOrtalama: true, puanSayisi: true } } },
         },
-        veren: { select: { id: true, name: true, surname: true } },
+        veren: { select: { id: true, name: true, surname: true, puanOrtalama: true, puanSayisi: true } },
       },
     });
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
@@ -233,7 +233,7 @@ export class LoadService {
     return this.prisma.aracIlani.findMany({
       where: { durum: AracIlaniDurum.MUSAIT, cikisTarihi: { gte: this.bugunBasi() } },
       orderBy: { cikisTarihi: 'asc' },
-      include: { tasiyici: { select: { id: true, name: true, surname: true } } },
+      include: { tasiyici: { select: { id: true, name: true, surname: true, puanOrtalama: true, puanSayisi: true } } },
     });
   }
 
@@ -244,9 +244,9 @@ export class LoadService {
       include: {
         teklifler: {
           orderBy: { fiyatKurus: 'desc' },
-          include: { veren: { select: { id: true, name: true, surname: true, phone: true } } },
+          include: { veren: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } },
         },
-        seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true } } } },
+        seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } },
       },
     });
   }
@@ -293,7 +293,7 @@ export class LoadService {
     return this.prisma.aracTeklif.findMany({
       where: { verenId: user.id },
       orderBy: { createdAt: 'desc' },
-      include: { aracIlani: { select: { id: true, nereden: true, nereye: true, aracTipi: true, durum: true, seciliTeklifId: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, plaka: true, tasiyici: { select: { name: true, surname: true, phone: true } } } } },
+      include: { aracIlani: { select: { id: true, nereden: true, nereye: true, aracTipi: true, durum: true, seciliTeklifId: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, plaka: true, tasiyici: { select: { name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
     });
   }
 
@@ -315,7 +315,7 @@ export class LoadService {
       return tx.aracIlani.update({
         where: { id: ilan.id },
         data: { durum: AracIlaniDurum.DOLU, seciliTeklifId: teklif.id },
-        include: { seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true } } } } },
+        include: { seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
       });
     });
   }
@@ -449,7 +449,7 @@ export class LoadService {
     return this.prisma.yukTeklif.findMany({
       where: { tasiyiciId: user.id },
       orderBy: { createdAt: 'desc' },
-      include: { yukIlani: { select: { id: true, nereden: true, nereye: true, yukTipi: true, durum: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, veren: { select: { name: true, surname: true, phone: true, loadFirmaProfil: { select: { unvan: true } } } } } } },
+      include: { yukIlani: { select: { id: true, nereden: true, nereye: true, yukTipi: true, durum: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, veren: { select: { name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true, loadFirmaProfil: { select: { unvan: true } } } } } } },
     });
   }
 
@@ -493,7 +493,7 @@ export class LoadService {
       const guncel = await tx.yukIlani.update({
         where: { id: ilan.id },
         data: { durum: YukIlaniDurum.ESLESTI, seciliTeklifId: teklif.id },
-        include: { seciliTeklif: { include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true } } } } },
+        include: { seciliTeklif: { include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
       });
       return guncel;
     });
@@ -715,7 +715,7 @@ export class LoadService {
     return this.prisma.komisyonOdeme.findMany({
       where: { durum: KomisyonOdemeDurum.BEKLIYOR },
       orderBy: { createdAt: 'asc' },
-      include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true } } },
+      include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } },
     });
   }
 
