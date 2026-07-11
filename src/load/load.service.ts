@@ -910,4 +910,50 @@ export class LoadService {
     if (!belge) throw new NotFoundException('Belge bulunamadı');
     return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'REDDEDILDI' as any, redGerekce: gerekce ?? null } });
   }
+
+  // ===== DEGERLENDIRME (puanlama - is TAMAMLANDI sonrasi, cift yonlu, 1-5) =====
+  async degerlendir(user: AuthUser, dto: { yukIlaniId?: string; aracIlaniId?: string; puan: number }) {
+    const puan = Number(dto?.puan);
+    if (!puan || puan < 1 || puan > 5) throw new BadRequestException('Puan 1-5 arasinda olmali');
+    if (!dto?.yukIlaniId && !dto?.aracIlaniId) throw new BadRequestException('Yuk veya arac ilani belirtin');
+    let alanId; let verenRol;
+    if (dto.yukIlaniId) {
+      const ilan = await this.prisma.yukIlani.findUnique({ where: { id: dto.yukIlaniId }, include: { seciliTeklif: true } });
+      if (!ilan) throw new NotFoundException('Yuk ilani bulunamadi');
+      if (ilan.durum !== YukIlaniDurum.TAMAMLANDI) throw new ForbiddenException('Is tamamlanmadan puan verilemez');
+      if (!ilan.seciliTeklif) throw new ConflictException('Eslesmis teklif yok');
+      const firmaMi = ilan.verenId === user.id;
+      const tasiyiciId = ilan.seciliTeklif.tasiyiciId;
+      if (!firmaMi && user.id !== tasiyiciId) throw new ForbiddenException('Bu isin tarafi degilsiniz');
+      alanId = firmaMi ? tasiyiciId : ilan.verenId;
+      verenRol = firmaMi ? 'FIRMA' : 'TASIYICI';
+    } else {
+      const ilan = await this.prisma.aracIlani.findUnique({ where: { id: dto.aracIlaniId } });
+      if (!ilan) throw new NotFoundException('Arac ilani bulunamadi');
+      if (!ilan.teslimOnayTarihi) throw new ForbiddenException('Is tamamlanmadan puan verilemez');
+      if (!ilan.seciliTeklifId) throw new ConflictException('Eslesmis teklif yok');
+      const teklif = await this.prisma.aracTeklif.findUnique({ where: { id: ilan.seciliTeklifId } });
+      if (!teklif) throw new ConflictException('Teklif bulunamadi');
+      const firmaMi = teklif.verenId === user.id;
+      if (!firmaMi && user.id !== ilan.tasiyiciId) throw new ForbiddenException('Bu isin tarafi degilsiniz');
+      alanId = firmaMi ? ilan.tasiyiciId : teklif.verenId;
+      verenRol = firmaMi ? 'FIRMA' : 'TASIYICI';
+    }
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const d = await tx.loadDegerlendirme.create({ data: { puan, verenId: user.id, alanId, verenRol, yukIlaniId: dto.yukIlaniId ?? null, aracIlaniId: dto.aracIlaniId ?? null } });
+        const alan = await tx.user.findUnique({ where: { id: alanId }, select: { puanOrtalama: true, puanSayisi: true } });
+        const yeniSayi = (alan?.puanSayisi ?? 0) + 1;
+        const yeniOrt = (((alan?.puanOrtalama ?? 0) * (alan?.puanSayisi ?? 0)) + puan) / yeniSayi;
+        await tx.user.update({ where: { id: alanId }, data: { puanSayisi: yeniSayi, puanOrtalama: Math.round(yeniOrt * 100) / 100 } });
+        return d;
+      });
+    } catch (e: any) {
+      if (e?.code === 'P2002') throw new ConflictException('Bu is icin zaten puan verdiniz');
+      throw e;
+    }
+  }
+  async degerlendirmelerim(user: AuthUser) {
+    return this.prisma.loadDegerlendirme.findMany({ where: { verenId: user.id }, select: { yukIlaniId: true, aracIlaniId: true, puan: true } });
+  }
 }

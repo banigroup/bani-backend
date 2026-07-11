@@ -64,6 +64,10 @@ model User {
   loadFirmaProfil       LoadFirmaProfil?
   loadTasiyiciProfil    LoadTasiyiciProfil?
   loadBelgeler          LoadBelge[]
+  puanOrtalama          Float               @default(0)
+  puanSayisi            Int                 @default(0)
+  verdigiDegerlendirmeler LoadDegerlendirme[] @relation("VerdigiDegerlendirmeler")
+  aldigiDegerlendirmeler  LoadDegerlendirme[] @relation("AldigiDegerlendirmeler")
 
   @@index([phone])
   @@map("users")
@@ -850,4 +854,23 @@ model LoadBelge {
 
   @@index([userId])
   @@map("load_belgeleri")
+}
+
+model LoadDegerlendirme {
+  id          String   @id @default(uuid()) @db.Uuid
+  puan        Int // 1-5 yildiz
+  yorum       String? // simdilik kullanilmiyor, ileride
+  veren       User     @relation("VerdigiDegerlendirmeler", fields: [verenId], references: [id], onDelete: Cascade)
+  verenId     String   @db.Uuid
+  alan        User     @relation("AldigiDegerlendirmeler", fields: [alanId], references: [id], onDelete: Cascade)
+  alanId      String   @db.Uuid
+  verenRol    String // FIRMA | TASIYICI
+  yukIlaniId  String?  @db.Uuid
+  aracIlaniId String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@unique([verenId, yukIlaniId])
+  @@unique([verenId, aracIlaniId])
+  @@index([alanId])
+  @@map("load_degerlendirmeler")
 }

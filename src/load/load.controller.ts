@@ -243,4 +243,13 @@ export class LoadController {
   belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { gerekce?: string }) {
     return this.load.belgeReddet(user, id, body?.gerekce);
   }
+
+  @Post('degerlendir')
+  degerlendir(@CurrentUser() user: AuthUser, @Body() body: { yukIlaniId?: string; aracIlaniId?: string; puan: number }) {
+    return this.load.degerlendir(user, body);
+  }
+  @Get('degerlendirmelerim')
+  degerlendirmelerim(@CurrentUser() user: AuthUser) {
+    return this.load.degerlendirmelerim(user);
+  }
 }
