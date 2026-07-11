@@ -293,7 +293,7 @@ export class LoadService {
     return this.prisma.aracTeklif.findMany({
       where: { verenId: user.id },
       orderBy: { createdAt: 'desc' },
-      include: { aracIlani: { select: { id: true, nereden: true, nereye: true, aracTipi: true, durum: true } } },
+      include: { aracIlani: { select: { id: true, nereden: true, nereye: true, aracTipi: true, durum: true, seciliTeklifId: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, plaka: true, tasiyici: { select: { name: true, surname: true, phone: true } } } } },
     });
   }
 
