@@ -669,6 +669,7 @@ export class LoadService {
     }
   }
   private async erisimKontrolu(userId: string) {
+    if (process.env.KOMISYON_KILIT_AKTIF !== 'true') return;
     const borc = await this.komisyonBorcu(userId);
     if (borc >= KOMISYON_BORC_ESIGI_KURUS) {
       const tl = (Number(borc) / 100).toFixed(2);
