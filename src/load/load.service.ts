@@ -87,7 +87,7 @@ export class LoadService {
     return this.prisma.yukIlani.findMany({
       where: { durum: { in: [YukIlaniDurum.ACIK, YukIlaniDurum.TEKLIF_ALINDI] }, yuklemeTarihi: { gte: this.bugunBasi() } },
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { teklifler: true } } },
+      include: { _count: { select: { teklifler: true } }, veren: { select: { name: true, surname: true, puanOrtalama: true, puanSayisi: true, loadFirmaProfil: { select: { unvan: true } } } } },
     });
   }
 
