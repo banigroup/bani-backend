@@ -10,7 +10,7 @@ import { SMS_PROVIDER } from "./otp/sms/sms-provider.interface";
 import { ConsoleSmsProvider } from "./otp/sms/console-sms.provider";
 import { IletiMerkeziSmsProvider } from "./otp/sms/iletimerkezi-sms.provider";
 const smsAktif = process.env.SMS_AKTIF === "true";
-new Logger("AuthModule").log(`SMS provider: ${smsAktif ? "ILETI MERKEZI" : "CONSOLE"} | SMS_AKTIF=[${process.env.SMS_AKTIF}] | SENDER=[${process.env.ILETIMERKEZI_SENDER}] | KEY_VAR=[${!!process.env.ILETIMERKEZI_KEY}]`);
+new Logger("AuthModule").log(`SMS provider v2: ${smsAktif ? "ILETI MERKEZI" : "CONSOLE"} | SMS_AKTIF=[${process.env.SMS_AKTIF}] | SENDER=[${process.env.ILETIMERKEZI_SENDER}] | KEY_VAR=[${!!process.env.ILETIMERKEZI_KEY}]`);
 @Module({
   imports: [PassportModule, JwtModule.register({})],
   controllers: [AuthController],
