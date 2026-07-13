@@ -874,3 +874,43 @@ model LoadDegerlendirme {
   @@index([alanId])
   @@map("load_degerlendirmeler")
 }
+
+
+// ===================== BANİSİGORTA — ön talep (lead) =====================
+enum SigortaTuru {
+  TRAFIK
+  KASKO
+  DASK
+  KONUT
+  SAGLIK
+  NAKLIYAT
+  FERDI_KAZA
+  ISYERI
+  HAYAT
+  DIGER
+}
+
+enum SigortaKaynak {
+  STANDALONE
+  BANILOAD
+}
+
+enum SigortaDurum {
+  YENI
+  ARANDI
+  TAMAMLANDI
+}
+
+model SigortaTalep {
+  id              String        @id @default(cuid())
+  adSoyad         String
+  telefon         String
+  sigortaTuru     SigortaTuru
+  kaynak          SigortaKaynak @default(STANDALONE)
+  durum           SigortaDurum  @default(YENI)
+  adminNot        String?
+  olusturmaTarihi DateTime      @default(now())
+
+  @@index([durum])
+  @@index([olusturmaTarihi])
+}
