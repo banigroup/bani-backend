@@ -2,8 +2,10 @@ import {
   Controller, Get, Post, Patch, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
 import { Request } from 'express';
-import { SozlesmeTipi } from '@prisma/client';
+import { SozlesmeTipi, Role } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/rbac/roles.guard';
+import { Roles } from '../common/rbac/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { LoadService } from './load.service';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
@@ -16,7 +18,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { cloudinaryUpload } from './cloudinary.util';
 
 @Controller('load')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.CARRIER, Role.LOAD_CUSTOMER)
 export class LoadController {
   constructor(private readonly load: LoadService) { }
 
