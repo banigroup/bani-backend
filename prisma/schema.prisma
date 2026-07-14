@@ -914,3 +914,27 @@ model SigortaTalep {
   @@index([durum])
   @@index([olusturmaTarihi])
 }
+
+// ===================== BANİSİGORTA — şube/bayi başvurusu =====================
+enum SubeBasvuruDurum {
+  YENI
+  ARANDI
+  TAMAMLANDI
+}
+
+model SigortaSubeBasvuru {
+  id              String           @id @default(cuid())
+  adSoyad         String
+  telefon         String
+  ilBolge         String?
+  sektorTecrube   Boolean          @default(false)
+  segemSertifika  Boolean          @default(false)
+  aciklama        String?
+  durum           SubeBasvuruDurum @default(YENI)
+  adminNot        String?
+  olusturmaTarihi DateTime         @default(now())
+
+  @@index([durum])
+  @@index([olusturmaTarihi])
+}
+
