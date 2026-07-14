@@ -31,7 +31,7 @@ export class LoadService {
     private readonly wallet: WalletService,
   ) { }
 
-  // ============ YUK ILANI (yuk veren) ============
+  // ██████ 1 · YUK ILANI (yuk veren) ██████
 
   async ilanOlustur(user: AuthUser, dto: YukIlaniOlusturDto) {
     await this.sozlesmeKontrolu(user.id, SozlesmeTipi.YUK_VEREN); // onaysiz ilan engeli
@@ -129,7 +129,7 @@ export class LoadService {
     });
   }
 
-  // ===== ILAN BORSASI (public, sayfali, filtreli) =====
+  // ██████ 2 · VITRIN / ILAN BORSASI (public) ██████
   async ilanBorsasi(params: { sayfa?: number; nereden?: string; nereye?: string; aracTipi?: string }) {
     const sayfa = Math.max(1, Number(params.sayfa) || 1);
     const adet = 20;
@@ -206,7 +206,7 @@ export class LoadService {
     });
   }
 
-  // ============ ARAC ILANI (tasiyici) ============
+  // ██████ 3 · ARAC ILANI (tasiyici) ██████
 
   async aracIlaniOlustur(user: AuthUser, dto: AracIlaniOlusturDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
@@ -262,7 +262,7 @@ export class LoadService {
   }
 
 
-  // ============ ARAC TEKLIF SISTEMI (firma -> arac, kamyoncu onaylar) ============
+  // ██████ 4 · ARAC TEKLIF (firma -> arac, kamyoncu onaylar) ██████
 
   async aracTeklifVer(user: AuthUser, dto: { aracIlaniId: string; fiyatKurus: number; mesaj?: string }) {
     await this.sozlesmeKontrolu(user.id, SozlesmeTipi.YUK_VEREN);
@@ -384,7 +384,7 @@ export class LoadService {
     });
   }
 
-  // ============ TEKLIF (tasiyici verir) ============
+  // ██████ 5 · YUK TEKLIF (tasiyici verir + kabul + pazarlik) ██████
 
   async teklifVer(user: AuthUser, dto: TeklifVerDto) {
     await this.erisimKontrolu(user.id); // komisyon borc kilidi
@@ -543,7 +543,7 @@ export class LoadService {
     });
   }
 
-  // ============ IS AKISI: tasima basla / tamamla (+%5 komisyon) ============
+  // ██████ 6 · IS AKISI: tasima basla / tamamla (+%5 komisyon) ██████
 
   async tasimaBasla(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.yukIlani.findUnique({ where: { id: ilanId }, include: { seciliTeklif: true } });
@@ -596,7 +596,8 @@ export class LoadService {
   }
 
   // ============================================================
-  // KOMISYON BORC + TAHSILAT (Faz 1: havale + admin onayi)
+  // ██████ 7 · KOMISYON BORC + TAHSILAT (havale + admin onayi) ██████
+  // Faz 1: havale + admin onayi
   // Borc = (TAMAMLANDI tasimalarin %5 komisyonu) - (ONAYLANDI odemeler)
   // POS entegrasyonu sonrasi KART yolu acilacak.
   // ============================================================
@@ -758,6 +759,7 @@ export class LoadService {
 
 
   // ============================================================
+  // ██████ 8 · SOZLESME + KYC (profil/belge) + ADMIN ██████
   // SOZLESME ONAY (B modeli: uyelikte tek onay + is delili)
   // Metin GECICI taslak; avukat onayindan sonra SURUM guncellenir.
   // ============================================================
@@ -912,7 +914,7 @@ export class LoadService {
     return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'REDDEDILDI' as any, redGerekce: gerekce ?? null } });
   }
 
-  // ===== DEGERLENDIRME (puanlama - is TAMAMLANDI sonrasi, cift yonlu, 1-5) =====
+  // ██████ 9 · DEGERLENDIRME (puanlama, cift yonlu 1-5) ██████
   async degerlendir(user: AuthUser, dto: { yukIlaniId?: string; aracIlaniId?: string; puan: number }) {
     const puan = Number(dto?.puan);
     if (!puan || puan < 1 || puan > 5) throw new BadRequestException('Puan 1-5 arasinda olmali');
