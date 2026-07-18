@@ -58,25 +58,32 @@ export class LoadService {
   async otomatikTemizlik() {
     const now = new Date();
     const yirmiDortSaatOnce = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    // Yuk: ACIK/TEKLIF_ALINDI (eslesmemis) + yuklemeTarihi 24h+ gecti -> sil
-    const yukSilinen = await this.prisma.yukIlani.deleteMany({
+    // SILME YOK (is delili + FK guvenligi): suresi dolan eslesmemis ilan IPTAL/PASIF'e cekilir
+    const yukIptal = await this.prisma.yukIlani.updateMany({
       where: {
         durum: { in: [YukIlaniDurum.ACIK, YukIlaniDurum.TEKLIF_ALINDI] },
         yuklemeTarihi: { lt: yirmiDortSaatOnce },
       },
+      data: { durum: YukIlaniDurum.IPTAL },
     });
-    // Arac: MUSAIT (eslesmemis) + cikisTarihi 24h+ gecti -> sil
-    const aracSilinen = await this.prisma.aracIlani.deleteMany({
-      where: {
-        durum: AracIlaniDurum.MUSAIT,
-        cikisTarihi: { lt: yirmiDortSaatOnce },
-      },
+    // Kapanan yuk ilanlarinin bekleyen teklifleri RED
+    await this.prisma.yukTeklif.updateMany({
+      where: { durum: YukTeklifDurum.BEKLIYOR, yukIlani: { durum: YukIlaniDurum.IPTAL } },
+      data: { durum: YukTeklifDurum.RED },
     });
-    if (yukSilinen.count > 0 || aracSilinen.count > 0) {
-      console.log(`[otomatikTemizlik] Silinen: ${yukSilinen.count} yuk, ${aracSilinen.count} arac ilani`);
+    const aracPasif = await this.prisma.aracIlani.updateMany({
+      where: { durum: AracIlaniDurum.MUSAIT, cikisTarihi: { lt: yirmiDortSaatOnce } },
+      data: { durum: AracIlaniDurum.PASIF },
+    });
+    // Kapanan arac ilanlarinin bekleyen teklifleri RED
+    await this.prisma.aracTeklif.updateMany({
+      where: { durum: YukTeklifDurum.BEKLIYOR, aracIlani: { durum: AracIlaniDurum.PASIF } },
+      data: { durum: YukTeklifDurum.RED },
+    });
+    if (yukIptal.count > 0 || aracPasif.count > 0) {
+      console.log('[otomatikTemizlik] Suresi dolan: ' + yukIptal.count + ' yuk IPTAL, ' + aracPasif.count + ' arac PASIF');
     }
   }
-
   private bugunBasi(): Date {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
