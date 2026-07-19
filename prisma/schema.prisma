@@ -64,8 +64,7 @@ model User {
   loadFirmaProfil       LoadFirmaProfil?
   loadTasiyiciProfil    LoadTasiyiciProfil?
   loadBelgeler          LoadBelge[]
-  puanOrtalama          Float               @default(0)
-  puanSayisi            Int                 @default(0)
+  loadPuan              LoadPuan?
   verdigiDegerlendirmeler LoadDegerlendirme[] @relation("VerdigiDegerlendirmeler")
   aldigiDegerlendirmeler  LoadDegerlendirme[] @relation("AldigiDegerlendirmeler")
 
@@ -893,6 +892,16 @@ model LoadDegerlendirme {
   @@unique([verenId, aracIlaniId])
   @@index([alanId])
   @@map("load_degerlendirmeler")
+}
+
+// Load-sahipli puan ozeti (Faz 0: I-2 kapanisi - cekirdek User birim verisi tasimaz)
+model LoadPuan {
+  userId   String @id @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ortalama Float  @default(0)
+  sayi     Int    @default(0)
+
+  @@map("load_puanlari")
 }
 
 
