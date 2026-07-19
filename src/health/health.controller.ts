@@ -5,6 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
+  @Get('sentry-test')
+  sentryTest() {
+    throw new Error('Sentry test hatasi - kurulum dogrulama');
+  }
+
   @Get()
   async check() {
     try {
