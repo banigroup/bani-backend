@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, EntryDirection, TransactionType, WalletType } from '@prisma/client';
+import { Prisma, EntryDirection, BusinessUnit, TransactionType, WalletType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { LedgerService } from './services/ledger.service';
@@ -34,6 +34,7 @@ export class FinanceService {
     const amount = BigInt(dto.amount);
     const trx = await this.ledger.post({
       type: TransactionType.TOPUP,
+      businessUnit: BusinessUnit.PLATFORM,
       reference: dto.reference,
       description: dto.description ?? 'Bakiye yükleme',
       lines: [
@@ -50,6 +51,7 @@ export class FinanceService {
     const amount = BigInt(dto.amount);
     const trx = await this.ledger.post({
       type: TransactionType.WITHDRAWAL,
+      businessUnit: BusinessUnit.PLATFORM,
       reference: dto.reference,
       description: dto.description ?? 'Para çekme',
       lines: [
@@ -68,6 +70,7 @@ export class FinanceService {
     const amount = BigInt(dto.amount);
     const trx = await this.ledger.post({
       type: TransactionType.TRANSFER,
+      businessUnit: BusinessUnit.PLATFORM,
       reference: dto.reference,
       description: dto.description ?? 'Transfer',
       lines: [
@@ -89,7 +92,6 @@ export class FinanceService {
   async businessUnitReport(from?: Date, to?: Date) {
     const where: Prisma.TransactionWhereInput = {
       reference: { endsWith: ':settle' }, // yalnızca gerçekleşen dağıtım
-      businessUnit: { not: null },
     };
     if (from || to) {
       where.createdAt = {};

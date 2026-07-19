@@ -16,7 +16,7 @@ export interface PostingInput {
   currency?: Currency;
   reference?: string;
   description?: string;
-  businessUnit?: BusinessUnit;
+  businessUnit: BusinessUnit;
   commission?: bigint;
   vat?: bigint;
   deliveryFee?: bigint;

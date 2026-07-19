@@ -177,6 +177,7 @@ model Wallet {
   userId    String?    @db.Uuid
   user      User?      @relation(fields: [userId], references: [id])
   type      WalletType @default(USER)
+  businessUnit BusinessUnit? // birim defteri (Faz 1'de zorunlulasir)
   currency  Currency   @default(TRY)
   balance   BigInt     @default(0)
   createdAt DateTime   @default(now())
@@ -213,6 +214,7 @@ enum BusinessUnit {
   LOAD
   DICLEFUL
   COURIER
+  PLATFORM // cekirdek/holding defteri (cuzdan ops: topup/withdrawal/transfer)
 }
 
 model Transaction {
@@ -222,7 +224,7 @@ model Transaction {
   currency     Currency          @default(TRY)
   amount       BigInt
   orderNo      String?
-  businessUnit BusinessUnit?
+  businessUnit BusinessUnit
   commission   BigInt            @default(0)
   vat          BigInt            @default(0)
   deliveryFee  BigInt            @default(0)
@@ -234,6 +236,8 @@ model Transaction {
   updatedAt    DateTime          @updatedAt
 
   entries LedgerEntry[]
+
+  deletedAt    DateTime?
 
   @@index([type, status])
   @@index([businessUnit])
@@ -451,6 +455,7 @@ model Order {
   confirmedAt  DateTime?
   deliveredAt  DateTime?
   cancelledAt  DateTime?
+  deletedAt    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -519,6 +524,8 @@ model Delivery {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
+  deletedAt    DateTime?
+
   @@index([courierId, status])
   @@index([status])
   @@map("deliveries")
@@ -585,11 +592,13 @@ model YukIlani {
   teklifler         YukTeklif[]   @relation("IlanTeklifleri")
   teslimBeyanTarihi DateTime? // kamyoncu 'teslim ettim' dedigi an
   teslimOnayTarihi  DateTime? // firma onayladigi an (= gercek teslim tarihi)
+  deletedAt         DateTime?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
   @@index([durum])
   @@index([verenId])
+  @@index([durum, yuklemeTarihi])
   @@map("yuk_ilanlari")
 }
 
@@ -606,6 +615,7 @@ model AracIlani {
   teslimOnayTarihi   DateTime? // firma onayi (= teslim tarihi)
   kapasiteKg         Int
   beklenenFiyatKurus BigInt? // tasiyicinin bekledigi navlun (opsiyonel)
+  deletedAt          DateTime?
   aciklama           String?
   durum              AracIlaniDurum @default(MUSAIT)
   seciliTeklif       AracTeklif?    @relation("SeciliAracTeklif", fields: [seciliTeklifId], references: [id])
@@ -616,6 +626,7 @@ model AracIlani {
 
   @@index([durum])
   @@index([tasiyiciId])
+  @@index([durum, cikisTarihi])
   @@map("arac_ilanlari")
 }
 
@@ -644,6 +655,8 @@ model YukTeklif {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
+  deletedAt        DateTime?
+
   @@index([yukIlaniId])
   @@index([tasiyiciId])
   @@map("yuk_teklifleri")
@@ -669,6 +682,8 @@ model AracTeklif {
   seciliOlan       AracIlani?     @relation("SeciliAracTeklif")
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
+
+  deletedAt        DateTime?
 
   @@index([aracIlaniId])
   @@index([verenId])
@@ -700,6 +715,7 @@ model KomisyonOdeme {
   durum       KomisyonOdemeDurum  @default(BEKLIYOR)
   dekont      String? // havale dekont/aciklama (kullanici girer)
   adminNot    String? // admin onay/red notu
+  deletedAt   DateTime?
   onaylayanId String?             @db.Uuid
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
@@ -783,6 +799,8 @@ model PartnerBasvuru {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  deletedAt DateTime?
+
   @@index([tip])
   @@index([durum])
   @@map("partner_basvurulari")
@@ -850,6 +868,7 @@ model LoadBelge {
   dosyaUrl   String
   durum      LoadBelgeDurum @default(BEKLIYOR)
   redGerekce String?
+  deletedAt  DateTime?
   createdAt  DateTime       @default(now())
 
   @@index([userId])
@@ -907,12 +926,14 @@ model SigortaTalep {
   telefon         String
   sigortaTuru     SigortaTuru
   kaynak          SigortaKaynak @default(STANDALONE)
+  deletedAt       DateTime?
   durum           SigortaDurum  @default(YENI)
   adminNot        String?
   olusturmaTarihi DateTime      @default(now())
 
   @@index([durum])
   @@index([olusturmaTarihi])
+  @@map("sigorta_talepleri")
 }
 
 // ===================== BANİSİGORTA — şube/bayi başvurusu =====================
@@ -929,6 +950,7 @@ model SigortaSubeBasvuru {
   ilBolge         String?
   sektorTecrube   Boolean          @default(false)
   segemSertifika  Boolean          @default(false)
+  deletedAt       DateTime?
   aciklama        String?
   durum           SubeBasvuruDurum @default(YENI)
   adminNot        String?
@@ -936,5 +958,6 @@ model SigortaSubeBasvuru {
 
   @@index([durum])
   @@index([olusturmaTarihi])
+  @@map("sigorta_sube_basvurulari")
 }
 
