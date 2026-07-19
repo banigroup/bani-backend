@@ -560,6 +560,7 @@ enum AracIlaniDurum {
   MUSAIT // bosta, yuk ariyor
   DOLU // bir ise atandi
   PASIF // tasiyici kapatti
+  TAMAMLANDI // teslim onaylandi, is bitti (komisyon tahakkuk)
 }
 
 enum YukTeklifDurum {

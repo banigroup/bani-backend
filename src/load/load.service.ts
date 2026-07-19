@@ -358,7 +358,9 @@ export class LoadService {
     if (!ilan.teslimBeyanTarihi) throw new ConflictException('Once arac sahibi teslim beyani yapmali');
     if (ilan.teslimOnayTarihi) throw new ConflictException('Bu is zaten tamamlanmis');
     const komisyon = (ilan.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n; // %5, arac sahibinden
-    const guncel = await this.prisma.aracIlani.update({ where: { id: aracId }, data: { teslimOnayTarihi: new Date() } });
+    const kilit = await this.prisma.aracIlani.updateMany({ where: { id: aracId, durum: AracIlaniDurum.DOLU, teslimOnayTarihi: null }, data: { durum: AracIlaniDurum.TAMAMLANDI, teslimOnayTarihi: new Date() } });
+    if (kilit.count !== 1) throw new ConflictException('Bu is zaten tamamlanmis');
+    const guncel = await this.prisma.aracIlani.findUnique({ where: { id: aracId } });
     return { arac: guncel, komisyon };
   }
 
@@ -628,7 +630,7 @@ export class LoadService {
     }
     // 1b) Arac islerinde bu kisi arac sahibi (tasiyici) ise: teslim onaylanmis araclar
     const aracTamam = await this.prisma.aracIlani.findMany({
-      where: { tasiyiciId: userId, durum: AracIlaniDurum.DOLU, teslimOnayTarihi: { not: null } },
+      where: { tasiyiciId: userId, durum: { in: [AracIlaniDurum.DOLU, AracIlaniDurum.TAMAMLANDI] }, teslimOnayTarihi: { not: null } },
       include: { seciliTeklif: true },
     });
     for (const ar of aracTamam) {
