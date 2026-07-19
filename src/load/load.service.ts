@@ -94,7 +94,7 @@ export class LoadService {
     return this.prisma.yukIlani.findMany({
       where: { durum: { in: [YukIlaniDurum.ACIK, YukIlaniDurum.TEKLIF_ALINDI] }, yuklemeTarihi: { gte: this.bugunBasi() } },
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { teklifler: true } }, veren: { select: { name: true, surname: true, puanOrtalama: true, puanSayisi: true, loadFirmaProfil: { select: { unvan: true } } } } },
+      include: { _count: { select: { teklifler: true } }, veren: { select: { name: true, surname: true, loadPuan: { select: { ortalama: true, sayi: true } }, loadFirmaProfil: { select: { unvan: true } } } } },
     });
   }
 
@@ -179,7 +179,7 @@ export class LoadService {
       include: {
         teklifler: {
           orderBy: { fiyatKurus: 'asc' },
-          include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } },
+          include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } },
         },
       },
     });
@@ -191,9 +191,9 @@ export class LoadService {
       include: {
         teklifler: {
           orderBy: { fiyatKurus: 'asc' },
-          include: { tasiyici: { select: { id: true, name: true, surname: true, puanOrtalama: true, puanSayisi: true } } },
+          include: { tasiyici: { select: { id: true, name: true, surname: true, loadPuan: { select: { ortalama: true, sayi: true } } } } },
         },
-        veren: { select: { id: true, name: true, surname: true, puanOrtalama: true, puanSayisi: true } },
+        veren: { select: { id: true, name: true, surname: true, loadPuan: { select: { ortalama: true, sayi: true } } } },
       },
     });
     if (!ilan) throw new NotFoundException('Yük ilanı bulunamadı');
@@ -240,7 +240,7 @@ export class LoadService {
     return this.prisma.aracIlani.findMany({
       where: { durum: AracIlaniDurum.MUSAIT, cikisTarihi: { gte: this.bugunBasi() } },
       orderBy: { cikisTarihi: 'asc' },
-      include: { tasiyici: { select: { id: true, name: true, surname: true, puanOrtalama: true, puanSayisi: true } } },
+      include: { tasiyici: { select: { id: true, name: true, surname: true, loadPuan: { select: { ortalama: true, sayi: true } } } } },
     });
   }
 
@@ -251,9 +251,9 @@ export class LoadService {
       include: {
         teklifler: {
           orderBy: { fiyatKurus: 'desc' },
-          include: { veren: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } },
+          include: { veren: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } },
         },
-        seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } },
+        seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } } },
       },
     });
   }
@@ -300,7 +300,7 @@ export class LoadService {
     return this.prisma.aracTeklif.findMany({
       where: { verenId: user.id },
       orderBy: { createdAt: 'desc' },
-      include: { aracIlani: { select: { id: true, nereden: true, nereye: true, aracTipi: true, durum: true, seciliTeklifId: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, plaka: true, tasiyici: { select: { name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
+      include: { aracIlani: { select: { id: true, nereden: true, nereye: true, aracTipi: true, durum: true, seciliTeklifId: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, plaka: true, tasiyici: { select: { name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } } } },
     });
   }
 
@@ -332,7 +332,7 @@ export class LoadService {
       await tx.aracTeklif.updateMany({ where: { aracIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
       return tx.aracIlani.findUnique({
         where: { id: ilan.id },
-        include: { seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
+        include: { seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } } } },
       });
     });
   }
@@ -468,7 +468,7 @@ export class LoadService {
     return this.prisma.yukTeklif.findMany({
       where: { tasiyiciId: user.id },
       orderBy: { createdAt: 'desc' },
-      include: { yukIlani: { select: { id: true, nereden: true, nereye: true, yukTipi: true, durum: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, veren: { select: { name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true, loadFirmaProfil: { select: { unvan: true } } } } } } },
+      include: { yukIlani: { select: { id: true, nereden: true, nereye: true, yukTipi: true, durum: true, teslimBeyanTarihi: true, teslimOnayTarihi: true, veren: { select: { name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } }, loadFirmaProfil: { select: { unvan: true } } } } } } },
     });
   }
 
@@ -504,7 +504,7 @@ export class LoadService {
       await tx.yukTeklif.updateMany({ where: { yukIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
       return tx.yukIlani.findUnique({
         where: { id: ilan.id },
-        include: { seciliTeklif: { include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
+        include: { seciliTeklif: { include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } } } },
       });
     });
   }
@@ -727,7 +727,7 @@ export class LoadService {
     return this.prisma.komisyonOdeme.findMany({
       where: { durum: KomisyonOdemeDurum.BEKLIYOR },
       orderBy: { createdAt: 'asc' },
-      include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } },
+      include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } },
     });
   }
 
@@ -955,10 +955,10 @@ export class LoadService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const d = await tx.loadDegerlendirme.create({ data: { puan, verenId: user.id, alanId, verenRol, yukIlaniId: dto.yukIlaniId ?? null, aracIlaniId: dto.aracIlaniId ?? null } });
-        const alan = await tx.user.findUnique({ where: { id: alanId }, select: { puanOrtalama: true, puanSayisi: true } });
-        const yeniSayi = (alan?.puanSayisi ?? 0) + 1;
-        const yeniOrt = (((alan?.puanOrtalama ?? 0) * (alan?.puanSayisi ?? 0)) + puan) / yeniSayi;
-        await tx.user.update({ where: { id: alanId }, data: { puanSayisi: yeniSayi, puanOrtalama: Math.round(yeniOrt * 100) / 100 } });
+        const mevcut = await tx.loadPuan.findUnique({ where: { userId: alanId } });
+        const yeniSayi = (mevcut?.sayi ?? 0) + 1;
+        const yeniOrt = (((mevcut?.ortalama ?? 0) * (mevcut?.sayi ?? 0)) + puan) / yeniSayi;
+        await tx.loadPuan.upsert({ where: { userId: alanId }, create: { userId: alanId, ortalama: Math.round(yeniOrt * 100) / 100, sayi: yeniSayi }, update: { ortalama: Math.round(yeniOrt * 100) / 100, sayi: yeniSayi } });
         return d;
       });
     } catch (e: any) {
