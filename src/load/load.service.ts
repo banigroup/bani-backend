@@ -317,11 +317,21 @@ export class LoadService {
     if (teklif.durum !== YukTeklifDurum.BEKLIYOR) throw new ConflictException('Bu teklif degerlendirilemez (zaten islenmis)');
     if (ilan.durum !== AracIlaniDurum.MUSAIT) throw new ConflictException('Bu arac icin artik eslestirme yapilamaz');
     return this.prisma.$transaction(async (tx) => {
-      await tx.aracTeklif.update({ where: { id: teklif.id }, data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null, ilkTalepKurus: teklif.ilkTalepKurus ?? ilan.beklenenFiyatKurus ?? null, ilkTeklifKurus: teklif.ilkTeklifKurus ?? teklif.fiyatKurus, gerceklesenKurus: teklif.fiyatKurus } });
-      await tx.aracTeklif.updateMany({ where: { aracIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
-      return tx.aracIlani.update({
-        where: { id: ilan.id },
+      // YARIS KILIDI: ilan atomik DOLU - sadece hala MUSAIT ise (cift kabul engeli)
+      const iKilit = await tx.aracIlani.updateMany({
+        where: { id: ilan.id, durum: AracIlaniDurum.MUSAIT },
         data: { durum: AracIlaniDurum.DOLU, seciliTeklifId: teklif.id },
+      });
+      if (iKilit.count !== 1) throw new ConflictException('Bu arac icin artik eslestirme yapilamaz');
+      // Teklif atomik KABUL - sadece hala BEKLIYOR ise
+      const tKilit = await tx.aracTeklif.updateMany({
+        where: { id: teklif.id, durum: YukTeklifDurum.BEKLIYOR },
+        data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null, ilkTalepKurus: teklif.ilkTalepKurus ?? ilan.beklenenFiyatKurus ?? null, ilkTeklifKurus: teklif.ilkTeklifKurus ?? teklif.fiyatKurus, gerceklesenKurus: teklif.fiyatKurus },
+      });
+      if (tKilit.count !== 1) throw new ConflictException('Bu teklif degerlendirilemez (zaten islenmis)');
+      await tx.aracTeklif.updateMany({ where: { aracIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
+      return tx.aracIlani.findUnique({
+        where: { id: ilan.id },
         include: { seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
       });
     });
@@ -478,31 +488,22 @@ export class LoadService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      // 1) Secilen teklif KABUL (+ 3 tutar: ilk talep / ilk teklif / gerceklesen)
-      await tx.yukTeklif.update({
-        where: { id: teklif.id },
-        data: {
-          durum: YukTeklifDurum.KABUL,
-          kabulTarihi: new Date(),
-          kabulIp: ip ?? null,
-          kabulCihaz: cihaz ?? null,
-          ilkTalepKurus: teklif.ilkTalepKurus ?? ilan.butceKurus ?? null,
-          ilkTeklifKurus: teklif.ilkTeklifKurus ?? teklif.fiyatKurus,
-          gerceklesenKurus: teklif.fiyatKurus,
-        },
-      });
-      // 2) Ayni ilandaki diger BEKLEYEN teklifler RED
-      await tx.yukTeklif.updateMany({
-        where: { yukIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR },
-        data: { durum: YukTeklifDurum.RED },
-      });
-      // 3) Ilan ESLESTI + secili teklif baglan
-      const guncel = await tx.yukIlani.update({
-        where: { id: ilan.id },
+      // YARIS KILIDI: ilan atomik ESLESTI - sadece hala eslesebilir ise (cift kabul engeli)
+      const iKilit = await tx.yukIlani.updateMany({
+        where: { id: ilan.id, durum: { in: [YukIlaniDurum.ACIK, YukIlaniDurum.TEKLIF_ALINDI] } },
         data: { durum: YukIlaniDurum.ESLESTI, seciliTeklifId: teklif.id },
+      });
+      if (iKilit.count !== 1) throw new ConflictException('Bu ilan icin artik eslestirme yapilamaz');
+      const tKilit = await tx.yukTeklif.updateMany({
+        where: { id: teklif.id, durum: YukTeklifDurum.BEKLIYOR },
+        data: { durum: YukTeklifDurum.KABUL, kabulTarihi: new Date(), kabulIp: ip ?? null, kabulCihaz: cihaz ?? null, ilkTalepKurus: teklif.ilkTalepKurus ?? ilan.butceKurus ?? null, ilkTeklifKurus: teklif.ilkTeklifKurus ?? teklif.fiyatKurus, gerceklesenKurus: teklif.fiyatKurus },
+      });
+      if (tKilit.count !== 1) throw new ConflictException('Bu teklif degerlendirilemez (zaten islenmis)');
+      await tx.yukTeklif.updateMany({ where: { yukIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
+      return tx.yukIlani.findUnique({
+        where: { id: ilan.id },
         include: { seciliTeklif: { include: { tasiyici: { select: { id: true, name: true, surname: true, phone: true, puanOrtalama: true, puanSayisi: true } } } } },
       });
-      return guncel;
     });
   }
 
