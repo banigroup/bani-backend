@@ -334,7 +334,7 @@ export class LoadService {
       await tx.aracTeklif.updateMany({ where: { aracIlaniId: ilan.id, id: { not: teklif.id }, durum: YukTeklifDurum.BEKLIYOR }, data: { durum: YukTeklifDurum.RED } });
       return tx.aracIlani.findUnique({
         where: { id: ilan.id },
-        include: { seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } } } },
+        include: { tasiyici: { select: { id: true, phone: true } }, seciliTeklif: { include: { veren: { select: { id: true, name: true, surname: true, phone: true, loadPuan: { select: { ortalama: true, sayi: true } } } } } } },
       });
     });
   }
