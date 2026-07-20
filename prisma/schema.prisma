@@ -971,3 +971,17 @@ model SigortaSubeBasvuru {
   @@map("sigorta_sube_basvurulari")
 }
 
+
+// CEKIRDEK: sozlesme metin versiyonlari (Faz 1 - I-3 kapanisi; gecerli surum artik DB'de)
+model SozlesmeVersiyon {
+  id             String       @id @default(uuid()) @db.Uuid
+  tip            SozlesmeTipi
+  surum          String
+  metinHash      String // metnin SHA-256'si (onaylarla eslesir)
+  yururlukTarihi DateTime     @default(now())
+  aktif          Boolean      @default(true) // her tipte tek aktif surum
+
+  @@unique([tip, surum])
+  @@index([tip, aktif])
+  @@map("sozlesme_versiyonlari")
+}
