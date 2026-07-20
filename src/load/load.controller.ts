@@ -8,6 +8,7 @@ import { RolesGuard } from '../common/rbac/roles.guard';
 import { Roles } from '../common/rbac/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { LoadService } from './load.service';
+import { AuditService } from '../common/audit/audit.service';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
 import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
@@ -21,7 +22,7 @@ import { cloudinaryUpload } from './cloudinary.util';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.CARRIER, Role.LOAD_CUSTOMER)
 export class LoadController {
-  constructor(private readonly load: LoadService) { }
+  constructor(private readonly load: LoadService, private readonly audit: AuditService) { }
 
   // ----- Yuk ilani -----
   @Post('ilan')
@@ -45,8 +46,10 @@ export class LoadController {
   }
 
   @Patch('ilan/:id/iptal')
-  ilanIptal(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.load.ilanIptal(user, id);
+  async ilanIptal(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const r = await this.load.ilanIptal(user, id);
+    await this.audit.record({ actorId: user.id, action: 'load.yuk.iptal', entity: 'YukIlani', entityId: id });
+    return r;
   }
 
   // ----- Arac ilani -----
@@ -66,8 +69,10 @@ export class LoadController {
   }
 
   @Patch('arac/:id/kapat')
-  aracKapat(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.load.aracIlaniKapat(user, id);
+  async aracKapat(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const r = await this.load.aracIlaniKapat(user, id);
+    await this.audit.record({ actorId: user.id, action: 'load.arac.kapat', entity: 'AracIlani', entityId: id });
+    return r;
   }
 
 
@@ -88,10 +93,12 @@ export class LoadController {
   }
 
   @Patch('arac-teklif/:id/kabul')
-  aracTeklifKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async aracTeklifKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || undefined;
     const cihaz = (req.headers['user-agent'] as string) || undefined;
-    return this.load.aracTeklifKabul(user, id, ip, cihaz);
+    const r = await this.load.aracTeklifKabul(user, id, ip, cihaz);
+    await this.audit.record({ actorId: user.id, action: 'load.arac.kabul', entity: 'AracTeklif', entityId: id, ip });
+    return r;
   }
 
   @Patch('arac-teklif/:id/reddet')
@@ -110,8 +117,10 @@ export class LoadController {
   }
 
   @Patch('arac/:id/teslim-onay') // firma (teklifi veren) teslim onayla + komisyon
-  aracTeslimOnay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.load.aracTeslimOnay(user, id);
+  async aracTeslimOnay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const r = await this.load.aracTeslimOnay(user, id);
+    await this.audit.record({ actorId: user.id, action: 'load.arac.teslimOnay', entity: 'AracIlani', entityId: id });
+    return r;
   }
 
   // ----- Teklif -----
@@ -131,10 +140,12 @@ export class LoadController {
   }
 
   @Patch('teklif/:id/kabul') // ESLESTIRME
-  teklifKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async teklifKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
     const cihaz = req.headers['user-agent'];
-    return this.load.teklifKabul(user, id, ip, cihaz);
+    const r = await this.load.teklifKabul(user, id, ip, cihaz);
+    await this.audit.record({ actorId: user.id, action: 'load.yuk.kabul', entity: 'YukTeklif', entityId: id, ip });
+    return r;
   }
 
   @Patch('teklif/:id/reddet')
@@ -163,8 +174,10 @@ export class LoadController {
   }
 
   @Post('komisyon/bildir') // tasiyici: havale bildirimi
-  komisyonBildir(@CurrentUser() user: AuthUser, @Body() dto: KomisyonBildirDto) {
-    return this.load.komisyonBildir(user, dto);
+  async komisyonBildir(@CurrentUser() user: AuthUser, @Body() dto: KomisyonBildirDto) {
+    const r = await this.load.komisyonBildir(user, dto);
+    await this.audit.record({ actorId: user.id, action: 'load.komisyon.bildir', entity: 'KomisyonOdeme', entityId: (r as any)?.id ?? null });
+    return r;
   }
 
   @Get('komisyon/odemelerim') // tasiyici: kendi bildirimleri
@@ -178,13 +191,17 @@ export class LoadController {
   }
 
   @Patch('komisyon/:id/onayla') // admin
-  komisyonOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
-    return this.load.komisyonOnayla(user, id, body?.adminNot);
+  async komisyonOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
+    const r = await this.load.komisyonOnayla(user, id, body?.adminNot);
+    await this.audit.record({ actorId: user.id, action: 'load.komisyon.onay', entity: 'KomisyonOdeme', entityId: id, metadata: { adminNot: body?.adminNot ?? null } });
+    return r;
   }
 
   @Patch('komisyon/:id/reddet') // admin
-  komisyonReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
-    return this.load.komisyonReddet(user, id, body?.adminNot);
+  async komisyonReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { adminNot?: string }) {
+    const r = await this.load.komisyonReddet(user, id, body?.adminNot);
+    await this.audit.record({ actorId: user.id, action: 'load.komisyon.red', entity: 'KomisyonOdeme', entityId: id, metadata: { adminNot: body?.adminNot ?? null } });
+    return r;
   }
 
 
@@ -195,10 +212,12 @@ export class LoadController {
   }
 
   @Post('sozlesme/onayla') // kullanici: uyelik sozlesmesini onayla (IP/cihaz sunucudan)
-  sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @Req() req: Request) {
+  async sozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SozlesmeOnaylaDto, @Req() req: Request) {
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
     const cihaz = req.headers['user-agent'];
-    return this.load.sozlesmeOnayla(user, dto.sozlesmeTipi, ip, cihaz);
+    const r = await this.load.sozlesmeOnayla(user, dto.sozlesmeTipi, ip, cihaz);
+    await this.audit.record({ actorId: user.id, action: 'sozlesme.onay', entity: 'SozlesmeOnay', entityId: (r as any)?.id ?? null, ip, metadata: { tip: dto.sozlesmeTipi } });
+    return r;
   }
 
 
@@ -238,13 +257,17 @@ export class LoadController {
   }
 
   @Patch('belge/:id/onayla')
-  belgeOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.load.belgeOnayla(user, id);
+  async belgeOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const r = await this.load.belgeOnayla(user, id);
+    await this.audit.record({ actorId: user.id, action: 'load.belge.onay', entity: 'LoadBelge', entityId: id });
+    return r;
   }
 
   @Patch('belge/:id/reddet')
-  belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { gerekce?: string }) {
-    return this.load.belgeReddet(user, id, body?.gerekce);
+  async belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { gerekce?: string }) {
+    const r = await this.load.belgeReddet(user, id, body?.gerekce);
+    await this.audit.record({ actorId: user.id, action: 'load.belge.red', entity: 'LoadBelge', entityId: id, metadata: { gerekce: body?.gerekce ?? null } });
+    return r;
   }
 
   @Post('degerlendir')
