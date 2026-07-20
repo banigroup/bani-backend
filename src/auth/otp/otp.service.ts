@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createHash, randomInt } from 'crypto';
 import { OtpPurpose } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { SMS_PROVIDER, SmsProvider } from './sms/sms-provider.interface';
+import { SMS_PROVIDER, SmsProvider } from '../../bildirim/sms/sms-provider.interface';
 
 @Injectable()
 export class OtpService {

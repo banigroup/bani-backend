@@ -985,3 +985,30 @@ model SozlesmeVersiyon {
   @@index([tip, aktif])
   @@map("sozlesme_versiyonlari")
 }
+
+// CEKIRDEK: bildirim gonderim kayitlari (Faz 1 - tek kapi bildirim)
+enum BildirimKanal {
+  SMS
+  EPOSTA
+}
+
+enum BildirimDurum {
+  GONDERILDI
+  HATA
+}
+
+model BildirimKayit {
+  id         String         @id @default(uuid()) @db.Uuid
+  kanal      BildirimKanal
+  alici      String // telefon ya da e-posta
+  sablonKodu String
+  icerik     String
+  durum      BildirimDurum
+  hataMesaji String?
+  createdAt  DateTime       @default(now())
+
+  @@index([alici])
+  @@index([sablonKodu])
+  @@index([createdAt])
+  @@map("bildirim_kayitlari")
+}
