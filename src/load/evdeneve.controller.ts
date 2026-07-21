@@ -11,6 +11,7 @@ import { EvIlaniOlusturDto } from './dto/ev-ilani-olustur.dto';
 import { EvTeklifVerDto } from './dto/ev-teklif-ver.dto';
 import { KesfeDavetDto } from './dto/kesfe-davet.dto';
 import { KesifSonucDto } from './dto/kesif-sonuc.dto';
+import { EvUcretBildirDto } from './dto/ev-ucret-bildir.dto';
 
 @Controller('load/ev')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,6 +34,13 @@ export class EvdenEveController {
   @Get('borsa')
   borsa() {
     return this.ev.borsa();
+  }
+
+  @Patch('ilan/:id/ucret-bildir')
+  async ucretBildir(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: EvUcretBildirDto, @Req() req: Request) {
+    const r = await this.ev.ucretBildir(user, id, dto.dekont);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.ucretBildir', entity: 'EvIlani', entityId: id, ip: req.ip });
+    return r;
   }
 
   @Get('admin/bekleyenler')

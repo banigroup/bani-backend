@@ -64,6 +64,18 @@ export class EvdenEveService {
     });
   }
 
+  // TASITAN: ilan ucreti havale bildirimi (dekont) - admin onayina duser
+  async ucretBildir(user: AuthUser, ilanId: string, dekont: string) {
+    const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
+    if (!ilan) throw new NotFoundException('Ilan bulunamadi');
+    if (ilan.tasitanId !== user.id) throw new ForbiddenException('Bu ilan size ait degil');
+    if (ilan.durum !== EvIlaniDurum.ODEME_BEKLIYOR) throw new ConflictException('Bu ilan ucret bildirimine uygun degil');
+    return this.prisma.evIlani.update({
+      where: { id: ilan.id },
+      data: { ucretDekont: dekont, ucretBildirimZamani: new Date() },
+    });
+  }
+
   // ADMIN: ucret onayi bekleyen ilanlar
   async bekleyenIlanlar(user: AuthUser) {
     if (!this.isAdmin(user)) throw new ForbiddenException('Bu islem icin yetkiniz yok');

@@ -1083,6 +1083,8 @@ model EvIlani {
   aciklama        String?
   sigortaTalebi   Boolean      @default(false) // Kural 6 - BaniSigorta lead
   ilanUcretiKurus BigInt? // dusuk pesin ucret (havale + admin onay)
+  ucretDekont     String? // tasitanin havale dekont/aciklamasi
+  ucretBildirimZamani DateTime? // tasitan 'havaleyi yaptim' dedigi an
   ucretOnayZamani DateTime? // admin onayi -> ACIK
   seciliTeklifId  String?      @db.Uuid
   createdAt       DateTime     @default(now())
