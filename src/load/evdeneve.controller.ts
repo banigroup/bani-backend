@@ -68,6 +68,13 @@ export class EvdenEveController {
     return r;
   }
 
+  @Patch('teklif/:id/kabul')
+  async kesinFiyatKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    const r = await this.ev.kesinFiyatKabul(user, id, req.ip);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.kabul', entity: 'EvTeklif', entityId: id, ip: req.ip });
+    return r;
+  }
+
   @Get('ilan/:id')
   ilanDetay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ev.ilanDetay(user, id);
