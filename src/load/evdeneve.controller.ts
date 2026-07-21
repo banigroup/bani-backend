@@ -75,6 +75,20 @@ export class EvdenEveController {
     return r;
   }
 
+  @Patch('ilan/:id/teslim-beyan')
+  async teslimBeyan(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    const r = await this.ev.teslimBeyan(user, id);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.teslimBeyan', entity: 'EvIlani', entityId: id, ip: req.ip });
+    return r;
+  }
+
+  @Patch('ilan/:id/teslim-onay')
+  async teslimOnay(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    const r = await this.ev.teslimOnay(user, id);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.teslimOnay', entity: 'EvIlani', entityId: id, ip: req.ip });
+    return r;
+  }
+
   @Get('ilan/:id')
   ilanDetay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ev.ilanDetay(user, id);

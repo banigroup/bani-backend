@@ -640,6 +640,20 @@ export class LoadService {
         tahakkuk += (ar.seciliTeklif.fiyatKurus * LOAD_KOMISYON_BINDE) / 10000n;
       }
     }
+    // 1c) EVDEN EVE: bu kisi tasiyan ise tamamlanan isler (kesin fiyat uzerinden %5)
+    const evTamam = await this.prisma.evIlani.findMany({
+      where: { durum: 'TAMAMLANDI' as any, seciliTeklifId: { not: null } },
+      select: { seciliTeklifId: true },
+    });
+    const evTeklifIds = evTamam.map((e) => e.seciliTeklifId!).filter(Boolean);
+    if (evTeklifIds.length > 0) {
+      const evTeklifler = await this.prisma.evTeklif.findMany({
+        where: { id: { in: evTeklifIds }, tasiyanId: userId, kesinFiyatKurus: { not: null } },
+      });
+      for (const et of evTeklifler) {
+        tahakkuk += ((et.kesinFiyatKurus as bigint) * LOAD_KOMISYON_BINDE) / 10000n;
+      }
+    }
     // 2) Onaylanmis odemeler
     const odemeler = await this.prisma.komisyonOdeme.aggregate({
       where: { tasiyiciId: userId, durum: KomisyonOdemeDurum.ONAYLANDI },

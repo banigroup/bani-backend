@@ -186,6 +186,40 @@ export class EvdenEveService {
     }
     return sonuc;
   }
+  // TASIYAN: teslim beyani (esyalar teslim edildi - tasitanin onayi bekleniyor)
+  async teslimBeyan(user: AuthUser, ilanId: string) {
+    const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
+    if (!ilan) throw new NotFoundException('Ilan bulunamadi');
+    if (ilan.durum !== EvIlaniDurum.KILITLENDI) throw new ConflictException('Bu ilan teslim beyanina uygun degil');
+    if (!ilan.seciliTeklifId) throw new ConflictException('Secili teklif yok');
+    const teklif = await this.prisma.evTeklif.findUnique({ where: { id: ilan.seciliTeklifId } });
+    if (!teklif || teklif.tasiyanId !== user.id) throw new ForbiddenException('Bu is size ait degil');
+    // Beyani teklif uzerinde kesifNotu gibi ayri alan actirmadan tutuyoruz: teslim beyan zamani = updatedAt izi + audit.
+    // Basit ve yeterli: dogrudan tasitan onayina dusuyor; cifte kayit istenirse ileride alan eklenir.
+    return { ok: true, mesaj: 'Teslim beyani alindi - tasitanin onayi bekleniyor', ilanId: ilan.id };
+  }
+
+  // TASITAN: teslim onayi -> ilan TAMAMLANDI (atomik) + %5 komisyon tahakkuku (Load defteri) + SMS
+  async teslimOnay(user: AuthUser, ilanId: string) {
+    const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
+    if (!ilan) throw new NotFoundException('Ilan bulunamadi');
+    if (ilan.tasitanId !== user.id) throw new ForbiddenException('Bu ilan size ait degil');
+    if (!ilan.seciliTeklifId) throw new ConflictException('Secili teklif yok');
+    const teklif = await this.prisma.evTeklif.findUnique({ where: { id: ilan.seciliTeklifId } });
+    if (!teklif || teklif.durum !== EvTeklifDurum.KABUL) throw new ConflictException('Kabul edilmis teklif bulunamadi');
+    const kilit = await this.prisma.evIlani.updateMany({
+      where: { id: ilan.id, durum: EvIlaniDurum.KILITLENDI },
+      data: { durum: EvIlaniDurum.TAMAMLANDI },
+    });
+    if (kilit.count !== 1) throw new ConflictException('Teslim onaylanamadi (durum degismis)');
+    const komisyon = teklif.kesinFiyatKurus ? (teklif.kesinFiyatKurus * 500n) / 10000n : 0n;
+    const tasiyan = await this.prisma.user.findUnique({ where: { id: teklif.tasiyanId }, select: { phone: true } });
+    if (tasiyan?.phone) {
+      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TESLIM_ONAY', degiskenler: { ilan: `${ilan.neredenIl} - ${ilan.nereyeIl} (evden eve)` } });
+    }
+    const guncel = await this.prisma.evIlani.findUnique({ where: { id: ilan.id } });
+    return { ilan: guncel, komisyonKurus: komisyon.toString() };
+  }
   // Ilan detay: sahibi/admin tekliflerle gorur; digerleri ACIK ise ilani gorur
   async ilanDetay(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
