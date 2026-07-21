@@ -1012,3 +1012,28 @@ model BildirimKayit {
   @@index([createdAt])
   @@map("bildirim_kayitlari")
 }
+
+// CEKIRDEK: is kuyrugu (Faz 1 - DB tabanli hafif kuyruk; BullMQ'ya gecis kapisi acik)
+enum KuyrukDurum {
+  BEKLIYOR
+  ISLENIYOR
+  TAMAM
+  HATA
+}
+
+model IsKuyrugu {
+  id             String      @id @default(uuid()) @db.Uuid
+  tip            String // or. BILDIRIM_SMS
+  payload        Json
+  durum          KuyrukDurum @default(BEKLIYOR)
+  denemeSayisi   Int         @default(0)
+  maxDeneme      Int         @default(3)
+  sonHata        String?
+  calistirZamani DateTime    @default(now()) // bu zamandan once islenmez (retry gecikmesi)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([durum, calistirZamani])
+  @@index([tip])
+  @@map("is_kuyrugu")
+}

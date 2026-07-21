@@ -9,7 +9,7 @@ import { Roles } from '../common/rbac/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { LoadService } from './load.service';
 import { AuditService } from '../common/audit/audit.service';
-import { BildirimService } from '../bildirim/bildirim.service';
+import { KuyrukService } from '../kuyruk/kuyruk.service';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
 import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
@@ -23,7 +23,7 @@ import { cloudinaryUpload } from './cloudinary.util';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.CARRIER, Role.LOAD_CUSTOMER)
 export class LoadController {
-  constructor(private readonly load: LoadService, private readonly audit: AuditService, private readonly bildirim: BildirimService) { }
+  constructor(private readonly load: LoadService, private readonly audit: AuditService, private readonly kuyruk: KuyrukService) { }
 
   // ----- Yuk ilani -----
   @Post('ilan')
@@ -101,7 +101,7 @@ export class LoadController {
     await this.audit.record({ actorId: user.id, action: 'load.arac.kabul', entity: 'AracTeklif', entityId: id, ip });
     const aVeren = (r as any)?.seciliTeklif?.veren; const aTas = (r as any)?.tasiyici;
     const aTel = aVeren?.id !== user.id ? aVeren?.phone : aTas?.phone;
-    if (aTel) await this.bildirim.gonderSms(aTel, 'TEKLIF_KABUL', { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') });
+    if (aTel) await this.kuyruk.ekle('BILDIRIM_SMS', { alici: aTel, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') } });
     return r;
   }
 
@@ -150,7 +150,7 @@ export class LoadController {
     const r = await this.load.teklifKabul(user, id, ip, cihaz);
     await this.audit.record({ actorId: user.id, action: 'load.yuk.kabul', entity: 'YukTeklif', entityId: id, ip });
     const yTel = (r as any)?.seciliTeklif?.tasiyici?.phone;
-    if (yTel) await this.bildirim.gonderSms(yTel, 'TEKLIF_KABUL', { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') });
+    if (yTel) await this.kuyruk.ekle('BILDIRIM_SMS', { alici: yTel, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') } });
     return r;
   }
 
