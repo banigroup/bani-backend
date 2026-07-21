@@ -97,6 +97,54 @@ export class EvdenEveService {
     });
   }
 
+  // TASITAN: bir on teklifi kesfe davet et (Kural 4 - kesif randevusu dogar, is KILITLENMEZ)
+  async kesfeDavet(user: AuthUser, teklifId: string, kesifRandevu: string) {
+    const teklif = await this.prisma.evTeklif.findUnique({ where: { id: teklifId } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    const ilan = await this.prisma.evIlani.findUnique({ where: { id: teklif.evIlaniId } });
+    if (!ilan) throw new NotFoundException('Ilan bulunamadi');
+    if (ilan.tasitanId !== user.id) throw new ForbiddenException('Bu ilan size ait degil');
+    if (teklif.durum !== EvTeklifDurum.ON_TEKLIF) throw new ConflictException('Bu teklif kesfe davet edilemez');
+    const randevu = new Date(kesifRandevu);
+    if (isNaN(randevu.getTime()) || randevu < new Date()) throw new BadRequestException('Kesif randevusu gecersiz ya da gecmiste');
+    return this.prisma.$transaction(async (tx) => {
+      // Atomik: ilan sadece ACIK iken KESIF_SURECINDE'ye gecer (ayni anda ikinci davet imkansiz)
+      const iKilit = await tx.evIlani.updateMany({
+        where: { id: ilan.id, durum: EvIlaniDurum.ACIK },
+        data: { durum: EvIlaniDurum.KESIF_SURECINDE, seciliTeklifId: teklif.id },
+      });
+      if (iKilit.count !== 1) throw new ConflictException('Ilan su an kesfe davet icin uygun degil');
+      const tKilit = await tx.evTeklif.updateMany({
+        where: { id: teklif.id, durum: EvTeklifDurum.ON_TEKLIF },
+        data: { durum: EvTeklifDurum.KESFE_DAVET, kesifRandevu: randevu },
+      });
+      if (tKilit.count !== 1) throw new ConflictException('Teklif su an kesfe davet edilemez');
+      return tx.evTeklif.findUnique({ where: { id: teklif.id } });
+    });
+  }
+
+  // TASIYAN: kesif sonucunu gir (evi gordum - beyan uygun ya da revize kesin fiyat)
+  async kesifSonuc(user: AuthUser, dto: { teklifId: string; beyanUygun: boolean; kesinFiyatKurus?: number; kesifFotograflar: string[]; kesifNotu?: string }) {
+    const teklif = await this.prisma.evTeklif.findUnique({ where: { id: dto.teklifId } });
+    if (!teklif) throw new NotFoundException('Teklif bulunamadi');
+    if (teklif.tasiyanId !== user.id) throw new ForbiddenException('Bu teklif size ait degil');
+    if (teklif.durum !== EvTeklifDurum.KESFE_DAVET) throw new ConflictException('Bu teklif kesif sonucu girmeye uygun degil');
+    if (!dto.beyanUygun && !dto.kesinFiyatKurus) throw new BadRequestException('Revize icin kesin fiyat zorunlu');
+    const simdi = new Date();
+    const kesinFiyat = dto.beyanUygun ? teklif.onTeklifKurus : BigInt(dto.kesinFiyatKurus!);
+    const kilit = await this.prisma.evTeklif.updateMany({
+      where: { id: teklif.id, durum: EvTeklifDurum.KESFE_DAVET },
+      data: {
+        durum: dto.beyanUygun ? EvTeklifDurum.KESIF_UYGUN : EvTeklifDurum.KESIF_REVIZE,
+        kesifZamani: simdi,
+        kesinFiyatKurus: kesinFiyat,
+        kesifFotograflar: dto.kesifFotograflar.map((url) => ({ url, cekimZamani: simdi.toISOString() })),
+        kesifNotu: dto.kesifNotu ?? null,
+      },
+    });
+    if (kilit.count !== 1) throw new ConflictException('Kesif sonucu kaydedilemedi (durum degismis)');
+    return this.prisma.evTeklif.findUnique({ where: { id: teklif.id } });
+  }
   // Ilan detay: sahibi/admin tekliflerle gorur; digerleri ACIK ise ilani gorur
   async ilanDetay(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });

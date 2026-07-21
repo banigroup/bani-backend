@@ -9,6 +9,8 @@ import { AuditService } from '../common/audit/audit.service';
 import { EvdenEveService } from './evdeneve.service';
 import { EvIlaniOlusturDto } from './dto/ev-ilani-olustur.dto';
 import { EvTeklifVerDto } from './dto/ev-teklif-ver.dto';
+import { KesfeDavetDto } from './dto/kesfe-davet.dto';
+import { KesifSonucDto } from './dto/kesif-sonuc.dto';
 
 @Controller('load/ev')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -49,6 +51,20 @@ export class EvdenEveController {
   async teklifVer(@CurrentUser() user: AuthUser, @Body() dto: EvTeklifVerDto, @Req() req: Request) {
     const r = await this.ev.onTeklifVer(user, dto);
     await this.audit.record({ actorId: user.id, action: 'load.ev.onTeklif', entity: 'EvTeklif', entityId: (r as any)?.id ?? null, ip: req.ip });
+    return r;
+  }
+
+  @Patch('teklif/kesfe-davet')
+  async kesfeDavet(@CurrentUser() user: AuthUser, @Body() dto: KesfeDavetDto, @Req() req: Request) {
+    const r = await this.ev.kesfeDavet(user, dto.teklifId, dto.kesifRandevu);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.kesfeDavet', entity: 'EvTeklif', entityId: dto.teklifId, ip: req.ip });
+    return r;
+  }
+
+  @Patch('teklif/kesif-sonuc')
+  async kesifSonuc(@CurrentUser() user: AuthUser, @Body() dto: KesifSonucDto, @Req() req: Request) {
+    const r = await this.ev.kesifSonuc(user, dto);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.kesifSonuc', entity: 'EvTeklif', entityId: dto.teklifId, ip: req.ip });
     return r;
   }
 
