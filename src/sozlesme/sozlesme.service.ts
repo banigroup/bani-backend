@@ -11,6 +11,8 @@ export class SozlesmeService {
   private readonly TIP_ADI: Record<SozlesmeTipi, string> = {
     [SozlesmeTipi.TASIYICI]: 'Taşıyıcı',
     [SozlesmeTipi.YUK_VEREN]: 'Yük Veren',
+    [SozlesmeTipi.EVDEN_EVE_TASIYAN]: 'Evden Eve Taşıyan',
+    [SozlesmeTipi.EVDEN_EVE_TASITAN]: 'Evden Eve Taşıtan',
   };
 
   private async aktifVersiyon(tip: SozlesmeTipi) {

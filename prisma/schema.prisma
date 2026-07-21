@@ -735,6 +735,8 @@ model KomisyonOdeme {
 enum SozlesmeTipi {
   TASIYICI // tasiyici (CARRIER) uyelik sozlesmesi
   YUK_VEREN // yuk veren (LOAD_CUSTOMER) uyelik sozlesmesi
+  EVDEN_EVE_TASIYAN // evden eve: tasiyan sozlesmesi (kesif sonrasi kabul aninda)
+  EVDEN_EVE_TASITAN // evden eve: tasitan sozlesmesi (kesif sonrasi kabul aninda)
 }
 
 model SozlesmeOnay {
@@ -1036,4 +1038,79 @@ model IsKuyrugu {
   @@index([durum, calistirZamani])
   @@index([tip])
   @@map("is_kuyrugu")
+}
+
+// ============ EVDEN EVE (tasarim belgesi v1, 21 Tmz 2026) ============
+// Kural 4: hicbir islem kesif olmadan kesinlesmez - EvTeklif durum makinesi bunu tasir.
+// Baglar duz ID (holding ilkesi: dogrudan FK/join yok, bag ID ile).
+
+enum EvIlaniDurum {
+  ODEME_BEKLIYOR // ilan ucreti havale + admin onayi bekliyor
+  ACIK // yayinda, on teklif alabilir
+  KESIF_SURECINDE // bir teklif kesfe davet edildi
+  KILITLENDI // kesin fiyat kabul edildi, is baglandi
+  TAMAMLANDI
+  IPTAL
+}
+
+enum EvTeklifDurum {
+  ON_TEKLIF // fotografa gore, baglayici degil
+  KESFE_DAVET // tasitan bu teklifi secti, kesif randevusu dogdu
+  KESIF_UYGUN // tasiyan evi gordu: beyan uygun, on teklif gecerli
+  KESIF_REVIZE // tasiyan evi gordu: fark var, kesin fiyat revize
+  KABUL // tasitan kesin fiyati kabul etti (kilit ani - iki sozlesme)
+  RED
+  GERI_CEKILDI
+}
+
+model EvIlani {
+  id              String       @id @default(uuid()) @db.Uuid
+  tasitanId       String       @db.Uuid // duz ID (User'a FK yok)
+  durum           EvIlaniDurum @default(ODEME_BEKLIYOR)
+  evTipi          String // 1+1 ... 4+2
+  neredenIl       String
+  neredenIlce     String?
+  neredenKat      Int?
+  neredenAsansor  Boolean      @default(false)
+  nereyeIl        String
+  nereyeIlce      String?
+  nereyeKat       Int?
+  nereyeAsansor   Boolean      @default(false)
+  alimTarihi      DateTime
+  teslimBaslangic DateTime // esnek teslim penceresi (Kural 2)
+  teslimBitis     DateTime
+  fotograflar     Json // kamera-zorunlu cekimler (Kural 3) - [{url, cekimZamani}]
+  aciklama        String?
+  sigortaTalebi   Boolean      @default(false) // Kural 6 - BaniSigorta lead
+  ilanUcretiKurus BigInt? // dusuk pesin ucret (havale + admin onay)
+  ucretOnayZamani DateTime? // admin onayi -> ACIK
+  seciliTeklifId  String?      @db.Uuid
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([durum, alimTarihi])
+  @@index([tasitanId])
+  @@index([neredenIl, nereyeIl])
+  @@map("ev_ilanlari")
+}
+
+model EvTeklif {
+  id               String        @id @default(uuid()) @db.Uuid
+  evIlaniId        String        @db.Uuid
+  tasiyanId        String        @db.Uuid // duz ID
+  durum            EvTeklifDurum @default(ON_TEKLIF)
+  onTeklifKurus    BigInt // fotografa gore on teklif
+  kesifRandevu     DateTime? // KESFE_DAVET aninda belirlenir
+  kesifZamani      DateTime? // tasiyanin kesif sonucunu girdigi an
+  kesinFiyatKurus  BigInt? // KESIF_UYGUN ise onTeklif kopyalanir; KESIF_REVIZE ise yeni fiyat
+  kesifFotograflar Json? // tasiyanin kamera-zorunlu kesif cekimleri (iki tarafli delil)
+  kesifNotu        String?
+  kabulTarihi      DateTime?
+  kabulIp          String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([evIlaniId, durum])
+  @@index([tasiyanId])
+  @@map("ev_teklifleri")
 }
