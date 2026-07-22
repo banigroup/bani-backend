@@ -55,16 +55,16 @@ model User {
   orders           Order[]
   deliveries       Delivery[]       @relation("CourierDeliveries")
 
-  verdigiYukler         YukIlani[]          @relation("VerdigiYukler")
-  aracIlanlari          AracIlani[]         @relation("AracIlanlari")
-  verdigiTeklifler      YukTeklif[]         @relation("VerdigiTeklifler")
-  verdigiAracTeklifleri AracTeklif[]        @relation("VerdigiAracTeklifleri")
-  komisyonOdemeleri     KomisyonOdeme[]     @relation("KomisyonOdemeleri")
-  sozlesmeOnaylari      SozlesmeOnay[]      @relation("SozlesmeOnaylari")
-  loadFirmaProfil       LoadFirmaProfil?
-  loadTasiyiciProfil    LoadTasiyiciProfil?
-  loadBelgeler          LoadBelge[]
-  loadPuan              LoadPuan?
+  verdigiYukler           YukIlani[]          @relation("VerdigiYukler")
+  aracIlanlari            AracIlani[]         @relation("AracIlanlari")
+  verdigiTeklifler        YukTeklif[]         @relation("VerdigiTeklifler")
+  verdigiAracTeklifleri   AracTeklif[]        @relation("VerdigiAracTeklifleri")
+  komisyonOdemeleri       KomisyonOdeme[]     @relation("KomisyonOdemeleri")
+  sozlesmeOnaylari        SozlesmeOnay[]      @relation("SozlesmeOnaylari")
+  loadFirmaProfil         LoadFirmaProfil?
+  loadTasiyiciProfil      LoadTasiyiciProfil?
+  loadBelgeler            LoadBelge[]
+  loadPuan                LoadPuan?
   verdigiDegerlendirmeler LoadDegerlendirme[] @relation("VerdigiDegerlendirmeler")
   aldigiDegerlendirmeler  LoadDegerlendirme[] @relation("AldigiDegerlendirmeler")
 
@@ -172,15 +172,15 @@ enum WalletType {
 }
 
 model Wallet {
-  id        String     @id @default(uuid()) @db.Uuid
-  userId    String?    @db.Uuid
-  user      User?      @relation(fields: [userId], references: [id])
-  type      WalletType @default(USER)
+  id           String        @id @default(uuid()) @db.Uuid
+  userId       String?       @db.Uuid
+  user         User?         @relation(fields: [userId], references: [id])
+  type         WalletType    @default(USER)
   businessUnit BusinessUnit? // birim defteri (Faz 1'de zorunlulasir)
-  currency  Currency   @default(TRY)
-  balance   BigInt     @default(0)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  currency     Currency      @default(TRY)
+  balance      BigInt        @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   entries LedgerEntry[]
 
@@ -236,7 +236,7 @@ model Transaction {
 
   entries LedgerEntry[]
 
-  deletedAt    DateTime?
+  deletedAt DateTime?
 
   @@index([type, status])
   @@index([businessUnit])
@@ -523,7 +523,7 @@ model Delivery {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  deletedAt    DateTime?
+  deletedAt DateTime?
 
   @@index([courierId, status])
   @@index([status])
@@ -655,7 +655,7 @@ model YukTeklif {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  deletedAt        DateTime?
+  deletedAt DateTime?
 
   @@index([yukIlaniId])
   @@index([tasiyiciId])
@@ -683,7 +683,7 @@ model AracTeklif {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  deletedAt        DateTime?
+  deletedAt DateTime?
 
   @@index([aracIlaniId])
   @@index([verenId])
@@ -888,24 +888,27 @@ model LoadDegerlendirme {
   verenRol    String // FIRMA | TASIYICI
   yukIlaniId  String?  @db.Uuid
   aracIlaniId String?  @db.Uuid
+  evIlaniId   String?  @db.Uuid
   createdAt   DateTime @default(now())
 
   @@unique([verenId, yukIlaniId])
   @@unique([verenId, aracIlaniId])
+  @@unique([verenId, evIlaniId])
   @@index([alanId])
   @@map("load_degerlendirmeler")
 }
 
 // Load-sahipli puan ozeti (Faz 0: I-2 kapanisi - cekirdek User birim verisi tasimaz)
 model LoadPuan {
-  userId   String @id @db.Uuid
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ortalama Float  @default(0)
-  sayi     Int    @default(0)
+  userId     String @id @db.Uuid
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ortalama   Float  @default(0)
+  sayi       Int    @default(0)
+  evOrtalama Float  @default(0) // evden eve tasiyan puani - ayri (farkli is modeli)
+  evSayi     Int    @default(0)
 
   @@map("load_puanlari")
 }
-
 
 // ===================== BANİSİGORTA — ön talep (lead) =====================
 enum SigortaTuru {
@@ -973,7 +976,6 @@ model SigortaSubeBasvuru {
   @@map("sigorta_sube_basvurulari")
 }
 
-
 // CEKIRDEK: sozlesme metin versiyonlari (Faz 1 - I-3 kapanisi; gecerli surum artik DB'de)
 model SozlesmeVersiyon {
   id             String       @id @default(uuid()) @db.Uuid
@@ -1000,14 +1002,14 @@ enum BildirimDurum {
 }
 
 model BildirimKayit {
-  id         String         @id @default(uuid()) @db.Uuid
+  id         String        @id @default(uuid()) @db.Uuid
   kanal      BildirimKanal
   alici      String // telefon ya da e-posta
   sablonKodu String
   icerik     String
   durum      BildirimDurum
   hataMesaji String?
-  createdAt  DateTime       @default(now())
+  createdAt  DateTime      @default(now())
 
   @@index([alici])
   @@index([sablonKodu])
@@ -1064,31 +1066,31 @@ enum EvTeklifDurum {
 }
 
 model EvIlani {
-  id              String       @id @default(uuid()) @db.Uuid
-  tasitanId       String       @db.Uuid // duz ID (User'a FK yok)
-  durum           EvIlaniDurum @default(ODEME_BEKLIYOR)
-  evTipi          String // 1+1 ... 4+2
-  neredenIl       String
-  neredenIlce     String?
-  neredenKat      Int?
-  neredenAsansor  Boolean      @default(false)
-  nereyeIl        String
-  nereyeIlce      String?
-  nereyeKat       Int?
-  nereyeAsansor   Boolean      @default(false)
-  alimTarihi      DateTime
-  teslimBaslangic DateTime? // esnek teslim penceresi - TASIYAN belirler (kesif/teklif asamasi), tasitan girmez
-  teslimBitis     DateTime?
-  fotograflar     Json // kamera-zorunlu cekimler (Kural 3) - [{url, cekimZamani}]
-  aciklama        String?
-  sigortaTalebi   Boolean      @default(false) // Kural 6 - BaniSigorta lead
-  ilanUcretiKurus BigInt? // dusuk pesin ucret (havale + admin onay)
-  ucretDekont     String? // tasitanin havale dekont/aciklamasi
+  id                  String       @id @default(uuid()) @db.Uuid
+  tasitanId           String       @db.Uuid // duz ID (User'a FK yok)
+  durum               EvIlaniDurum @default(ODEME_BEKLIYOR)
+  evTipi              String // 1+1 ... 4+2
+  neredenIl           String
+  neredenIlce         String?
+  neredenKat          Int?
+  neredenAsansor      Boolean      @default(false)
+  nereyeIl            String
+  nereyeIlce          String?
+  nereyeKat           Int?
+  nereyeAsansor       Boolean      @default(false)
+  alimTarihi          DateTime
+  teslimBaslangic     DateTime? // esnek teslim penceresi - TASIYAN belirler (kesif/teklif asamasi), tasitan girmez
+  teslimBitis         DateTime?
+  fotograflar         Json // kamera-zorunlu cekimler (Kural 3) - [{url, cekimZamani}]
+  aciklama            String?
+  sigortaTalebi       Boolean      @default(false) // Kural 6 - BaniSigorta lead
+  ilanUcretiKurus     BigInt? // dusuk pesin ucret (havale + admin onay)
+  ucretDekont         String? // tasitanin havale dekont/aciklamasi
   ucretBildirimZamani DateTime? // tasitan 'havaleyi yaptim' dedigi an
-  ucretOnayZamani DateTime? // admin onayi -> ACIK
-  seciliTeklifId  String?      @db.Uuid
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  ucretOnayZamani     DateTime? // admin onayi -> ACIK
+  seciliTeklifId      String?      @db.Uuid
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
   @@index([durum, alimTarihi])
   @@index([tasitanId])
