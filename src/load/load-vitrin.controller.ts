@@ -11,6 +11,10 @@ export class LoadVitrinController {
   sonIlanlar() {
     return this.load.vitrinSonIlanlar();
   }
+  @Get('ev-ilanlari')
+  evIlanlari() {
+    return this.ev.vitrinEvIlanlari();
+  }
   @Get('son-araclar')
   sonAraclar() {
     return this.load.vitrinSonAraclar();
