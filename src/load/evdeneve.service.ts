@@ -264,6 +264,22 @@ export class EvdenEveService {
     }
     return { ok: true, mesaj: 'Davet gonderildi - tasiyan ilaniniza teklif verebilir', evIlaniId: ev.id };
   }
+  // TASIYAN: kendi tekliflerim (ilan ozetiyle) - panel Islemlerim bolumu
+  async tekliflerim(user: AuthUser) {
+    const teklifler = await this.prisma.evTeklif.findMany({ where: { tasiyanId: user.id }, orderBy: { createdAt: 'desc' } });
+    const ilanIds = [...new Set(teklifler.map((t) => t.evIlaniId))];
+    const ilanlar = await this.prisma.evIlani.findMany({ where: { id: { in: ilanIds } } });
+    const map = new Map(ilanlar.map((i) => [i.id, i]));
+    return teklifler.map((t) => ({ ...t, ilan: map.get(t.evIlaniId) ?? null }));
+  }
+  // TASIYAN: kendi tekliflerim (ilan ozetiyle) - panel Islemlerim bolumu
+  async tekliflerim(user: AuthUser) {
+    const teklifler = await this.prisma.evTeklif.findMany({ where: { tasiyanId: user.id }, orderBy: { createdAt: 'desc' } });
+    const ilanIds = [...new Set(teklifler.map((t) => t.evIlaniId))];
+    const ilanlar = await this.prisma.evIlani.findMany({ where: { id: { in: ilanIds } } });
+    const map = new Map(ilanlar.map((i) => [i.id, i]));
+    return teklifler.map((t) => ({ ...t, ilan: map.get(t.evIlaniId) ?? null }));
+  }
   // Ilan detay: sahibi/admin tekliflerle gorur; digerleri ACIK ise ilani gorur
   async ilanDetay(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
