@@ -279,6 +279,36 @@ export class EvdenEveService {
     });
   }
 
+  // TASITAN: tasiyani degerlendir (sadece bu yon - tasiyan tasitani degerlendirmez, gorunecegi ekran yok)
+  async degerlendir(user: AuthUser, ilanId: string, puan: number) {
+    const p = Number(puan);
+    if (!p || p < 1 || p > 5) throw new BadRequestException('Puan 1-5 arasinda olmali');
+    const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
+    if (!ilan) throw new NotFoundException('Ilan bulunamadi');
+    if (ilan.tasitanId !== user.id) throw new ForbiddenException('Bu ilan size ait degil');
+    if (ilan.durum !== EvIlaniDurum.TAMAMLANDI) throw new ForbiddenException('Is tamamlanmadan puan verilemez');
+    if (!ilan.seciliTeklifId) throw new ConflictException('Eslesmis teklif yok');
+    const teklif = await this.prisma.evTeklif.findUnique({ where: { id: ilan.seciliTeklifId } });
+    if (!teklif) throw new ConflictException('Teklif bulunamadi');
+    const tasiyanId = teklif.tasiyanId;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const d = await tx.loadDegerlendirme.create({ data: { puan: p, verenId: user.id, alanId: tasiyanId, verenRol: 'TASITAN', evIlaniId: ilan.id } });
+        const mevcut = await tx.loadPuan.findUnique({ where: { userId: tasiyanId } });
+        const yeniSayi = (mevcut?.evSayi ?? 0) + 1;
+        const yeniOrt = (((mevcut?.evOrtalama ?? 0) * (mevcut?.evSayi ?? 0)) + p) / yeniSayi;
+        await tx.loadPuan.upsert({
+          where: { userId: tasiyanId },
+          create: { userId: tasiyanId, evOrtalama: Math.round(yeniOrt * 100) / 100, evSayi: yeniSayi },
+          update: { evOrtalama: Math.round(yeniOrt * 100) / 100, evSayi: yeniSayi },
+        });
+        return d;
+      });
+    } catch (e: any) {
+      if (e?.code === 'P2002') throw new ConflictException('Bu is icin zaten puan verdiniz');
+      throw e;
+    }
+  }
   // Ilan detay: sahibi/admin tekliflerle gorur; digerleri ACIK ise ilani gorur
   async ilanDetay(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });

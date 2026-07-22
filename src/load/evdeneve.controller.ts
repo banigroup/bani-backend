@@ -133,6 +133,13 @@ export class EvdenEveController {
     return this.ev.tekliflerim(user);
   }
 
+  @Patch('ilan/:id/degerlendir')
+  async degerlendir(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body('puan') puan: number, @Req() req: Request) {
+    const r = await this.ev.degerlendir(user, id, puan);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.degerlendir', entity: 'EvIlani', entityId: id, ip: req.ip });
+    return r;
+  }
+
   @Get('ilan/:id')
   ilanDetay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ev.ilanDetay(user, id);
