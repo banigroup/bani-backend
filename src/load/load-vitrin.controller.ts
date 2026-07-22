@@ -1,11 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { LoadService } from './load.service';
+import { EvdenEveService } from './evdeneve.service';
 
 // Giris gerektirmeyen vitrin uclari (ana sayfa icin).
 // Ana LoadController guard'lidir; bu controller ayridir ve guard yoktur.
 @Controller('load/vitrin')
 export class LoadVitrinController {
-  constructor(private readonly load: LoadService) {}
+  constructor(private readonly load: LoadService, private readonly ev: EvdenEveService) {}
 
   @Get('son-ilanlar')
   sonIlanlar() {

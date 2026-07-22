@@ -133,11 +133,6 @@ export class EvdenEveController {
     return this.ev.tekliflerim(user);
   }
 
-  @Get('tekliflerim')
-  tekliflerim(@CurrentUser() user: AuthUser) {
-    return this.ev.tekliflerim(user);
-  }
-
   @Get('ilan/:id')
   ilanDetay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ev.ilanDetay(user, id);

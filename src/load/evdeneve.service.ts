@@ -21,10 +21,7 @@ export class EvdenEveService {
   // TASITAN: ilan olustur -> ODEME_BEKLIYOR (dusuk pesin ucret, havale + admin onay)
   async ilanOlustur(user: AuthUser, dto: EvIlaniOlusturDto) {
     const alim = new Date(dto.alimTarihi);
-    const tBas = new Date(dto.teslimBaslangic);
-    const tBit = new Date(dto.teslimBitis);
-    if (tBas > tBit) throw new BadRequestException('Teslim penceresi hatali (baslangic > bitis)');
-    if (alim > tBas) throw new BadRequestException('Teslim penceresi alim tarihinden once olamaz');
+    // Teslim penceresi tasitan tarafindan girilmez - tasiyan kesif/teklif asamasinda belirler
     const simdi = new Date();
     return this.prisma.evIlani.create({
       data: {
@@ -272,14 +269,16 @@ export class EvdenEveService {
     const map = new Map(ilanlar.map((i) => [i.id, i]));
     return teklifler.map((t) => ({ ...t, ilan: map.get(t.evIlaniId) ?? null }));
   }
-  // TASIYAN: kendi tekliflerim (ilan ozetiyle) - panel Islemlerim bolumu
-  async tekliflerim(user: AuthUser) {
-    const teklifler = await this.prisma.evTeklif.findMany({ where: { tasiyanId: user.id }, orderBy: { createdAt: 'desc' } });
-    const ilanIds = [...new Set(teklifler.map((t) => t.evIlaniId))];
-    const ilanlar = await this.prisma.evIlani.findMany({ where: { id: { in: ilanIds } } });
-    const map = new Map(ilanlar.map((i) => [i.id, i]));
-    return teklifler.map((t) => ({ ...t, ilan: map.get(t.evIlaniId) ?? null }));
+  // VITRIN (girissiz): canli evden eve panosu - sinirli alanlar, hassas veri YOK
+  async vitrinEvIlanlari() {
+    return this.prisma.evIlani.findMany({
+      where: { durum: EvIlaniDurum.ACIK },
+      orderBy: { createdAt: 'desc' },
+      take: 8,
+      select: { id: true, evTipi: true, neredenIl: true, nereyeIl: true, alimTarihi: true, createdAt: true },
+    });
   }
+
   // Ilan detay: sahibi/admin tekliflerle gorur; digerleri ACIK ise ilani gorur
   async ilanDetay(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
