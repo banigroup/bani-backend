@@ -11,8 +11,8 @@ export class EvIlaniOlusturDto {
   @IsOptional() @IsInt() @Min(0) nereyeKat?: number;
   @IsOptional() @IsBoolean() nereyeAsansor?: boolean;
   @IsDateString() alimTarihi!: string;
-  @IsDateString() teslimBaslangic!: string; // esnek teslim penceresi
-  @IsDateString() teslimBitis!: string;
+  @IsOptional() @IsDateString() teslimBaslangic?: string; // tasiyan belirler - tasitan gondermez
+  @IsOptional() @IsDateString() teslimBitis?: string;
   @IsArray() @ArrayMinSize(1) fotograflar!: string[]; // kamera-zorunlu cekim URL'leri (frontend capture)
   @IsOptional() @IsString() @MaxLength(1000) aciklama?: string;
   @IsOptional() @IsBoolean() sigortaTalebi?: boolean;

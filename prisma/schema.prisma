@@ -1077,8 +1077,8 @@ model EvIlani {
   nereyeKat       Int?
   nereyeAsansor   Boolean      @default(false)
   alimTarihi      DateTime
-  teslimBaslangic DateTime // esnek teslim penceresi (Kural 2)
-  teslimBitis     DateTime
+  teslimBaslangic DateTime? // esnek teslim penceresi - TASIYAN belirler (kesif/teklif asamasi), tasitan girmez
+  teslimBitis     DateTime?
   fotograflar     Json // kamera-zorunlu cekimler (Kural 3) - [{url, cekimZamani}]
   aciklama        String?
   sigortaTalebi   Boolean      @default(false) // Kural 6 - BaniSigorta lead
