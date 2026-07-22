@@ -1116,3 +1116,27 @@ model EvTeklif {
   @@index([tasiyanId])
   @@map("ev_teklifleri")
 }
+
+// EVDEN EVE: donus-yuku ilani (A-mini: vitrin + davet; is mantigi yok, zincir ev ilaninda akar)
+enum DonusYukuDurum {
+  AKTIF
+  PASIF
+}
+
+model DonusYukuIlani {
+  id        String         @id @default(uuid()) @db.Uuid
+  tasiyanId String         @db.Uuid // duz ID
+  durum     DonusYukuDurum @default(AKTIF)
+  neredenIl String
+  nereyeIl  String
+  tarihBas  DateTime // musaitlik penceresi
+  tarihBit  DateTime
+  aracTipi  String?
+  aciklama  String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([durum, tarihBas])
+  @@index([neredenIl, nereyeIl])
+  @@map("donus_yuku_ilanlari")
+}

@@ -232,6 +232,38 @@ export class EvdenEveService {
     const guncel = await this.prisma.evIlani.findUnique({ where: { id: ilan.id } });
     return { ilan: guncel, komisyonKurus: komisyon.toString() };
   }
+  // TASIYAN: donus-yuku ilani ver (ucretsiz vitrin - A-mini)
+  async donusVer(user: AuthUser, dto: { neredenIl: string; nereyeIl: string; tarihBas: string; tarihBit: string; aracTipi?: string; aciklama?: string }) {
+    const b = new Date(dto.tarihBas); const e = new Date(dto.tarihBit);
+    if (isNaN(b.getTime()) || isNaN(e.getTime()) || b > e) throw new BadRequestException('Tarih penceresi hatali');
+    return this.prisma.donusYukuIlani.create({
+      data: { tasiyanId: user.id, neredenIl: dto.neredenIl.toUpperCase(), nereyeIl: dto.nereyeIl.toUpperCase(), tarihBas: b, tarihBit: e, aracTipi: dto.aracTipi ?? null, aciklama: dto.aciklama ?? null },
+    });
+  }
+
+  // HERKES: donus-yuku borsasi (aktif + penceresi gecmemis)
+  async donusBorsa() {
+    return this.prisma.donusYukuIlani.findMany({
+      where: { durum: 'AKTIF' as any, tarihBit: { gte: new Date() } },
+      orderBy: { tarihBas: 'asc' },
+    });
+  }
+
+  // TASITAN: donus ilanina davet - tasiyana SMS gider, tasiyan tasitanin EV ILANINA normal on teklif verir
+  async donusDavet(user: AuthUser, donusId: string, evIlaniId: string) {
+    const donus = await this.prisma.donusYukuIlani.findUnique({ where: { id: donusId } });
+    if (!donus) throw new NotFoundException('Donus ilani bulunamadi');
+    if (donus.durum !== ('AKTIF' as any)) throw new ConflictException('Bu donus ilani aktif degil');
+    const ev = await this.prisma.evIlani.findUnique({ where: { id: evIlaniId } });
+    if (!ev) throw new NotFoundException('Ev ilani bulunamadi');
+    if (ev.tasitanId !== user.id) throw new ForbiddenException('Bu ev ilani size ait degil');
+    if (ev.durum !== EvIlaniDurum.ACIK) throw new ConflictException('Ev ilaniniz teklif almaya acik degil');
+    const tasiyan = await this.prisma.user.findUnique({ where: { id: donus.tasiyanId }, select: { phone: true } });
+    if (tasiyan?.phone) {
+      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TEKLIF_GELDI', degiskenler: { ilan: `${ev.neredenIl} - ${ev.nereyeIl} evden eve talebi (donus yolunuza uygun)` } });
+    }
+    return { ok: true, mesaj: 'Davet gonderildi - tasiyan ilaniniza teklif verebilir', evIlaniId: ev.id };
+  }
   // Ilan detay: sahibi/admin tekliflerle gorur; digerleri ACIK ise ilani gorur
   async ilanDetay(user: AuthUser, ilanId: string) {
     const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });

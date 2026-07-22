@@ -12,6 +12,7 @@ import { EvTeklifVerDto } from './dto/ev-teklif-ver.dto';
 import { KesfeDavetDto } from './dto/kesfe-davet.dto';
 import { KesifSonucDto } from './dto/kesif-sonuc.dto';
 import { EvUcretBildirDto } from './dto/ev-ucret-bildir.dto';
+import { DonusVerDto, DonusDavetDto } from './dto/donus.dto';
 
 @Controller('load/ev')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -94,6 +95,25 @@ export class EvdenEveController {
   async teslimOnay(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
     const r = await this.ev.teslimOnay(user, id);
     await this.audit.record({ actorId: user.id, action: 'load.ev.teslimOnay', entity: 'EvIlani', entityId: id, ip: req.ip });
+    return r;
+  }
+
+  @Post('donus')
+  async donusVer(@CurrentUser() user: AuthUser, @Body() dto: DonusVerDto, @Req() req: Request) {
+    const r = await this.ev.donusVer(user, dto);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.donusVer', entity: 'DonusYukuIlani', entityId: (r as any)?.id ?? null, ip: req.ip });
+    return r;
+  }
+
+  @Get('donus-borsa')
+  donusBorsa() {
+    return this.ev.donusBorsa();
+  }
+
+  @Post('donus/:id/davet')
+  async donusDavet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DonusDavetDto, @Req() req: Request) {
+    const r = await this.ev.donusDavet(user, id, dto.evIlaniId);
+    await this.audit.record({ actorId: user.id, action: 'load.ev.donusDavet', entity: 'DonusYukuIlani', entityId: id, ip: req.ip });
     return r;
   }
 
