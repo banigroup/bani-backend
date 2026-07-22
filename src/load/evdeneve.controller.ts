@@ -1,4 +1,6 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { cloudinaryUpload } from './cloudinary.util';
 import { Request } from 'express';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -115,6 +117,15 @@ export class EvdenEveController {
     const r = await this.ev.donusDavet(user, id, dto.evIlaniId);
     await this.audit.record({ actorId: user.id, action: 'load.ev.donusDavet', entity: 'DonusYukuIlani', entityId: id, ip: req.ip });
     return r;
+  }
+
+  // Kamera-zorunlu foto yukleme (ilan + kesif cekimlerinin URL'ye cevrildigi tek kapi)
+  @Post('foto')
+  @UseInterceptors(FileInterceptor('dosya'))
+  async fotoYukle(@CurrentUser() user: AuthUser, @UploadedFile() dosya: any) {
+    if (!dosya) throw new BadRequestException('Dosya gerekli');
+    const url = await cloudinaryUpload(dosya.buffer, `baniload/ev/${user.id}`);
+    return { url };
   }
 
   @Get('ilan/:id')
