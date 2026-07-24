@@ -316,7 +316,11 @@ export class EvdenEveService {
     const sahibiMi = ilan.tasitanId === user.id;
     if (sahibiMi || this.isAdmin(user)) {
       const teklifler = await this.prisma.evTeklif.findMany({ where: { evIlaniId: ilan.id }, orderBy: { createdAt: 'asc' } });
-      return { ...ilan, teklifler };
+      const tasiyanIds = [...new Set(teklifler.map((t) => t.tasiyanId))];
+      const tasiyanlar = await this.prisma.user.findMany({ where: { id: { in: tasiyanIds } }, select: { id: true, name: true, surname: true, loadPuan: { select: { evOrtalama: true, evSayi: true } } } });
+      const tMap = new Map(tasiyanlar.map((t) => [t.id, t]));
+      const teklifZengin = teklifler.map((t) => ({ ...t, tasiyan: tMap.get(t.tasiyanId) ?? null }));
+      return { ...ilan, teklifler: teklifZengin };
     }
     if (ilan.durum !== EvIlaniDurum.ACIK) throw new ForbiddenException('Bu ilana erisiminiz yok');
     const kendiTeklifim = await this.prisma.evTeklif.findFirst({ where: { evIlaniId: ilan.id, tasiyanId: user.id } });
