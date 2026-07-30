@@ -257,11 +257,13 @@ export class LoadController {
   }
 
   // ----- ADMIN: Belge onay -----
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('admin/belgeler/bekleyenler')
   bekleyenBelgeler(@CurrentUser() user: AuthUser) {
     return this.load.bekleyenBelgeler(user);
   }
 
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('belge/:id/onayla')
   async belgeOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     const r = await this.load.belgeOnayla(user, id);
@@ -269,6 +271,7 @@ export class LoadController {
     return r;
   }
 
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('belge/:id/reddet')
   async belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { gerekce?: string }) {
     const r = await this.load.belgeReddet(user, id, body?.gerekce);

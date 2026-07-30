@@ -20,7 +20,6 @@ export enum Permission {
   PRODUCT_READ = 'product:read',
   PRODUCT_WRITE = 'product:write',
   CATEGORY_WRITE = 'category:write',
-  PRODUCT_APPROVE = 'product:approve',
 
   // Faz 3 — Sipariş / Ödeme
   ORDER_READ = 'order:read',

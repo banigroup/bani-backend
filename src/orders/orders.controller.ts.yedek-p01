@@ -1,15 +1,12 @@
 import { Controller, Post, Get, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/rbac/permissions.guard';
-import { RequirePermissions } from '../common/rbac/permissions.decorator';
-import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { OrdersService } from './orders.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 
 @Controller('orders')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard)
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
@@ -24,7 +21,6 @@ export class OrdersController {
   }
 
   // Not: 'store/:storeId' rotası ':id'den ÖNCE tanımlı olmalı
-  @RequirePermissions(Permission.ORDER_MANAGE)
   @Get('store/:storeId')
   storeOrders(@CurrentUser() user: AuthUser, @Param('storeId') storeId: string, @Query('status') status?: string) {
     return this.orders.storeOrders(user, storeId, status);
@@ -35,7 +31,6 @@ export class OrdersController {
     return this.orders.getOne(user, id);
   }
 
-  @RequirePermissions(Permission.ORDER_MANAGE)
   @Patch(':id/status')
   updateStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.orders.updateStatus(user, id, dto.status);

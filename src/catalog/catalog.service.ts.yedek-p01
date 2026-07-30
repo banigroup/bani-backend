@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MarketService } from '../market/market.service';
@@ -166,8 +166,6 @@ export class CatalogService {
   // Admin: onayla -> yayinla
   async approveProduct(id: string, userId: string, roles: Role[]) {
     const product = await this.getProduct(id);
-    const magazaSahip = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { ownerId: true } });
-    if (magazaSahip?.ownerId === userId) throw new ForbiddenException('Kendi magazanizin urununu onaylayamazsiniz');
     await this.market.assertOwner(product.storeId, userId, roles);
     return this.prisma.product.update({ where: { id }, data: { isActive: true } });
   }
@@ -175,8 +173,6 @@ export class CatalogService {
   // Admin: reddet -> sil (soft delete)
   async rejectProduct(id: string, userId: string, roles: Role[]) {
     const product = await this.getProduct(id);
-    const magazaSahip = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { ownerId: true } });
-    if (magazaSahip?.ownerId === userId) throw new ForbiddenException('Kendi magazanizin urununu reddedemezsiniz');
     await this.market.assertOwner(product.storeId, userId, roles);
     await this.prisma.product.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
     return { rejected: true };

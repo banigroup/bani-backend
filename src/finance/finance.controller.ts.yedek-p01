@@ -6,41 +6,33 @@ import { TopupDto } from './dto/topup.dto';
 import { WithdrawDto } from './dto/withdraw.dto';
 import { TransferDto } from './dto/transfer.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/rbac/permissions.guard';
-import { RequirePermissions } from '../common/rbac/permissions.decorator';
-import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 
 @Controller('finance')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard)
 export class FinanceController {
   constructor(private readonly finance: FinanceService) { }
 
-  @RequirePermissions(Permission.WALLET_READ)
   @Get('wallet')
   wallet(@CurrentUser() user: AuthUser) {
     return this.finance.myWallet(user.id);
   }
 
-  @RequirePermissions(Permission.TRANSACTION_READ)
   @Get('transactions')
   transactions(@CurrentUser() user: AuthUser, @Query('skip') skip?: string, @Query('take') take?: string) {
     return this.finance.transactions(user.id, Number(skip) || 0, Number(take) || 50);
   }
 
-  @RequirePermissions(Permission.WALLET_TOPUP)
   @Post('topup')
   topup(@CurrentUser() user: AuthUser, @Body() dto: TopupDto, @Req() req: Request) {
     return this.finance.topup(user.id, dto, req.ip);
   }
 
-  @RequirePermissions(Permission.WALLET_WITHDRAW)
   @Post('withdraw')
   withdraw(@CurrentUser() user: AuthUser, @Body() dto: WithdrawDto, @Req() req: Request) {
     return this.finance.withdraw(user.id, dto, req.ip);
   }
 
-  @RequirePermissions(Permission.WALLET_WITHDRAW)
   @Post('transfer')
   transfer(@CurrentUser() user: AuthUser, @Body() dto: TransferDto, @Req() req: Request) {
     return this.finance.transfer(user.id, dto, req.ip);
@@ -48,7 +40,6 @@ export class FinanceController {
 
   // Dikey bazlı P&L raporu (admin/süper admin) — admin panelinden çağrılır.
   // İsteğe bağlı tarih filtresi: ?from=2026-06-01&to=2026-06-30
-  @RequirePermissions(Permission.FINANCE_READ)
   @Get('report/business-units')
   businessUnitReport(
     @CurrentUser() user: AuthUser,

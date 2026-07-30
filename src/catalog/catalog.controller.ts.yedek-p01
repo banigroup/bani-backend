@@ -67,14 +67,14 @@ export class CatalogController {
   // Admin: onayla / reddet
   @Patch('products/:id/approve')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.PRODUCT_APPROVE)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
   approve(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.approveProduct(id, user.id, user.roles);
   }
 
   @Patch('products/:id/reject')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.PRODUCT_APPROVE)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
   reject(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.rejectProduct(id, user.id, user.roles);
   }
