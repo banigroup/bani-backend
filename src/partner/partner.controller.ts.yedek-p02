@@ -1,5 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { Public } from '../common/decorators/public.decorator';
+﻿import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { PartnerService } from "./partner.service";
 import { CreateBasvuruDto } from "./dto/create-basvuru.dto";
@@ -13,25 +12,21 @@ import { Permission } from "../common/rbac/permissions.enum";
 export class PartnerController {
   constructor(private readonly partner: PartnerService) {}
 
-  @Public()
   @Post("seller")
   seller(@Body() dto: CreateBasvuruDto, @Req() req: Request) {
     return this.partner.basvuruOlustur(PartnerBasvuruTip.SELLER, dto, req.ip, req.headers["user-agent"]);
   }
 
-  @Public()
   @Post("franchise")
   franchise(@Body() dto: CreateBasvuruDto, @Req() req: Request) {
     return this.partner.basvuruOlustur(PartnerBasvuruTip.FRANCHISE, dto, req.ip, req.headers["user-agent"]);
   }
 
-  @Public()
   @Post("restaurant")
   restaurant(@Body() dto: CreateBasvuruDto, @Req() req: Request) {
     return this.partner.basvuruOlustur(PartnerBasvuruTip.RESTAURANT, dto, req.ip, req.headers["user-agent"]);
   }
 
-  @Public()
   @Post("courier")
   courier(@Body() dto: CreateBasvuruDto, @Req() req: Request) {
     return this.partner.basvuruOlustur(PartnerBasvuruTip.COURIER, dto, req.ip, req.headers["user-agent"]);

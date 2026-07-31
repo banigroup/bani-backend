@@ -1,5 +1,4 @@
 import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
-import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/rbac/roles.guard';
 import { Roles } from '../common/rbac/roles.decorator';
@@ -10,7 +9,6 @@ import { SigortaSubeBasvuruDto } from './dto/sigorta-sube-basvuru.dto';
 @Controller('sigorta')
 export class SigortaController {
   constructor(private readonly sigorta: SigortaService) {}
-  @Public()
   @Post('talep')
   talepOlustur(@Body() dto: SigortaTalepDto) {
     return this.sigorta.talepOlustur(dto);
@@ -22,7 +20,6 @@ export class SigortaController {
     return this.sigorta.talepleriListele();
   }
 
-  @Public()
   @Post('sube-basvuru')
   subeBasvuruOlustur(@Body() dto: SigortaSubeBasvuruDto) {
     return this.sigorta.subeBasvuruOlustur(dto);

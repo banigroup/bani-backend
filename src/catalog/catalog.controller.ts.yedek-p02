@@ -1,5 +1,4 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { Public } from '../common/decorators/public.decorator';
 import { CatalogService } from './catalog.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -15,13 +14,11 @@ export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
   // Herkese acik okuma
-  @Public()
   @Get('stores/:storeId/categories')
   categories(@Param('storeId') storeId: string) {
     return this.catalog.listCategories(storeId);
   }
 
-  @Public()
   @Get('stores/:storeId/products')
   products(
     @Param('storeId') storeId: string,
@@ -32,7 +29,6 @@ export class CatalogController {
     return this.catalog.listProducts(storeId, categoryId, Number(skip) || 0, Number(take) || 50);
   }
 
-  @Public()
   @Get('products/:id')
   product(@Param('id') id: string) {
     return this.catalog.getProduct(id);
@@ -71,14 +67,14 @@ export class CatalogController {
   // Admin: onayla / reddet
   @Patch('products/:id/approve')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.PRODUCT_WRITE)
+  @RequirePermissions(Permission.PRODUCT_APPROVE)
   approve(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.approveProduct(id, user.id, user.roles);
   }
 
   @Patch('products/:id/reject')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.PRODUCT_WRITE)
+  @RequirePermissions(Permission.PRODUCT_APPROVE)
   reject(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.rejectProduct(id, user.id, user.roles);
   }

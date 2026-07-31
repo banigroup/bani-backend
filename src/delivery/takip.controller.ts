@@ -1,4 +1,5 @@
 import { Controller, Get, Param } from '@nestjs/common';
+import { Public } from '../common/decorators/public.decorator';
 import { DeliveryService } from './delivery.service';
 
 // PUBLIC — JwtAuthGuard YOK. DicleFul kargo takip sayfası bunu çağırır.
@@ -8,6 +9,7 @@ import { DeliveryService } from './delivery.service';
 export class TakipController {
   constructor(private readonly delivery: DeliveryService) { }
 
+  @Public()
   @Get(':takipNo')
   takip(@Param('takipNo') takipNo: string) {
     return this.delivery.takip(takipNo);

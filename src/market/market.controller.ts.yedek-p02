@@ -1,5 +1,4 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { Public } from '../common/decorators/public.decorator';
 import type { Request } from 'express';
 import { MarketService } from './market.service';
 import { CreateStoreDto } from './dto/create-store.dto';
@@ -15,19 +14,16 @@ export class MarketController {
   constructor(private readonly market: MarketService) {}
 
   // Herkese açık: aktif mağaza listesi
-  @Public()
   @Get('stores')
   list(@Query('skip') skip?: string, @Query('take') take?: string) {
     return this.market.listActive(Number(skip) || 0, Number(take) || 50);
   }
 
-  @Public()
   @Get('stores/slug/:slug')
   getBySlug(@Param('slug') slug: string) {
     return this.market.getBySlug(slug);
   }
 
-  @Public()
   @Get('stores/:id')
   getById(@Param('id') id: string) {
     return this.market.getById(id);
