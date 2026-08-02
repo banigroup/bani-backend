@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
+import { AuditService } from '../common/audit/audit.service';
 import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
@@ -31,6 +32,7 @@ export class LoadService {
     private readonly ledger: LedgerService,
     private readonly wallet: WalletService,
     private readonly sozlesme: SozlesmeService,
+    private readonly audit: AuditService,
   ) { }
 
   // ██████ 1 · YUK ILANI (yuk veren) ██████
@@ -755,7 +757,7 @@ export class LoadService {
     if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
       throw new ConflictException('Bu bildirim zaten işlenmiş');
     }
-    return this.prisma.komisyonOdeme.update({
+    const guncel = await this.prisma.komisyonOdeme.update({
       where: { id: odemeId },
       data: {
         durum: KomisyonOdemeDurum.ONAYLANDI,
@@ -763,6 +765,8 @@ export class LoadService {
         adminNot: adminNot ?? null,
       },
     });
+    await this.audit.record({ actorId: user.id, action: 'load.komisyon.onay', entity: 'KomisyonOdeme', entityId: odemeId, metadata: { adminNot: adminNot ?? null } });
+    return guncel;
   }
 
   // Admin: odemeyi reddet
@@ -773,7 +777,7 @@ export class LoadService {
     if (odeme.durum !== KomisyonOdemeDurum.BEKLIYOR) {
       throw new ConflictException('Bu bildirim zaten işlenmiş');
     }
-    return this.prisma.komisyonOdeme.update({
+    const guncel = await this.prisma.komisyonOdeme.update({
       where: { id: odemeId },
       data: {
         durum: KomisyonOdemeDurum.RED,
@@ -781,6 +785,8 @@ export class LoadService {
         adminNot: adminNot ?? null,
       },
     });
+    await this.audit.record({ actorId: user.id, action: 'load.komisyon.red', entity: 'KomisyonOdeme', entityId: odemeId, metadata: { adminNot: adminNot ?? null } });
+    return guncel;
   }
 
 
@@ -886,14 +892,18 @@ export class LoadService {
     if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
     const belge = await this.prisma.loadBelge.findUnique({ where: { id: belgeId } });
     if (!belge) throw new NotFoundException('Belge bulunamadı');
-    return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'ONAYLANDI' as any } });
+    const guncel = await this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'ONAYLANDI' as any } });
+    await this.audit.record({ actorId: user.id, action: 'load.belge.onay', entity: 'LoadBelge', entityId: belgeId });
+    return guncel;
   }
 
   async belgeReddet(user: AuthUser, belgeId: string, gerekce?: string) {
     if (!this.isAdmin(user)) throw new ForbiddenException('Bu işlem için yetkiniz yok');
     const belge = await this.prisma.loadBelge.findUnique({ where: { id: belgeId } });
     if (!belge) throw new NotFoundException('Belge bulunamadı');
-    return this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'REDDEDILDI' as any, redGerekce: gerekce ?? null } });
+    const guncel = await this.prisma.loadBelge.update({ where: { id: belgeId }, data: { durum: 'REDDEDILDI' as any, redGerekce: gerekce ?? null } });
+    await this.audit.record({ actorId: user.id, action: 'load.belge.red', entity: 'LoadBelge', entityId: belgeId, metadata: { gerekce: gerekce ?? null } });
+    return guncel;
   }
 
   // ██████ 9 · DEGERLENDIRME (puanlama, cift yonlu 1-5) ██████
@@ -942,3 +952,4 @@ export class LoadService {
     return this.prisma.loadDegerlendirme.findMany({ where: { verenId: user.id }, select: { yukIlaniId: true, aracIlaniId: true, puan: true } });
   }
 }
+
