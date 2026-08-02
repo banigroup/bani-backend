@@ -13,6 +13,8 @@ import { KuyrukService } from '../kuyruk/kuyruk.service';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
 import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
+import { AracTeklifVerDto } from './dto/arac-teklif-ver.dto';
+import { KarsiTeklifDto } from './dto/karsi-teklif.dto';
 import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
 import { SozlesmeOnaylaDto } from './dto/sozlesme-onayla.dto';
 import { LoadProfilKaydetDto } from './dto/load-profil-kaydet.dto';
@@ -79,7 +81,7 @@ export class LoadController {
 
   // ----- Arac Teklif (firma -> arac, kamyoncu onaylar) -----
   @Post('arac-teklif')
-  aracTeklifVer(@CurrentUser() user: AuthUser, @Body() dto: { aracIlaniId: string; fiyatKurus: number; mesaj?: string }) {
+  aracTeklifVer(@CurrentUser() user: AuthUser, @Body() dto: AracTeklifVerDto) {
     return this.load.aracTeklifVer(user, dto);
   }
 
@@ -111,7 +113,7 @@ export class LoadController {
   }
 
   @Patch('arac-teklif/:id/karsi')
-  aracKarsiTeklif(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { yeniFiyatKurus: number }) {
+  aracKarsiTeklif(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: KarsiTeklifDto) {
     return this.load.aracKarsiTeklif(user, id, body.yeniFiyatKurus);
   }
 
@@ -159,7 +161,7 @@ export class LoadController {
     return this.load.teklifReddet(user, id);
   }
   @Patch('teklif/:id/karsi')
-  yukKarsiTeklif(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: { yeniFiyatKurus: number }) {
+  yukKarsiTeklif(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: KarsiTeklifDto) {
     return this.load.yukKarsiTeklif(user, id, body.yeniFiyatKurus);
   }
   // ----- Is akisi -----
@@ -288,3 +290,4 @@ export class LoadController {
     return this.load.degerlendirmelerim(user);
   }
 }
+
