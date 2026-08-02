@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UnauthorizedException, HttpCode } from '@nestjs/common';
+﻿import { Body, Controller, Post, Req, UnauthorizedException, HttpCode } from '@nestjs/common';
 import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -36,6 +36,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
   @HttpCode(200)
   async refresh(@Body() dto: RefreshDto, @Req() req: Request) {
     const result = await this.auth.refresh(dto.refreshToken, meta(req));
@@ -44,8 +45,10 @@ export class AuthController {
   }
 
   @Post('logout')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
   @HttpCode(200)
   logout(@Body() dto: RefreshDto) {
     return this.auth.logout(dto.refreshToken);
   }
 }
+

@@ -1,4 +1,4 @@
-import './instrument';
+﻿import './instrument';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -12,6 +12,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
 
+  // Railway proxy arkasinda gercek istemci IP'si icin sart (rate limit + audit):
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
@@ -23,3 +26,4 @@ async function bootstrap() {
   Logger.log(`API up on http://localhost:${port}/api/v1`, 'Bootstrap');
 }
 bootstrap();
+

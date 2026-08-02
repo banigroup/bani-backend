@@ -1,5 +1,6 @@
-import { Body, Controller, ForbiddenException, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+﻿import { Body, Controller, ForbiddenException, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import { Role } from '@prisma/client';
 import { FinanceService } from './finance.service';
 import { TopupDto } from './dto/topup.dto';
@@ -30,18 +31,21 @@ export class FinanceController {
 
   @RequirePermissions(Permission.WALLET_TOPUP)
   @Post('topup')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   topup(@CurrentUser() user: AuthUser, @Body() dto: TopupDto, @Req() req: Request) {
     return this.finance.topup(user.id, dto, req.ip);
   }
 
   @RequirePermissions(Permission.WALLET_WITHDRAW)
   @Post('withdraw')
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   withdraw(@CurrentUser() user: AuthUser, @Body() dto: WithdrawDto, @Req() req: Request) {
     return this.finance.withdraw(user.id, dto, req.ip);
   }
 
   @RequirePermissions(Permission.WALLET_WITHDRAW)
   @Post('transfer')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   transfer(@CurrentUser() user: AuthUser, @Body() dto: TransferDto, @Req() req: Request) {
     return this.finance.transfer(user.id, dto, req.ip);
   }
@@ -67,3 +71,4 @@ export class FinanceController {
     return this.finance.businessUnitReport(parse(from), parse(to));
   }
 }
+
