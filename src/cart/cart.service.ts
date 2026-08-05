@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddItemDto } from './dto/add-item.dto';
 
@@ -17,7 +17,15 @@ export class CartService {
     const items = await this.prisma.cartItem.findMany({
       where: { cartId: cart.id },
       orderBy: { createdAt: 'asc' },
-      include: { product: { select: { id: true, name: true, imageUrl: true, price: true, stock: true, isActive: true } } },
+      include: {
+        product: {
+          select: {
+            id: true, name: true, imageUrl: true, price: true, stock: true, isActive: true,
+            storeId: true,
+            store: { select: { id: true, name: true, slug: true } },
+          },
+        },
+      },
     });
 
     let subtotal = 0n;
@@ -32,12 +40,23 @@ export class CartService {
         unitPrice: it.unitPrice,
         quantity: it.quantity,
         lineTotal,
+        // Tek-magaza kurali: gorunurluk icin kalem duzeyinde magaza bilgisi
+        storeId: it.product.storeId,
+        storeName: it.product.store.name,
+        storeSlug: it.product.store.slug,
       };
     });
+
+    // Sepet duzeyinde magaza (tek-magaza kurali geregi tum kalemler ayni magazadan)
+    const first = items[0];
+    const store = first
+      ? { id: first.product.store.id, name: first.product.store.name, slug: first.product.store.slug }
+      : null;
 
     return {
       cartId: cart.id,
       storeId: cart.storeId,
+      store,
       itemCount: lines.reduce((n, l) => n + l.quantity, 0),
       subtotal,
       items: lines,
@@ -53,11 +72,18 @@ export class CartService {
 
     const qty = dto.quantity ?? 1;
 
-    // Sepet farklı bir mağazaya aitse, yeni mağaza için sepeti sıfırla
-    if (cart.storeId && cart.storeId !== product.storeId) {
-      await this.prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
-      await this.prisma.cart.update({ where: { id: cart.id }, data: { storeId: product.storeId } });
-    } else if (!cart.storeId) {
+    // Tek-mağaza kuralı: sepette ürün varken başka mağazanın ürünü eklenemez
+    const itemCount = await this.prisma.cartItem.count({ where: { cartId: cart.id } });
+    if (itemCount > 0 && cart.storeId && cart.storeId !== product.storeId) {
+      throw new ConflictException({
+        statusCode: 409,
+        kod: 'FARKLI_MAGAZA',
+        message: 'Sepetinizde başka bir mağazadan ürün var.',
+        error: 'Conflict',
+      });
+    }
+    // Sepet boşsa veya mağazasızsa mağazayı bu ürüne bağla (bayat storeId'yi de düzeltir)
+    if (cart.storeId !== product.storeId) {
       await this.prisma.cart.update({ where: { id: cart.id }, data: { storeId: product.storeId } });
     }
 
