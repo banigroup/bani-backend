@@ -1,238 +1,57 @@
-// BaniMarket Express (demo-market) baslangic katalogu — 8 kategori / 130 urun karti.
-// Varyantlar AYRI kart (ornek: "Uludag Frutti Limon 200ml").
+// BaniMarket Express (demo-market) katalog seed'i — SAF KATKI.
+// Her deploy'da calisir (Dockerfile CMD).
 //
-// IDEMPOTENT: iki kez calisirsa cift kayit URETMEZ. Anahtar (storeId, slug).
-//   - devral: true  -> mevcut satirin ad/fiyat/kategorisi guncellenir (katalog otorite)
-//   - devral yok    -> mevcut satira DOKUNULMAZ (panelden yapilan duzenleme korunur)
-//   - isActive ve stock hicbir zaman ezilmez (admin pasife alirsa geri acilmaz)
+// KURAL: mevcut satira ASLA dokunmaz. Sadece eksik kategori/urun kartini acar.
+//   - Panelden yapilan ad/fiyat/stok duzenlemeleri korunur.
+//   - Fiyat ezme YOK. Katalog fiyatlarini mevcut satirlara uygulamak
+//     tek seferlik istir; onu mutabakat-market-express.js yapar.
 //
+// IDEMPOTENT: iki kez calisirsa cift kayit uretmez. Anahtar (storeId, slug).
 // Magazayi YARATMAZ: demo-market yoksa sessizce cikar (ana seed'in isi).
-// Fiyatlar KURUS cinsindendir (5000 = 50,00 TL).
 
-const fs = require('fs');
-const path = require('path');
+const { KATALOG, MAGAZA_SLUG, envYukle } = require('./market-express-katalog');
 
-// .env (lokal calismada okunur). Railway'de env zaten enjekte edilir; .env yoksa sorun degil.
-try {
-  const env = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
-  env.split('\n').forEach((line) => {
-    const m = line.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
-  });
-} catch (e) { /* Railway'de .env yok — normal */ }
+envYukle(__dirname);
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const KATALOG = [
-  {
-    slug: 'icecekler', name: 'Su & İçecek', sira: 1, urunler: [
-      ['Uludağ Frutti Limon 200ml', 'uludag-frutti-limon-200ml', 2500n],
-      ['Uludağ Frutti Elma 200ml', 'uludag-frutti-elma-200ml', 2500n],
-      ['Uludağ Frutti Karpuz-Çilek 200ml', 'uludag-frutti-karpuz-cilek-200ml', 2500n],
-      ['Uludağ Frutti Narlı 200ml', 'uludag-frutti-narli-200ml', 2500n],
-      ['Uludağ Frutti C-max Limon 200ml', 'uludag-frutti-cmax-limon-200ml', 2500n],
-      ['Uludağ Frutti C-max Kivi 200ml', 'uludag-frutti-cmax-kivi-200ml', 2500n],
-      ['Uludağ Frutti Extra Kavun 250ml', 'uludag-frutti-extra-kavun-250ml', 4500n],
-      ['Uludağ Frutti Extra Yeşil Limon 250ml', 'uludag-frutti-extra-yesil-limon-250ml', 4500n],
-      ['Uludağ Frutti Extra Mandalina 250ml', 'uludag-frutti-extra-mandalina-250ml', 4500n],
-      ['Uludağ Frutti Extra Armut 250ml', 'uludag-frutti-extra-armut-250ml', 4500n],
-      ['Uludağ Frutti Extra Orman Meyveli 250ml', 'uludag-frutti-extra-orman-meyveli-250ml', 4500n],
-      ['Uludağ Limonata 250ml', 'uludag-limonata-250ml', 5000n],
-      ['Uludağ Limonata 1L', 'uludag-limonata-1l', 6500n],
-      ['Uludağ Limonata Şekersiz 1L', 'uludag-limonata-sekersiz-1l', 6500n],
-      ['Uludağ Meyvelim Greyfurt 1L', 'uludag-meyvelim-greyfurt-1l', 6500n],
-      ['Uludağ Meyvelim Mandalina 1L', 'uludag-meyvelim-mandalina-1l', 6500n],
-      ['Uludağ Meyvelim Ananas 1L', 'uludag-meyvelim-ananas-1l', 6500n],
-      ['Uludağ Meyvelim Nar 1L', 'uludag-meyvelim-nar-1l', 6500n],
-      ['Uludağ Frutti Extra Orman Meyveli 1L', 'uludag-frutti-extra-orman-meyveli-1l', 6500n],
-      ['Uludağ Frutti Extra Mandalina 1L', 'uludag-frutti-extra-mandalina-1l', 6500n],
-      ['Uludağ Frutti Extra Yeşil Limon 1L', 'uludag-frutti-extra-yesil-limon-1l', 6500n],
-      ['Uludağ Gazoz 1L', 'uludag-gazoz-1l', 6500n],
-      ['Uludağ Portakallı Gazoz 1L', 'uludag-portakalli-gazoz-1l', 7500n],
-      ['Uludağ Efsane Gazoz Şekersiz 1L', 'uludag-efsane-gazoz-sekersiz-1l', 6500n],
-      ['Su 0,5L', 'su-05l', 1000n, true],
-      ['Su 1,5L', 'su-15l', 2000n],
-      ['Su 5L', 'su-5l', 5000n, true],
-      ['Kola Kutu 330ml', 'kola-330ml', 4500n, true],
-      ['Kola 1L', 'kola-1l', 6500n, true],
-      ['Ayran 300ml', 'ayran-300ml', 2000n, true],
-      ['Ayran 1L', 'ayran-1l', 4500n],
-      ['Soğuk Çay Şeftali 330ml', 'soguk-cay-seftali-330ml', 4500n],
-      ['Soğuk Çay Limon 330ml', 'soguk-cay-limon-330ml', 4500n],
-      ['Maden Suyu Sade 6\'lı', 'maden-suyu-6li', 6000n],
-      ['Meyve Suyu Karışık 1L', 'meyve-suyu-karisik-1l', 5500n],
-      ['Meyve Suyu Şeftali 1L', 'meyve-suyu-seftali-1l', 5500n],
-      ['Meyve Suyu Vişne 1L', 'meyve-suyu-visne-1l', 5500n],
-    ],
-  },
-  {
-    slug: 'sut-kahvaltilik', name: 'Süt & Kahvaltılık', sira: 2, urunler: [
-      ['UHT Süt 1L (Tam Yağlı)', 'sut-1l', 4500n, true],
-      ['Yumurta 15\'li (M)', 'yumurta-15li', 9500n],
-      ['Yumurta 30\'lu', 'yumurta-30lu', 18000n],
-      ['Beyaz Peynir 500g', 'beyaz-peynir-500g', 18000n, true],
-      ['Kaşar Peyniri 400g', 'kasar-400g', 19000n, true],
-      ['Üçgen Peynir 8\'li', 'ucgen-peynir-8li', 5500n],
-      ['Siyah Zeytin 400g', 'siyah-zeytin-400g', 12000n],
-      ['Yeşil Zeytin 400g', 'yesil-zeytin-400g', 11000n],
-      ['Tereyağı 250g', 'tereyagi-250g', 15000n, true],
-      ['Yoğurt 1,5kg', 'yogurt-15kg', 9500n],
-      ['Süzme Yoğurt 600g', 'suzme-yogurt-600g', 7500n],
-      ['Süzme Bal 450g', 'bal-suzme-450g', 22000n],
-      ['Çikolatalı Fındık Kreması 350g', 'findik-kremasi-350g', 12000n],
-      ['Vişne Reçeli 380g', 'recel-380g', 8500n, true],
-      ['Çilek Reçeli 380g', 'recel-cilek-380g', 8500n],
-      ['Sucuk (Kangal) 250g', 'sucuk-kangal-250g', 16000n],
-      ['Salam 200g', 'salam-200g', 9000n],
-    ],
-  },
-  {
-    slug: 'temel-gida', name: 'Temel Gıda', sira: 3, urunler: [
-      ['Ekmek 250g', 'ekmek', 1500n, true],
-      ['Lavaş 5\'li', 'lavas-5li', 3500n],
-      ['Makarna Burgu 500g', 'makarna-500g', 2500n, true],
-      ['Makarna Spagetti 500g', 'makarna-spagetti-500g', 2500n],
-      ['Pirinç Baldo 1kg', 'pirinc-1kg', 9000n, true],
-      ['Bulgur Pilavlık 1kg', 'bulgur-1kg', 5500n],
-      ['Un 2kg', 'un-2kg', 7000n],
-      ['Toz Şeker 1kg', 'seker-1kg', 5000n, true],
-      ['Ayçiçek Yağı 1L', 'aycicek-yagi-1l', 11500n, true],
-      ['Zeytinyağı 500ml', 'zeytinyagi-500ml', 22000n],
-      ['Domates Salçası 830g', 'salca-830g', 12000n],
-      ['Çay 1kg (Dökme Siyah)', 'cay-1kg', 30000n],
-      ['Türk Kahvesi 100g', 'turk-kahvesi-100g', 7500n],
-      ['3\'ü 1 Arada 10\'lu', 'uculbir-arada-10lu', 8500n],
-      ['Kırmızı Mercimek 1kg', 'mercimek-1kg', 7500n, true],
-      ['Nohut 1kg', 'nohut-1kg', 8000n],
-      ['Tuz 750g', 'tuz-750g', 2000n],
-      ['Ton Balığı 2x160g', 'ton-baligi-2x160g', 13000n],
-    ],
-  },
-  {
-    slug: 'atistirmalik-cips', name: 'Atıştırmalık — Cips', sira: 4, urunler: [
-      ['Doritos Taço Büyük Boy', 'doritos-taco-buyuk', 6000n],
-      ['Doritos Nacho Büyük Boy', 'doritos-nacho-buyuk', 6000n],
-      ['Doritos Hot Corn Büyük Boy', 'doritos-hot-corn-buyuk', 6000n],
-      ['Lay\'s Klasik Büyük Boy', 'lays-klasik-buyuk', 6000n],
-      ['Lay\'s Yoğurt-Yeşillik Büyük Boy', 'lays-yogurt-yesillik-buyuk', 6000n],
-      ['Lay\'s Fırından Büyük Boy', 'lays-firindan-buyuk', 6000n],
-      ['Ruffles Original Büyük Boy', 'ruffles-original-buyuk', 6000n],
-      ['Ruffles Ketçap Büyük Boy', 'ruffles-ketcap-buyuk', 6000n],
-      ['Pringles Original 165g', 'pringles-original-165g', 17000n],
-      ['Pringles Mini', 'pringles-mini', 5000n],
-      ['Cheetos Küçük Boy', 'cheetos-kucuk', 2000n],
-      ['Çerezza Küçük Boy', 'cerezza-kucuk', 2500n],
-      ['Çerezza Popcorn', 'cerezza-popcorn', 3000n],
-    ],
-  },
-  {
-    slug: 'atistirmalik-kuruyemis', name: 'Atıştırmalık — Kuruyemiş', sira: 5, urunler: [
-      ['Çitello Antep Fıstığı 150g', 'citello-antep-fistigi-150g', 33000n],
-      ['Çitello Antep Fıstığı 80g', 'citello-antep-fistigi-80g', 17500n],
-      ['Çitello Kaju Fıstığı 130g', 'citello-kaju-130g', 12000n],
-      ['Çitello Kavrulmuş Fındık İçi', 'citello-findik-ici', 7000n],
-      ['Çitello Kavrulmuş Fındık İçi (Küçük Boy)', 'citello-findik-ici-kucuk', 6500n],
-      ['Çitello Kavrulmuş Badem İçi', 'citello-badem-ici', 8000n],
-      ['Çitello Tuzlu Kabak Çekirdeği', 'citello-kabak-cekirdegi', 7500n],
-      ['Çitello Soslu Yer Fıstığı 80g', 'citello-soslu-yer-fistigi-80g', 4000n],
-      ['Çitello Yağlı Yer Fıstığı', 'citello-yagli-yer-fistigi', 3000n],
-      ['Çitello Tuzlu Yer Fıstığı', 'citello-tuzlu-yer-fistigi', 3500n],
-      ['Çitello Barbekü Soslu Mısır Çerezi', 'citello-barbeku-misir-cerezi', 2000n],
-      ['Çitello Tuzlu Sarı Leblebi', 'citello-sari-leblebi', 3000n],
-      ['Çitello Beyaz Leblebi', 'citello-beyaz-leblebi', 3000n],
-      ['Çitello Klasik Karışık Kuruyemiş', 'citello-klasik-karisik', 6500n],
-      ['Çitello Özel Karışık Kuruyemiş', 'citello-ozel-karisik', 7500n],
-      ['Çitello Kavrulmuş Siyah Ay Çekirdeği', 'citello-siyah-ay-cekirdegi', 4500n],
-    ],
-  },
-  {
-    slug: 'atistirmalik-biskuvi-cikolata', name: 'Atıştırmalık — Bisküvi & Çikolata', sira: 6, urunler: [
-      ['Gofret (Tekli)', 'gofret', 1500n, true],
-      ['Çikolata Kaplı Bar', 'cikolata-kapli-bar', 2000n],
-      ['Sütlü Tablet Çikolata 80g', 'cikolata-80g', 5000n, true],
-      ['Kremalı Bisküvi (İkili Paket)', 'kremali-biskuvi-2li', 3500n],
-      ['Çikolatalı Bisküvi', 'cikolatali-biskuvi', 3000n],
-      ['Kraker (Tuzlu, Orta Boy)', 'kraker-tuzlu', 2500n],
-      ['Çubuk Kraker', 'cubuk-kraker', 2000n],
-      ['Kek (Tekli, Kakaolu)', 'kek-kakaolu', 1500n],
-      ['Sandviç Kek', 'sandvic-kek', 2000n],
-      ['Ciklet / Şekerleme (Paket)', 'sekerleme-paket', 2500n],
-    ],
-  },
-  {
-    slug: 'temizlik', name: 'Temizlik & Ev', sira: 7, urunler: [
-      ['Bulaşık Deterjanı 650ml', 'bulasik-deterjani-650ml', 6000n],
-      ['Çamaşır Deterjanı Toz 4kg', 'camasir-deterjani-toz-4kg', 28000n],
-      ['Sıvı Çamaşır Deterjanı 1,7L', 'camasir-deterjani-sivi-17l', 22000n],
-      ['Yumuşatıcı 1,2L', 'yumusatici-12l', 9500n],
-      ['Yüzey Temizleyici 1L', 'yuzey-temizleyici-1l', 7000n],
-      ['Çamaşır Suyu 1L', 'camasir-suyu-1l', 4500n, true],
-      ['Çöp Poşeti (Orta, Rulo)', 'cop-poseti-orta', 3500n],
-      ['Tuvalet Kâğıdı 8\'li', 'tuvalet-kagidi-8li', 12000n, true],
-      ['Kâğıt Havlu 6\'lı', 'kagit-havlu-6li', 13000n],
-      ['Sünger 3\'lü', 'sunger-3lu', 3000n],
-    ],
-  },
-  {
-    slug: 'kisisel-bakim', name: 'Kişisel Bakım', sira: 8, urunler: [
-      ['Şampuan 400ml', 'sampuan-400ml', 12000n],
-      ['Duş Jeli 450ml', 'dus-jeli-450ml', 11000n],
-      ['Sabun 4\'lü', 'sabun-4lu', 7000n],
-      ['Diş Macunu 75ml', 'dis-macunu-75ml', 7500n],
-      ['Diş Fırçası', 'dis-fircasi', 5000n],
-      ['Tıraş Köpüğü 200ml', 'tiras-kopugu-200ml', 9000n],
-      ['Hijyenik Ped (Standart Paket)', 'hijyenik-ped', 7500n],
-      ['Islak Mendil 90\'lı', 'islak-mendil-90li', 4500n],
-      ['Kolonya 400ml', 'kolonya-400ml', 8500n],
-    ],
-  },
-];
-
 async function main() {
-  const store = await prisma.store.findUnique({ where: { slug: 'demo-market' } });
+  const store = await prisma.store.findUnique({ where: { slug: MAGAZA_SLUG } });
   if (!store) {
-    console.log('⚠️ demo-market bulunamadi — once ana seed. Express katalog atlandi.');
+    console.log(`⚠️ ${MAGAZA_SLUG} bulunamadi — once ana seed. Express katalog atlandi.`);
     return;
   }
 
-  let eklenen = 0, devralinan = 0, dokunulmayan = 0;
+  let eklenen = 0, dokunulmayan = 0, yeniKategori = 0;
 
   for (const k of KATALOG) {
-    const kategori = await prisma.category.upsert({
+    const varMi = await prisma.category.findUnique({
       where: { storeId_slug: { storeId: store.id, slug: k.slug } },
-      update: { name: k.name, sortOrder: k.sira },
-      create: { storeId: store.id, name: k.name, slug: k.slug, sortOrder: k.sira },
     });
+    const kategori = varMi ?? await prisma.category.create({
+      data: { storeId: store.id, name: k.name, slug: k.slug, sortOrder: k.sira },
+    });
+    if (!varMi) yeniKategori++;
 
-    for (const [ad, slug, kurus, devral] of k.urunler) {
+    for (const [ad, slug, kurus] of k.urunler) {
       const mevcut = await prisma.product.findUnique({
         where: { storeId_slug: { storeId: store.id, slug } },
       });
+      if (mevcut) { dokunulmayan++; continue; }
 
-      if (!mevcut) {
-        await prisma.product.create({
-          data: {
-            storeId: store.id, categoryId: kategori.id,
-            name: ad, slug, price: kurus,
-            stock: 100, unit: 'adet', isActive: true,
-          },
-        });
-        eklenen++;
-      } else if (devral) {
-        // Katalog otorite: ad/fiyat/kategori guncellenir. isActive ve stock KORUNUR.
-        await prisma.product.update({
-          where: { id: mevcut.id },
-          data: { name: ad, price: kurus, categoryId: kategori.id },
-        });
-        devralinan++;
-      } else {
-        dokunulmayan++;
-      }
+      await prisma.product.create({
+        data: {
+          storeId: store.id, categoryId: kategori.id,
+          name: ad, slug, price: kurus,
+          stock: 100, unit: 'adet', isActive: true,
+        },
+      });
+      eklenen++;
     }
   }
 
-  console.log(`EXPRESS KATALOG TAMAM — ${eklenen} eklendi, ${devralinan} devralindi, ${dokunulmayan} dokunulmadi.`);
+  console.log(`EXPRESS KATALOG — ${eklenen} urun eklendi, ${dokunulmayan} mevcut satira dokunulmadi, ${yeniKategori} yeni kategori.`);
 }
 
 main()
