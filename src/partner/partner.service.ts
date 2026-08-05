@@ -30,6 +30,10 @@ export class PartnerService {
     if (tip === PartnerBasvuruTip.SELLER) {
       data.businessUnit = BusinessUnit.CARSI;
     }
+    // MARKET basvurusu MARKET businessUnit ile etiketlenir
+    if (tip === PartnerBasvuruTip.MARKET) {
+      data.businessUnit = BusinessUnit.MARKET;
+    }
     const kayit = await this.prisma.partnerBasvuru.create({ data });
     return { ok: true, id: kayit.id, mesaj: "Basvurunuz alindi. En kisa surede donus yapilacaktir." };
   }

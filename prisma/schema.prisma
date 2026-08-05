@@ -767,6 +767,7 @@ enum PartnerBasvuruTip {
   FRANCHISE // Coffee franchise basvurusu
   RESTAURANT // Restoran (Yemek) basvurusu
   COURIER // Kurye basvurusu
+  MARKET // Market basvurusu
 }
 
 enum PartnerBasvuruDurum {

@@ -37,6 +37,12 @@ export class PartnerController {
     return this.partner.basvuruOlustur(PartnerBasvuruTip.COURIER, dto, req.ip, req.headers["user-agent"]);
   }
 
+  @Public()
+  @Post("market")
+  market(@Body() dto: CreateBasvuruDto, @Req() req: Request) {
+    return this.partner.basvuruOlustur(PartnerBasvuruTip.MARKET, dto, req.ip, req.headers["user-agent"]);
+  }
+
   @Get()
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)
