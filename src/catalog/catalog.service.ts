@@ -16,15 +16,61 @@ export class CatalogService {
   ) { }
 
   // ---- Kategoriler ----
-  listCategories(storeId: string) {
-    return this.prisma.category.findMany({
-      where: { storeId, isActive: true },
+  // GORUNURLUK STOKTAN TURER: bir baslik, kendi urunu veya alt basliginin urunu
+  // stokta ise vitrinde listelenir. isActive ise "yonetici bilerek kapatti" demektir;
+  // ikisi ayri kavramdir, karistirilmaz.
+  // tumu=true -> yonetim ekranlari icin: bos kategoriler de doner (urun atamak icin gerekli).
+  async listCategories(storeId: string, tumu = false) {
+    const dolu = { isActive: true, deletedAt: null, stock: { gt: 0 } };
+    const kayitlar = await this.prisma.category.findMany({
+      where: {
+        storeId,
+        isActive: true,
+        ...(tumu ? {} : {
+          OR: [
+            { products: { some: dolu } },
+            { children: { some: { isActive: true, products: { some: dolu } } } },
+          ],
+        }),
+      },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      include: { _count: { select: { products: { where: dolu } } } },
     });
+
+    // Iki seviyeli agac. Ebeveyni listede olmayan cocuk ust seviyeye cikar
+    // (ebeveyn kapaliysa cocugun urunleri kaybolmasin).
+    const dugumler = new Map<string, any>();
+    for (const c of kayitlar) {
+      const { _count, ...alanlar } = c;
+      dugumler.set(c.id, { ...alanlar, urunSayisi: _count.products, children: [] });
+    }
+    const kokler: any[] = [];
+    for (const c of kayitlar) {
+      const dugum = dugumler.get(c.id);
+      const ebeveyn = c.parentId ? dugumler.get(c.parentId) : undefined;
+      if (ebeveyn) ebeveyn.children.push(dugum);
+      else kokler.push(dugum);
+    }
+    for (const d of dugumler.values()) {
+      d.toplamUrun = d.urunSayisi + d.children.reduce((n: number, c: any) => n + c.urunSayisi, 0);
+    }
+    return kokler;
   }
 
   async createCategory(storeId: string, userId: string, roles: Role[], dto: CreateCategoryDto) {
     await this.market.assertOwner(storeId, userId, roles);
+
+    // En fazla IKI seviye: secilen ebeveyn kendisi bir alt kategoriyse reddet.
+    // Ebeveyn ayni magazadan olmali (baska magazanin agacina baglanamaz).
+    if (dto.parentId) {
+      const ebeveyn = await this.prisma.category.findFirst({
+        where: { id: dto.parentId, storeId },
+        select: { parentId: true },
+      });
+      if (!ebeveyn) throw new BadRequestException('Ust kategori bulunamadi');
+      if (ebeveyn.parentId) throw new BadRequestException('En fazla iki seviye: alt kategoriye alt kategori eklenemez');
+    }
+
     const baseSlug = slugify(dto.name) || 'kategori';
     const exists = await this.prisma.category.findFirst({ where: { storeId, slug: baseSlug } });
     const slug = exists ? `${baseSlug}-${randomSuffix()}` : baseSlug;
@@ -36,7 +82,11 @@ export class CatalogService {
   // ---- Urunler ----
   listProducts(storeId: string, categoryId?: string, skip = 0, take = 50) {
     return this.prisma.product.findMany({
-      where: { storeId, isActive: true, deletedAt: null, ...(categoryId ? { categoryId } : {}) },
+      // Ust baslik secilirse alt basliklarin urunleri de gelir (iki seviyeli agac).
+      where: {
+        storeId, isActive: true, deletedAt: null,
+        ...(categoryId ? { OR: [{ categoryId }, { category: { parentId: categoryId } }] } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       skip,
       take: Math.min(take, 100),

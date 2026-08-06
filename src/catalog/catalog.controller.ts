@@ -17,8 +17,9 @@ export class CatalogController {
   // Herkese acik okuma
   @Public()
   @Get('stores/:storeId/categories')
-  categories(@Param('storeId') storeId: string) {
-    return this.catalog.listCategories(storeId);
+  categories(@Param('storeId') storeId: string, @Query('tumu') tumu?: string) {
+    // tumu=1 -> yonetim ekrani: bos kategoriler de doner
+    return this.catalog.listCategories(storeId, tumu === '1');
   }
 
   @Public()
