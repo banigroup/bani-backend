@@ -124,6 +124,11 @@ const KDV_KURALLARI: KdvKural[] = [
     anahtarlar: [
       'defter', 'kalem', 'silgi', 'zimba', 'klasor', 'dosya', 'yapistirici',
       'makas', 'cetvel', 'boya kalemi', 'sulu boya', 'fon karton',
+      // Urun-ozgu anahtarlar. NOT: tek basina 'ofis' KULLANILMAZ — "Blazer Ceket
+      // Ofis" (Kadin Giyim) urununu yakalayip tekstil %10'dan kopariyordu.
+      // 'kirtasiye' de kullanilmaz: "Kitap & Kirtasiye" kategorisindeki
+      // kitaplarin %0 istisnasini bozardi.
+      'organizer', 'hesap makinesi',
     ],
   },
   // %0 — KDV İSTİSNASI: kitap ve süreli yayın (2026).
@@ -166,6 +171,9 @@ const KDV_KURALLARI: KdvKural[] = [
     etiket: 'Tekstil & moda',
     anahtarlar: [
       'moda', 'tekstil',
+      // Ev tekstili (2026 indirimli oran). 'tekstil' tek basina "Ev Tekstili"
+      // basligini yakalamiyor — kelime siniri "tekstili" ekli halini elemiyor.
+      'ev tekstili', 'nevresim', 'havlu', 'perde', 'yastik', 'battaniye',
       'giyim', 'tisort', 't-shirt', 'gomlek', 'pantolon', 'elbise', 'etek',
       'kazak', 'mont', 'ceket', 'ic giyim', 'corap',
       'ayakkabi', 'bot', 'terlik', 'sandalet', 'spor ayakkabi',
@@ -187,6 +195,9 @@ const KDV_KURALLARI: KdvKural[] = [
     etiket: 'Kozmetik & bakım',
     anahtarlar: [
       'kozmetik', 'kisisel bakim', 'parfum', 'parfom', 'krem', 'serum', 'maske',
+      // Denetlenebilirlik: kategori adlarinin EKLI hali (kelime siniri 'cilt bakim'i
+      // "cilt bakimi"na baglamiyor). Oran degismez, otomatik:true doner.
+      'cilt bakimi', 'sac bakimi', 'vucut bakimi',
       'sampuan', 'sac bakim', 'cilt bakim', 'makyaj', 'ruj', 'oje',
       'deodorant', 'tras',
     ],
@@ -208,7 +219,7 @@ const KDV_KURALLARI: KdvKural[] = [
     etiket: 'Ev gereçleri',
     anahtarlar: [
       'tencere', 'tava', 'bardak', 'tabak', 'catal', 'kasik', 'bicak',
-      'ev gerec', 'mutfak gerec', 'sofra', 'pespaye',
+      'ev gerec', 'mutfak gerec', 'ev gerecleri', 'mutfak gerecleri', 'sofra', 'pespaye',
     ],
   },
   // --- Kervan (genel e-ticaret) kategorileri ---
@@ -240,7 +251,9 @@ const KDV_KURALLARI: KdvKural[] = [
   {
     oran: 20,
     etiket: 'Yöresel & el sanatları',
-    anahtarlar: ['yoresel', 'el sanatlari', 'el emegi', 'el yapimi', 'hediyelik'],
+    anahtarlar: ['yoresel', 'el sanatlari', 'el emegi', 'el yapimi', 'hediyelik',
+      // Yoresel alt basliklari — denetlenebilirlik (oran zaten %20)
+      'bakir', 'taki'],
   },
 ];
 
