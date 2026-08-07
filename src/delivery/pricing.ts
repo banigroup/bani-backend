@@ -114,6 +114,34 @@ function anahtarGecer(normalMetin: string, anahtar: string): boolean {
 }
 
 const KDV_KURALLARI: KdvKural[] = [
+  // ⚠️ SIRA KRİTİKTİR — ilk eşleşen kazanır. Aşağıdaki dizilim GERÇEK
+  // çakışmalara göre kuruldu; değiştirmeden önce test-kervan.js + test-kdv.js.
+  //  (1) Ev tekstili, Elektronik'ten ÖNCE: "Battaniye Peluş TV" 'tv' ile
+  //      elektroniğe düşüyordu.
+  //  (2) Ev gereçleri, İşlenmiş gıdadan ÖNCE: "Kahve Makinesi Filtre" 'kahve'
+  //      ile gıdaya düşüyordu.
+  //  (3) İşlenmiş gıda, Elektronik'ten ÖNCE: "Sütlü Tablet Çikolata" 'tablet'
+  //      ile elektroniğe düşüyordu.
+  //  (4) Elektronik ve Oto, Tekstil'den ÖNCE: "Telefon & Aksesuar" ve
+  //      "Oto Aksesuar" 'aksesuar' ile tekstile (%10) düşüyordu — canlıya
+  //      çıkmış hata, 14 ürün eksik oranla yazıldı.
+  //  (5) Tekstil, Spor'dan ÖNCE: "Spor Ayakkabı" tekstil (%10) kalsın.
+
+  // %10 — Ev tekstili. Elektronik'ten ÖNCE (1).
+  {
+    oran: 10,
+    etiket: 'Ev tekstili',
+    anahtarlar: ['ev tekstili', 'nevresim', 'havlu', 'perde', 'yastik', 'battaniye'],
+  },
+  // %10 — Moda: "Ayakkabı & Çanta" yaprağı. Elektronik'ten ÖNCE (1):
+  // "Sırt Çantası Laptop Bölmeli" 'laptop' ile elektroniğe düşüyordu.
+  // Yalnızca TAM yaprak adıyla eşleşir; "El Aletleri Çanta Seti" (Bahçe & Yapı)
+  // bundan etkilenmez — orada 'canta' genel anahtarı devrede değildir.
+  {
+    oran: 10,
+    etiket: 'Ayakkabı & çanta (moda)',
+    anahtarlar: ['ayakkabi & canta'],
+  },
   // %20 — Kırtasiye. KİTAP KURALINDAN ÖNCE gelmeli: "Kitap & Kırtasiye"
   // kategorisindeki defter/kalem ürünleri kategori adı yüzünden %0'a düşmesin.
   // Dikkat: 'kirtasiye' kelimesi BİLEREK anahtar DEĞİL — kategori adında geçtiği
@@ -139,8 +167,18 @@ const KDV_KURALLARI: KdvKural[] = [
     etiket: 'Kitap & süreli yayın (KDV istisnası)',
     anahtarlar: ['kitap', 'roman', 'ansiklopedi', 'dergi', 'sureli yayin'],
   },
+  // %20 — Ev gereçleri. İşlenmiş gıdadan ÖNCE (2).
+  {
+    oran: 20,
+    etiket: 'Ev gereçleri',
+    anahtarlar: [
+      'tencere', 'tava', 'bardak', 'tabak', 'catal', 'kasik', 'bicak',
+      'ev gerec', 'mutfak gerec', 'ev gerecleri', 'mutfak gerecleri', 'sofra', 'pespaye',
+    ],
+  },
   // %10 — İşlenmiş / paketli gıda.
   // TAZE GIDADAN ÖNCE: "meyve suyu" -> içecek (%10), "meyve" (%1) değil.
+  // ELEKTRONİKTEN ÖNCE (3).
   {
     oran: 10,
     etiket: 'İşlenmiş gıda',
@@ -165,15 +203,32 @@ const KDV_KURALLARI: KdvKural[] = [
       'ekmek', 'somun', 'bazlama', 'unlu mamul',
     ],
   },
-  // %10 — Tekstil & moda
+  // %20 — Elektronik. Tekstil'den ÖNCE (4): "Telefon & Aksesuar" yaprağı
+  // 'aksesuar' ile tekstile düşüyordu.
+  {
+    oran: 20,
+    etiket: 'Elektronik',
+    anahtarlar: [
+      'elektronik',
+      'telefon', 'akilli telefon', 'cep telefonu', 'bilgisayar', 'laptop',
+      'tablet', 'monitor', 'tv', 'televizyon', 'kulaklik', 'sarj',
+      'beyaz esya', 'buzdolabi', 'camasir makine', 'bulasik makine', 'firin',
+    ],
+  },
+  // %20 — Oto, bahçe & yapı. Tekstil'den ÖNCE (4): "Oto Aksesuar" ve
+  // "El Aletleri Çanta Seti" tekstile düşüyordu.
+  {
+    oran: 20,
+    etiket: 'Oto, bahçe & yapı',
+    anahtarlar: ['oto', 'otomotiv', 'arac', 'motor yagi', 'lastik', 'aku',
+      'bahce', 'cim', 'sulama', 'yapi', 'hirdavat', 'matkap', 'boya'],
+  },
+  // %10 — Tekstil & moda. Ev tekstili anahtarları yukarı taşındı (1).
   {
     oran: 10,
     etiket: 'Tekstil & moda',
     anahtarlar: [
       'moda', 'tekstil',
-      // Ev tekstili (2026 indirimli oran). 'tekstil' tek basina "Ev Tekstili"
-      // basligini yakalamiyor — kelime siniri "tekstili" ekli halini elemiyor.
-      'ev tekstili', 'nevresim', 'havlu', 'perde', 'yastik', 'battaniye',
       'giyim', 'tisort', 't-shirt', 'gomlek', 'pantolon', 'elbise', 'etek',
       'kazak', 'mont', 'ceket', 'ic giyim', 'corap',
       'ayakkabi', 'bot', 'terlik', 'sandalet', 'spor ayakkabi',
@@ -202,26 +257,6 @@ const KDV_KURALLARI: KdvKural[] = [
       'deodorant', 'tras',
     ],
   },
-  // %20 — Elektronik
-  {
-    oran: 20,
-    etiket: 'Elektronik',
-    anahtarlar: [
-      'elektronik',
-      'telefon', 'akilli telefon', 'cep telefonu', 'bilgisayar', 'laptop',
-      'tablet', 'monitor', 'tv', 'televizyon', 'kulaklik', 'sarj',
-      'beyaz esya', 'buzdolabi', 'camasir makine', 'bulasik makine', 'firin',
-    ],
-  },
-  // %20 — Ev gereçleri
-  {
-    oran: 20,
-    etiket: 'Ev gereçleri',
-    anahtarlar: [
-      'tencere', 'tava', 'bardak', 'tabak', 'catal', 'kasik', 'bicak',
-      'ev gerec', 'mutfak gerec', 'ev gerecleri', 'mutfak gerecleri', 'sofra', 'pespaye',
-    ],
-  },
   // --- Kervan (genel e-ticaret) kategorileri ---
   // Hepsi %20; varsayilan da %20 ama ACIK kural yazilir ki otomatik:true donsun
   // ve oran denetlenebilir olsun ("Belirlenemedi" ile karismasin).
@@ -241,12 +276,6 @@ const KDV_KURALLARI: KdvKural[] = [
     oran: 20,
     etiket: 'Spor & outdoor',
     anahtarlar: ['spor', 'outdoor', 'fitness', 'kamp', 'cadir', 'bisiklet', 'yoga', 'dumbbell'],
-  },
-  {
-    oran: 20,
-    etiket: 'Oto, bahçe & yapı',
-    anahtarlar: ['oto', 'otomotiv', 'arac', 'motor yagi', 'lastik', 'aku',
-      'bahce', 'cim', 'sulama', 'yapi', 'hirdavat', 'matkap', 'boya'],
   },
   {
     oran: 20,
