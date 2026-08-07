@@ -85,23 +85,57 @@ function kargoKurusHesapla(desi: number, kg: number): bigint {
 //
 //    Listeler genişletilebilir; sıra ÖNEMLİDİR (ilk eşleşen kazanır),
 //    o yüzden daha spesifik kelimeleri üste koy.
+//
+//    EŞLEŞME: metin ve anahtar AYNI normalize fonksiyonundan geçer
+//    (Türkçe harfler ASCII'ye sadeleşir) ve KELİME SINIRI aranır.
+//    Kelime sınırı şart: aksi halde "tablet/paket/sepet" içindeki "et",
+//    "sütlü" içindeki "sut" yanlış kurala düşer.
 // ============================================================
 type KdvKural = { oran: number; etiket: string; anahtarlar: string[] };
 
+// Türkçe -> ASCII sadeleştirme + küçük harf. Metin de anahtar da bundan geçer.
+const TR_HARF: Record<string, string> = {
+  ç: 'c', ğ: 'g', ı: 'i', İ: 'i', i: 'i', ö: 'o', ş: 's', ü: 'u',
+  Ç: 'c', Ğ: 'g', I: 'i', Ö: 'o', Ş: 's', Ü: 'u', â: 'a', Â: 'a', î: 'i', û: 'u',
+};
+function kdvNormalize(metin: string): string {
+  return (metin ?? '')
+    .replace(/[çğıİiöşüÇĞIÖŞÜâÂîû]/g, (h) => TR_HARF[h] ?? h)
+    .toLowerCase();
+}
+
+// Anahtar, metinde KELİME olarak geçiyor mu? (alt-dize değil)
+// Çok kelimeli anahtarlar ("kirmizi et") da desteklenir.
+function anahtarGecer(normalMetin: string, anahtar: string): boolean {
+  const a = kdvNormalize(anahtar).trim();
+  if (!a) return false;
+  const kacis = a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${kacis}($|[^a-z0-9])`).test(normalMetin);
+}
+
 const KDV_KURALLARI: KdvKural[] = [
-  // %1 — Taze / işlenmemiş gıda
+  // %20 — Kırtasiye. KİTAP KURALINDAN ÖNCE gelmeli: "Kitap & Kırtasiye"
+  // kategorisindeki defter/kalem ürünleri kategori adı yüzünden %0'a düşmesin.
+  // Dikkat: 'kirtasiye' kelimesi BİLEREK anahtar DEĞİL — kategori adında geçtiği
+  // için o kategorideki kitapları da yakalar ve istisnayı bozardı.
   {
-    oran: 1,
-    etiket: 'Taze gıda',
+    oran: 20,
+    etiket: 'Kırtasiye',
     anahtarlar: [
-      'taze', 'sebze', 'meyve', 'domates', 'salatalik', 'patates', 'sogan',
-      'elma', 'muz', 'portakal', 'limon', 'uzum', 'cilek',
-      'et ', 'kirmizi et', 'kiyma', 'tavuk', 'hindi', 'balik', 'somon',
-      'sut', 'yumurta', 'peynir', 'yogurt',
-      'ekmek', 'somun', 'bazlama', 'unlu mamul',
+      'defter', 'kalem', 'silgi', 'zimba', 'klasor', 'dosya', 'yapistirici',
+      'makas', 'cetvel', 'boya kalemi', 'sulu boya', 'fon karton',
     ],
   },
-  // %10 — İşlenmiş / paketli gıda
+  // %0 — KDV İSTİSNASI: kitap ve süreli yayın (2026).
+  // Kırtasiye kuralı BUNDAN ÖNCE gelir; "Kitap & Kırtasiye" kategorisindeki
+  // defter/kalem ürünleri kategori adı yüzünden istisnaya düşmesin.
+  {
+    oran: 0,
+    etiket: 'Kitap & süreli yayın (KDV istisnası)',
+    anahtarlar: ['kitap', 'roman', 'ansiklopedi', 'dergi', 'sureli yayin'],
+  },
+  // %10 — İşlenmiş / paketli gıda.
+  // TAZE GIDADAN ÖNCE: "meyve suyu" -> içecek (%10), "meyve" (%1) değil.
   {
     oran: 10,
     etiket: 'İşlenmiş gıda',
@@ -111,11 +145,27 @@ const KDV_KURALLARI: KdvKural[] = [
       'kahve', 'cay', 'icecek', 'gazoz', 'meyve suyu', 'soda',
     ],
   },
+  // %1 — Taze / işlenmemiş gıda
+  // NOT: bare 'et ' anahtarı KALDIRILDI — "tablet/paket/sepet/market/kabinet"
+  // kelimelerini yakalayıp yanlış fatura üretiyordu. Yerine ete özgü anahtarlar.
+  {
+    oran: 1,
+    etiket: 'Taze gıda',
+    anahtarlar: [
+      'taze', 'sebze', 'meyve', 'domates', 'salatalik', 'patates', 'sogan',
+      'elma', 'muz', 'portakal', 'limon', 'uzum', 'cilek',
+      'kirmizi et', 'dana eti', 'kuzu eti', 'et urunleri', 'kiyma', 'kusbasi',
+      'tavuk', 'hindi', 'balik', 'somon',
+      'sut', 'yumurta', 'peynir', 'yogurt',
+      'ekmek', 'somun', 'bazlama', 'unlu mamul',
+    ],
+  },
   // %10 — Tekstil & moda
   {
     oran: 10,
     etiket: 'Tekstil & moda',
     anahtarlar: [
+      'moda', 'tekstil',
       'giyim', 'tisort', 't-shirt', 'gomlek', 'pantolon', 'elbise', 'etek',
       'kazak', 'mont', 'ceket', 'ic giyim', 'corap',
       'ayakkabi', 'bot', 'terlik', 'sandalet', 'spor ayakkabi',
@@ -136,7 +186,7 @@ const KDV_KURALLARI: KdvKural[] = [
     oran: 20,
     etiket: 'Kozmetik & bakım',
     anahtarlar: [
-      'kozmetik', 'parfum', 'parfom', 'krem', 'serum', 'maske',
+      'kozmetik', 'kisisel bakim', 'parfum', 'parfom', 'krem', 'serum', 'maske',
       'sampuan', 'sac bakim', 'cilt bakim', 'makyaj', 'ruj', 'oje',
       'deodorant', 'tras',
     ],
@@ -146,6 +196,7 @@ const KDV_KURALLARI: KdvKural[] = [
     oran: 20,
     etiket: 'Elektronik',
     anahtarlar: [
+      'elektronik',
       'telefon', 'akilli telefon', 'cep telefonu', 'bilgisayar', 'laptop',
       'tablet', 'monitor', 'tv', 'televizyon', 'kulaklik', 'sarj',
       'beyaz esya', 'buzdolabi', 'camasir makine', 'bulasik makine', 'firin',
@@ -160,6 +211,37 @@ const KDV_KURALLARI: KdvKural[] = [
       'ev gerec', 'mutfak gerec', 'sofra', 'pespaye',
     ],
   },
+  // --- Kervan (genel e-ticaret) kategorileri ---
+  // Hepsi %20; varsayilan da %20 ama ACIK kural yazilir ki otomatik:true donsun
+  // ve oran denetlenebilir olsun ("Belirlenemedi" ile karismasin).
+  {
+    oran: 20,
+    etiket: 'Anne & bebek',
+    anahtarlar: ['anne', 'bebek', 'bebek bezi', 'biberon', 'emzik', 'mama sandalyesi', 'puset'],
+  },
+  {
+    oran: 20,
+    etiket: 'Oyuncak & hobi',
+    anahtarlar: ['oyuncak', 'hobi', 'puzzle', 'yapboz', 'lego', 'maket', 'peluş'],
+  },
+  // Tekstil kuralindan SONRA: "Spor Ayakkabi" tekstil (%10) kalsin,
+  // yalnizca ekipman/outdoor bu kurala dussun.
+  {
+    oran: 20,
+    etiket: 'Spor & outdoor',
+    anahtarlar: ['spor', 'outdoor', 'fitness', 'kamp', 'cadir', 'bisiklet', 'yoga', 'dumbbell'],
+  },
+  {
+    oran: 20,
+    etiket: 'Oto, bahçe & yapı',
+    anahtarlar: ['oto', 'otomotiv', 'arac', 'motor yagi', 'lastik', 'aku',
+      'bahce', 'cim', 'sulama', 'yapi', 'hirdavat', 'matkap', 'boya'],
+  },
+  {
+    oran: 20,
+    etiket: 'Yöresel & el sanatları',
+    anahtarlar: ['yoresel', 'el sanatlari', 'el emegi', 'el yapimi', 'hediyelik'],
+  },
 ];
 
 // Eşleşme bulunamazsa: güvenli üst oran.
@@ -173,9 +255,9 @@ export type KdvBilgi = { oran: number; etiket: string; otomatik: boolean };
  *          (false => eşleşme yok, varsayılan %20 uygulandı, admin baksın)
  */
 export function kdvOraniBul(urunAdi: string, kategoriAdi?: string): KdvBilgi {
-  const metin = `${urunAdi ?? ''} ${kategoriAdi ?? ''}`.toLocaleLowerCase('tr-TR');
+  const metin = kdvNormalize(`${urunAdi ?? ''} ${kategoriAdi ?? ''}`);
   for (const kural of KDV_KURALLARI) {
-    if (kural.anahtarlar.some((a) => metin.includes(a))) {
+    if (kural.anahtarlar.some((a) => anahtarGecer(metin, a))) {
       return { oran: kural.oran, etiket: kural.etiket, otomatik: true };
     }
   }

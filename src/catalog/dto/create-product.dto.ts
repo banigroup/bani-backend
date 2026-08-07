@@ -12,6 +12,6 @@ export class CreateProductDto {
   @IsOptional() @IsNumber() @Min(0) desi?: number;
   @IsOptional() @IsNumber() @Min(0) weightKg?: number;
   @IsOptional() @IsInt() @Min(0) netFiyat?: number; // saticinin net fiyati (kurus)
-  @IsOptional() @IsIn([1, 10, 20]) kdvOrani?: number;
+  @IsOptional() @IsIn([0, 1, 10, 20]) kdvOrani?: number; // 0 = kitap/süreli yayın istisnası
   @IsOptional() @IsIn(['A', 'B']) satisModeli?: string;
 }
