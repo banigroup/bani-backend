@@ -21,6 +21,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
 import { PartnerModule } from './partner/partner.module';
 import { SigortaModule } from './sigorta/sigorta.module';
 import { HealthModule } from './health/health.module';
+import { NewsletterModule } from './newsletter/newsletter.module';
 @Module({
   imports: [
     SentryModule.forRoot(),
@@ -43,6 +44,7 @@ import { HealthModule } from './health/health.module';
     SuperadminModule,
     SigortaModule,
     HealthModule,
+    NewsletterModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: SentryGlobalFilter },

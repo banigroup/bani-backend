@@ -1143,3 +1143,17 @@ model DonusYukuIlani {
   @@index([neredenIl, nereyeIl])
   @@map("donus_yuku_ilanlari")
 }
+
+// BULTEN: e-posta abone kaydi (vitrin footer'larindaki bulten formu)
+// businessUnit enum DEGIL String: CARSI / MARKET / LOAD / GENEL ...
+// Ayni e-posta farkli dikeylere ayri ayri abone olabilir.
+model NewsletterSubscriber {
+  id           String   @id @default(uuid()) @db.Uuid
+  eposta       String
+  businessUnit String   @default("GENEL")
+  createdAt    DateTime @default(now())
+
+  @@unique([eposta, businessUnit])
+  @@index([businessUnit])
+  @@map("newsletter_subscribers")
+}
