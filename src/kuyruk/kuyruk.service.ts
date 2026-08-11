@@ -7,6 +7,11 @@ import { BildirimService } from '../bildirim/bildirim.service';
 // CEKIRDEK IS KUYRUGU (Faz 1): DB tabanli hafif kuyruk.
 // ekle() ile is birakilir; dakikalik worker atomik sahiplenir (cift isleme imkansiz),
 // hata olursa artan gecikmeyle tekrar dener, maxDeneme sonunda HATA olarak defterde kalir.
+
+// Kilit zaman asimi: bu sureden uzun ISLENIYOR'da kalan is, worker'i kaybetmis sayilir
+// (deploy/restart isin ortasinda kesti) ve kuyruga geri alinir.
+const KILIT_ZAMAN_ASIMI_DK = 10;
+
 @Injectable()
 export class KuyrukService {
   private readonly logger = new Logger(KuyrukService.name);
@@ -23,8 +28,27 @@ export class KuyrukService {
     }
   }
 
+  // Kilidi dusmus isleri kurtarir: worker isi ISLENIYOR'a cekip surec olurse (Railway deploy,
+  // restart, OOM) kayit sonsuza dek ISLENIYOR'da kalirdi ve kimse toplamazdi. Zaman asimini
+  // gecenler BEKLIYOR'a geri alinir; deneme sayisi artar ki sonsuz dongu olusmasin.
+  private async kilitleriKurtar(): Promise<void> {
+    const esik = new Date(Date.now() - KILIT_ZAMAN_ASIMI_DK * 60 * 1000);
+    const kurtarilan = await this.prisma.isKuyrugu.updateMany({
+      where: { durum: KuyrukDurum.ISLENIYOR, updatedAt: { lt: esik } },
+      data: {
+        durum: KuyrukDurum.BEKLIYOR,
+        denemeSayisi: { increment: 1 },
+        sonHata: `Islenirken kesildi (kilit zaman asimi: ${KILIT_ZAMAN_ASIMI_DK} dk)`,
+      },
+    });
+    if (kurtarilan.count > 0) {
+      this.logger.warn(`Kilidi dusmus ${kurtarilan.count} is kuyruga geri alindi`);
+    }
+  }
+
   @Cron(CronExpression.EVERY_MINUTE)
   async isle(): Promise<void> {
+    await this.kilitleriKurtar();
     for (let i = 0; i < 10; i++) {
       const is = await this.sahiplen();
       if (!is) return;
