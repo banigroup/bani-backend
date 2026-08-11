@@ -1050,7 +1050,10 @@ model IsKuyrugu {
 
 // ============ EVDEN EVE (tasarim belgesi v1, 21 Tmz 2026) ============
 // Kural 4: hicbir islem kesif olmadan kesinlesmez - EvTeklif durum makinesi bunu tasir.
-// Baglar duz ID (holding ilkesi: dogrudan FK/join yok, bag ID ile).
+// DIS baglar duz ID (holding ilkesi: baska dikeyin tablosuna FK/join yok):
+//   tasitanId / tasiyanId -> User'a FK YOK, bilerek boyle.
+// IC baglar FK'lidir: EvIlani <-> EvTeklif ayni dikeyin icindedir, holding ilkesi
+//   burada gecerli degil; FK'siz birakmak yalnizca oksuz kayit uretirdi.
 
 enum EvIlaniDurum {
   ODEME_BEKLIYOR // ilan ucreti havale + admin onayi bekliyor
@@ -1094,7 +1097,9 @@ model EvIlani {
   ucretDekont         String? // tasitanin havale dekont/aciklamasi
   ucretBildirimZamani DateTime? // tasitan 'havaleyi yaptim' dedigi an
   ucretOnayZamani     DateTime? // admin onayi -> ACIK
-  seciliTeklifId      String?      @db.Uuid
+  seciliTeklif        EvTeklif?    @relation("SeciliEvTeklif", fields: [seciliTeklifId], references: [id])
+  seciliTeklifId      String?      @unique @db.Uuid
+  teklifler           EvTeklif[]   @relation("EvIlanTeklifleri")
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
@@ -1106,7 +1111,11 @@ model EvIlani {
 
 model EvTeklif {
   id               String        @id @default(uuid()) @db.Uuid
+  // Restrict: teklif is delilidir (kabulTarihi/kabulIp, kesif fotograflari).
+  // Teklif almis ilan silinemez - yuk/arac tarafiyla ayni kural.
+  evIlani          EvIlani       @relation("EvIlanTeklifleri", fields: [evIlaniId], references: [id], onDelete: Restrict)
   evIlaniId        String        @db.Uuid
+  seciliOlan       EvIlani?      @relation("SeciliEvTeklif")
   tasiyanId        String        @db.Uuid // duz ID
   durum            EvTeklifDurum @default(ON_TEKLIF)
   onTeklifKurus    BigInt // fotografa gore on teklif
