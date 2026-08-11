@@ -174,7 +174,12 @@ enum WalletType {
 model Wallet {
   id           String        @id @default(uuid()) @db.Uuid
   userId       String?       @db.Uuid
-  user         User?         @relation(fields: [userId], references: [id])
+  // Restrict: cuzdani olan kullanici HARD DELETE edilemez. Eskiden SetNull idi ve
+  // bakiyeli cuzdan sahipsiz kaliyordu: userId NULL olunca getOrCreateUserWallet
+  // (userId ile arar) onu bir daha bulamaz, @@unique([userId,type,currency]) de
+  // NULL satirlari kapsamaz (Postgres'te NULL != NULL) - para sessizce kaybolurdu.
+  // userId nullable KALIR: sistem cuzdanlarinda (PLATFORM/ESCROW) userId NULL'dir.
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Restrict)
   type         WalletType    @default(USER)
   businessUnit BusinessUnit? // birim defteri (Faz 1'de zorunlulasir)
   currency     Currency      @default(TRY)
@@ -516,7 +521,10 @@ model Delivery {
   orderId      String         @unique @db.Uuid
   order        Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   courierId    String?        @db.Uuid
-  courier      User?          @relation("CourierDeliveries", fields: [courierId], references: [id])
+  // Restrict: teslimati yapan kurye silinemez - "bu teslimati kim yapti" is delili.
+  // SetNull olsaydi kurye silindiginde tamamlanmis teslimat sessizce sahipsiz kalirdi.
+  // Kurye atamasi/kaldirilmasi UPDATE'tir, bu kisittan etkilenmez.
+  courier      User?          @relation("CourierDeliveries", fields: [courierId], references: [id], onDelete: Restrict)
   status       DeliveryStatus @default(PENDING)
   fee          BigInt         @default(0) // kurye hakedişi (= order.deliveryFee)
   note         String?
@@ -891,9 +899,14 @@ model LoadDegerlendirme {
   id          String   @id @default(uuid()) @db.Uuid
   puan        Int // 1-5 yildiz
   yorum       String? // simdilik kullanilmiyor, ileride
-  veren       User     @relation("VerdigiDegerlendirmeler", fields: [verenId], references: [id], onDelete: Cascade)
+  // Restrict (eskiden Cascade): puan veren ya da alan kullanici silinemez.
+  // Cascade UCUNCU TARAFI vuruyordu - A silinince A'nin B'ye verdigi puan satiri
+  // yok oluyor, ama B'nin LoadPuan.ortalama/sayi degeri artimli tutuldugu icin
+  // (load.service.ts) oldugu gibi kaliyordu: ozet hicbir gercek satira dayanmaz
+  // hale geliyordu ve yeniden hesaplama yolu YOK.
+  veren       User     @relation("VerdigiDegerlendirmeler", fields: [verenId], references: [id], onDelete: Restrict)
   verenId     String   @db.Uuid
-  alan        User     @relation("AldigiDegerlendirmeler", fields: [alanId], references: [id], onDelete: Cascade)
+  alan        User     @relation("AldigiDegerlendirmeler", fields: [alanId], references: [id], onDelete: Restrict)
   alanId      String   @db.Uuid
   verenRol    String // FIRMA | TASIYICI
   yukIlaniId  String?  @db.Uuid
