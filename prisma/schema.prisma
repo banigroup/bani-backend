@@ -68,7 +68,7 @@ model User {
   verdigiDegerlendirmeler LoadDegerlendirme[] @relation("VerdigiDegerlendirmeler")
   aldigiDegerlendirmeler  LoadDegerlendirme[] @relation("AldigiDegerlendirmeler")
 
-  @@index([phone])
+  // @@index([phone]) KALDIRILDI: phone zaten @unique - users_phone_key ayni isi goruyor
   @@map("users")
 }
 
@@ -405,7 +405,7 @@ model CartItem {
   updatedAt DateTime @updatedAt
 
   @@unique([cartId, productId])
-  @@index([cartId])
+  // @@index([cartId]) KALDIRILDI: yukaridaki unique'in oneki ayni isi goruyor
   @@index([productId]) // FK: Postgres otomatik indekslemez - urun bazli sorgu + FK dogrulamasi
   @@map("cart_items")
 }
@@ -465,7 +465,7 @@ model Order {
 
   @@index([userId])
   @@index([storeId, status])
-  @@index([orderNo])
+  // @@index([orderNo]) KALDIRILDI: orderNo zaten @unique (Transaction.orderNo unique DEGIL, oradaki index kaliyor)
   @@map("orders")
 }
 
@@ -598,7 +598,7 @@ model YukIlani {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
-  @@index([durum])
+  // @@index([durum]) KALDIRILDI: [durum, yuklemeTarihi] bileşik index'inin oneki ayni isi goruyor
   @@index([verenId])
   @@index([durum, yuklemeTarihi])
   @@map("yuk_ilanlari")
@@ -626,7 +626,7 @@ model AracIlani {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
-  @@index([durum])
+  // @@index([durum]) KALDIRILDI: [durum, cikisTarihi] bileşik index'inin oneki ayni isi goruyor
   @@index([tasiyiciId])
   @@index([durum, cikisTarihi])
   @@map("arac_ilanlari")
@@ -758,7 +758,7 @@ model SozlesmeOnay {
 
   // Her kullanici, her sozlesme tipinin her surumunu BIR KEZ onaylar
   @@unique([kullaniciId, sozlesmeTipi, surum])
-  @@index([kullaniciId])
+  // @@index([kullaniciId]) KALDIRILDI: yukaridaki unique'in oneki ayni isi goruyor
   @@map("sozlesme_onaylari")
 }
 
