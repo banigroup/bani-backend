@@ -634,7 +634,9 @@ model AracIlani {
 
 model YukTeklif {
   id               String         @id @default(uuid()) @db.Uuid
-  yukIlani         YukIlani       @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id], onDelete: Cascade)
+  // Restrict: teklif is delilidir (kabulTarihi/kabulIp/kabulCihaz). Teklif almis ilan
+  // silinemez - sessiz delil kaybi yerine gurultulu hata. Kapatma yolu: durum = IPTAL.
+  yukIlani         YukIlani       @relation("IlanTeklifleri", fields: [yukIlaniId], references: [id], onDelete: Restrict)
   yukIlaniId       String         @db.Uuid
   tasiyici         User           @relation("VerdigiTeklifler", fields: [tasiyiciId], references: [id])
   tasiyiciId       String         @db.Uuid
@@ -666,7 +668,8 @@ model YukTeklif {
 
 model AracTeklif {
   id               String         @id @default(uuid()) @db.Uuid
-  aracIlani        AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id], onDelete: Cascade)
+  // Restrict: yuk tarafiyla ayni gerekce - teklif almis arac ilani silinemez.
+  aracIlani        AracIlani      @relation("AracIlanTeklifleri", fields: [aracIlaniId], references: [id], onDelete: Restrict)
   aracIlaniId      String         @db.Uuid
   veren            User           @relation("VerdigiAracTeklifleri", fields: [verenId], references: [id])
   verenId          String         @db.Uuid
