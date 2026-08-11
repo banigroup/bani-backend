@@ -339,6 +339,7 @@ model Category {
 
   @@unique([storeId, slug])
   @@index([storeId])
+  @@index([parentId]) // iki seviyeli agac: alt basliklar parentId ile cekiliyor
   @@map("categories")
 }
 
@@ -405,6 +406,7 @@ model CartItem {
 
   @@unique([cartId, productId])
   @@index([cartId])
+  @@index([productId]) // FK: Postgres otomatik indekslemez - urun bazli sorgu + FK dogrulamasi
   @@map("cart_items")
 }
 
