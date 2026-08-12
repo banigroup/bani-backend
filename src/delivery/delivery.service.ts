@@ -124,9 +124,41 @@ export class DeliveryService {
     if (d.order.status !== OrderStatus.READY) {
       throw new ConflictException('Sipariş henüz teslimata hazır değil');
     }
-    return this.prisma.delivery.update({
-      where: { id },
+
+    // Koşullu yazma — yukarıdaki iki kontrol transaction DIŞINDA okunmuş veriye bakıyor.
+    // `where: { id }` ile yazıldığında aynı anda gelen N kurye sırayla üzerine yazıyordu:
+    // hepsi "üstlendin" yanıtı alıyor, teslimat ise son yazana kalıyordu. Diğer kuryeler
+    // mağazaya gidip pickup'ta "bu teslimat size atanmamış" duvarına çarpıyordu.
+    // Ayrıca iptal edilmiş bir teslimat (CANCELLED) bayat görüntüyle ASSIGNED'a
+    // diriltilebiliyordu — parası müşteriye iade edilmiş sipariş için hayalet iş.
+    //
+    // status + courierId koşulu bunu kapatır: ilk yazan kilidi alır, sonrakiler kilit
+    // bırakılınca yeniden değerlendirilen WHERE'e takılır ve 0 satır günceller.
+    const { count } = await this.prisma.delivery.updateMany({
+      where: {
+        id,
+        status: DeliveryStatus.PENDING,
+        courierId: null,
+        order: { status: OrderStatus.READY },
+      },
       data: { courierId: user.id, status: DeliveryStatus.ASSIGNED, assignedAt: new Date() },
+    });
+    if (count === 0) {
+      const guncel = await this.prisma.delivery.findUnique({
+        where: { id },
+        select: { status: true, courierId: true, order: { select: { status: true } } },
+      });
+      if (guncel?.courierId != null) {
+        throw new ConflictException('Bu teslimat bu sırada başka bir kurye tarafından üstlenildi');
+      }
+      if (guncel?.status !== DeliveryStatus.PENDING) {
+        throw new ConflictException(`Bu teslimat artık üstlenilebilir durumda değil (güncel: ${guncel?.status})`);
+      }
+      throw new ConflictException(`Sipariş artık teslimata uygun değil (güncel: ${guncel?.order?.status})`);
+    }
+
+    return this.prisma.delivery.findUnique({
+      where: { id },
       include: { order: { select: { id: true, orderNo: true, status: true } } },
     });
   }
