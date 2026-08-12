@@ -32,8 +32,14 @@ jobs:
       - run: pnpm exec prisma generate
 
       # Sema gecerliligi - bozuk model/iliski taniminda burada durur.
-      # DATABASE_URL GEREKMEZ; DB'ye baglanmaz, yalniz semayi ayristirir.
+      # DB'ye BAGLANMAZ, ama datasource'taki env("DATABASE_URL") COZULEBILMELI:
+      # degisken yoksa P1012 "Environment variable not found" ile patlar.
+      # Yerelde bu adim yaniltici sekilde geciyordu - Prisma proje kokundeki .env'i
+      # kendisi yukluyor; CI'da .env olmadigi icin ilk kosuda kirmizi verdi.
+      # Sahte deger yeterli: yalnizca ayristirma yapilir, baglanti kurulmaz.
       - run: pnpm exec prisma validate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
 
       # Birim siniri ve guard denetimleri - 97f9d21 ve 19859f3'te bilerek eklendi.
       # KALDIRILMAMALI: korumasiz uc ve dikeyler arasi sizinti bu iki adimda yakalanir.
