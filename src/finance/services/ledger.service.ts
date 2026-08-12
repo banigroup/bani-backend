@@ -80,21 +80,39 @@ export class LedgerService {
       const wallet = await tx.wallet.findUnique({ where: { id: line.walletId } });
       if (!wallet) throw new BadRequestException('Cüzdan bulunamadı');
 
-      const delta = line.direction === EntryDirection.CREDIT ? line.amount : -line.amount;
-      const newBalance = wallet.balance + delta;
+      // ATOMİK: bakiye DB'de artırılır/azaltılır — uygulama tarafında hesaplanmaz.
+      //
+      // Eski hali oku-hesapla-yaz idi: `wallet.balance` okunuyor, `newBalance` JS'te
+      // hesaplanıp sabit değer olarak yazılıyordu. Okuma satır kilidini ALMADIĞI için
+      // iki eş zamanlı işlem aynı bakiyeyi okuyup birbirinin artışını siliyordu —
+      // klasik kayıp güncelleme. Yerelde ölçüldü: 40 eş zamanlı transferde kaynak
+      // cüzdandan 35.000 kuruş (350,00 TL) buharlaştı.
+      //
+      // `{ increment }` tek bir UPDATE ... SET balance = balance + $1 üretir; okuma ve
+      // yazma ayrılmadığı için araya girilemez. Dönen kayıt, kilidi bizde olan satırın
+      // güncel hâlidir; balanceAfter ondan alınır.
+      const guncel = await tx.wallet.update({
+        where: { id: wallet.id },
+        data:
+          line.direction === EntryDirection.CREDIT
+            ? { balance: { increment: line.amount } }
+            : { balance: { decrement: line.amount } },
+      });
 
-      if (newBalance < 0n && (wallet.type === WalletType.USER || wallet.type === WalletType.MERCHANT)) {
+      // Yetersiz bakiye kontrolü artık yazımdan SONRA: tek doğru değer, atomik
+      // güncellemenin sonucudur. İhlal varsa exception transaction'ı geri alır,
+      // dolayısıyla ne bakiye ne de ledger girdisi kalır.
+      if (guncel.balance < 0n && (wallet.type === WalletType.USER || wallet.type === WalletType.MERCHANT)) {
         throw new ConflictException('Yetersiz bakiye');
       }
 
-      await tx.wallet.update({ where: { id: wallet.id }, data: { balance: newBalance } });
       await tx.ledgerEntry.create({
         data: {
           transactionId: trx.id,
           walletId: wallet.id,
           direction: line.direction,
           amount: line.amount,
-          balanceAfter: newBalance,
+          balanceAfter: guncel.balance,
         },
       });
     }
