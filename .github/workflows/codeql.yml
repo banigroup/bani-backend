@@ -1,0 +1,45 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Haftalik tarama: kod degismese bile YENI yayinlanan sorgular eski koda karsi
+    # calisir. Pazartesi 04:17 UTC - sabit dakika, kosu yigilmasini onler.
+    - cron: '17 4 * * 1'
+
+jobs:
+  analyze:
+    name: CodeQL analizi
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      # Bulgulari Security sekmesine yazmak icin ZORUNLU.
+      security-events: write
+      # Ozel eylem/kosu meta verisini okumak icin.
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CodeQL'i baslat
+        uses: github/codeql-action/init@v3
+        with:
+          # TypeScript + JavaScript tek dil olarak taranir; kok dizindeki
+          # betikler (create-*.js, mutabakat-*.js ...) de kapsama girer.
+          languages: javascript-typescript
+          # JS/TS derleme gerektirmez - CodeQL kaynagi dogrudan okur.
+          # Bu sayede CI'daki pnpm/nest build adimlari burada TEKRARLANMAZ.
+          build-mode: none
+          # Varsayilan paket: yuksek isabetli guvenlik sorgulari.
+          # Taban temizlendikten sonra asagidaki satir ile genisletilebilir:
+          #   queries: security-extended
+
+      - name: Analizi calistir
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
