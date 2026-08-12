@@ -1,23 +1,47 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
+
+      # Lockfile package.json ile BIREBIR uyusmali. Uyusmazsa CI burada durur.
+      # 93ec678'de package.json'daki @sentry/nestjs ^10.66.0 -> ^10.69.0 cikarilmis
+      # ama yalnizca package-lock.json guncellenmis; pnpm-lock.yaml eskimis kalmisti
+      # ve bu adim ERR_PNPM_OUTDATED_LOCKFILE ile patliyordu.
       - run: pnpm install --frozen-lockfile
-      - run: npx prisma generate
+
+      # Prisma client'i uret - tsc'nin uretilmis tiplere ihtiyaci var.
+      # postinstall zaten calistiriyor; acikca tekrarlamak adimi okunur kilar.
+      # DATABASE_URL GEREKMEZ (yerelde env'siz dogrulandi).
+      - run: pnpm exec prisma generate
+
+      # Sema gecerliligi - bozuk model/iliski taniminda burada durur.
+      # DATABASE_URL GEREKMEZ; DB'ye baglanmaz, yalniz semayi ayristirir.
+      - run: pnpm exec prisma validate
+
+      # Birim siniri ve guard denetimleri - 97f9d21 ve 19859f3'te bilerek eklendi.
+      # KALDIRILMAMALI: korumasiz uc ve dikeyler arasi sizinti bu iki adimda yakalanir.
       - run: node scripts/check-boundaries.js
       - run: node scripts/check-guards.js
-      - run: npx tsc --noEmit
-      - run: npm run build
+
+      # tsconfig.json zaten strict + experimentalDecorators + emitDecoratorMetadata
+      # + skipLibCheck iceriyor; ek bayrak gerekmez.
+      - run: pnpm exec tsc --noEmit
+
+      - run: pnpm run build
