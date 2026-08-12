@@ -275,39 +275,48 @@ export class OrdersService {
 
   // ============================ DURUM İLERLETME ============================
   async updateStatus(user: AuthUser, id: string, next: OrderStatus) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
-      include: { store: true },
-    });
-    if (!order) throw new NotFoundException('Sipariş bulunamadı');
-    if (order.store.ownerId !== user.id && !this.isAdmin(user)) {
-      throw new ForbiddenException('Bu siparişi yönetme yetkiniz yok');
-    }
-
-    const allowed = NEXT_STATUS[order.status] ?? [];
-    if (!allowed.includes(next)) {
-      throw new ConflictException(`Geçersiz durum geçişi: ${order.status} -> ${next}`);
-    }
-
-    // Koşullu yazma: guard yukarıda transaction DIŞINDA okunan `order.status`'a bakıyor.
-    // Koşulsuz `where: { id }` ile yazıldığında, arada kurye siparişi ON_THE_WAY yapmışsa
-    // satıcının bayat yazması onu geri READY'ye çeviriyordu — READY iptal edilebilir
-    // olduğu için iptal kapısı yeniden açılıyor, escrow çifte çıkış riski doğuyordu.
-    const { count } = await this.prisma.order.updateMany({
-      where: { id, status: order.status },
-      data: { status: next },
-    });
-    if (count === 0) {
-      const guncel = await this.prisma.order.findUnique({
+    // Guard okuması, koşullu yazma ve dönüş okuması ARTIK TEK TRANSACTION içinde.
+    //
+    // Doğruluğu sağlayan hâlâ koşullu yazım (E-1): `where: { id, status: order.status }`
+    // tam olarak guard'ın onayladığı geçişi çivilediği için, okuma bayat olsa bile
+    // GEÇERSİZ bir geçiş yazılamıyordu. Transaction'ın eklediği şey ayrı:
+    //
+    //   Yazımdan sonraki okuma artık TUTARLI. Transaction dışında updateMany kendi örtük
+    //   transaction'ında commit edip satır kilidini bırakıyordu; hemen ardından gelen
+    //   findUnique, araya giren başka bir yolun (ör. kurye claim+pickup) yazdığı DAHA YENİ
+    //   durumu okuyabiliyordu. Yani satıcı READY'ye geçirip yanıtta ON_THE_WAY görebiliyordu.
+    //   Transaction içinde kilit commit'e kadar bizde kalır; dönen kayıt yazdığımızın aynısıdır.
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({
         where: { id },
-        select: { status: true },
+        include: { store: true },
       });
-      throw new ConflictException(
-        `Sipariş bu sırada başka bir yoldan güncellendi (okunan: ${order.status}, güncel: ${guncel?.status ?? 'bulunamadı'})`,
-      );
-    }
+      if (!order) throw new NotFoundException('Sipariş bulunamadı');
+      if (order.store.ownerId !== user.id && !this.isAdmin(user)) {
+        throw new ForbiddenException('Bu siparişi yönetme yetkiniz yok');
+      }
 
-    return this.prisma.order.findUnique({ where: { id }, include: { items: true } });
+      const allowed = NEXT_STATUS[order.status] ?? [];
+      if (!allowed.includes(next)) {
+        throw new ConflictException(`Geçersiz durum geçişi: ${order.status} -> ${next}`);
+      }
+
+      const { count } = await tx.order.updateMany({
+        where: { id, status: order.status },
+        data: { status: next },
+      });
+      if (count === 0) {
+        const guncel = await tx.order.findUnique({
+          where: { id },
+          select: { status: true },
+        });
+        throw new ConflictException(
+          `Sipariş bu sırada başka bir yoldan güncellendi (okunan: ${order.status}, güncel: ${guncel?.status ?? 'bulunamadı'})`,
+        );
+      }
+
+      return tx.order.findUnique({ where: { id }, include: { items: true } });
+    });
   }
 
   // ============================ İPTAL / İADE ============================
@@ -323,21 +332,37 @@ export class OrdersService {
     if (!isOwner && !isStoreOwner && !this.isAdmin(user)) {
       throw new ForbiddenException('Bu siparişi iptal etme yetkiniz yok');
     }
+    // Erken ret: cüzdan sorguları ve transaction açılmadan, ucuz yoldan.
+    // Bağlayıcı kontrol bu DEĞİL — transaction içindeki guard + koşullu yazım.
     if (!CANCELABLE.includes(order.status)) {
       throw new ConflictException(`Bu durumda iptal edilemez: ${order.status}`);
     }
 
+    // Bu üç veri checkout'ta yazılıp bir daha değişmiyor (items, total, userId), o yüzden
+    // transaction dışında okunmaları bayatlık yaratmaz; cüzdanlar da transaction'ı uzatmamak
+    // için önceden çözülüyor.
     const escrow = await this.wallet.getSystemWallet(WalletType.ESCROW);
     const customerWallet = await this.wallet.getOrCreateUserWallet(order.userId);
 
     return this.prisma.$transaction(async (tx) => {
       // PARA KAPISI — transaction'ın İLK işlemi olmalı.
-      // Yukarıdaki CANCELABLE kontrolü transaction DIŞINDA okunmuş duruma bakıyor; araya
+      // Yukarıdaki CANCELABLE kontrolü transaction DIŞINDA okunmuş duruma bakıyordu; araya
       // kurye girip siparişi ON_THE_WAY/DELIVERED yapmış olabilir. Koşulsuz yazımda iptal
       // yine de geçiyor ve escrow'dan aynı para İKİ KEZ çıkıyordu (teslimatta :settle ile
       // dağıtım + burada :refund ile iade; farklı reference oldukları için ledger'ın
       // idempotency kontrolü bunu yakalamaz).
       // En başta olması ayrıca fail-fast sağlar: ürün satırlarına gereksiz kilit alınmaz.
+      //
+      // Guard transaction İÇİNDE tekrarlanıyor: dış kontrolün bayat kalması hâlinde hata
+      // mesajı gerçek duruma göre üretilsin ve iptal kararı yazımla aynı bağlamda alınsın.
+      const iceriden = await tx.order.findUnique({ where: { id }, select: { status: true } });
+      if (!iceriden) throw new NotFoundException('Sipariş bulunamadı');
+      if (!CANCELABLE.includes(iceriden.status)) {
+        throw new ConflictException(
+          `Bu durumda iptal edilemez: ${iceriden.status} (sipariş bu sırada başka bir yoldan güncellendi)`,
+        );
+      }
+
       const { count } = await tx.order.updateMany({
         where: { id, status: { in: CANCELABLE } },
         data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.REFUNDED, cancelledAt: new Date() },
