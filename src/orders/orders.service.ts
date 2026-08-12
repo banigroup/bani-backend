@@ -289,11 +289,25 @@ export class OrdersService {
       throw new ConflictException(`Geçersiz durum geçişi: ${order.status} -> ${next}`);
     }
 
-    return this.prisma.order.update({
-      where: { id },
+    // Koşullu yazma: guard yukarıda transaction DIŞINDA okunan `order.status`'a bakıyor.
+    // Koşulsuz `where: { id }` ile yazıldığında, arada kurye siparişi ON_THE_WAY yapmışsa
+    // satıcının bayat yazması onu geri READY'ye çeviriyordu — READY iptal edilebilir
+    // olduğu için iptal kapısı yeniden açılıyor, escrow çifte çıkış riski doğuyordu.
+    const { count } = await this.prisma.order.updateMany({
+      where: { id, status: order.status },
       data: { status: next },
-      include: { items: true },
     });
+    if (count === 0) {
+      const guncel = await this.prisma.order.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      throw new ConflictException(
+        `Sipariş bu sırada başka bir yoldan güncellendi (okunan: ${order.status}, güncel: ${guncel?.status ?? 'bulunamadı'})`,
+      );
+    }
+
+    return this.prisma.order.findUnique({ where: { id }, include: { items: true } });
   }
 
   // ============================ İPTAL / İADE ============================
@@ -317,6 +331,27 @@ export class OrdersService {
     const customerWallet = await this.wallet.getOrCreateUserWallet(order.userId);
 
     return this.prisma.$transaction(async (tx) => {
+      // PARA KAPISI — transaction'ın İLK işlemi olmalı.
+      // Yukarıdaki CANCELABLE kontrolü transaction DIŞINDA okunmuş duruma bakıyor; araya
+      // kurye girip siparişi ON_THE_WAY/DELIVERED yapmış olabilir. Koşulsuz yazımda iptal
+      // yine de geçiyor ve escrow'dan aynı para İKİ KEZ çıkıyordu (teslimatta :settle ile
+      // dağıtım + burada :refund ile iade; farklı reference oldukları için ledger'ın
+      // idempotency kontrolü bunu yakalamaz).
+      // En başta olması ayrıca fail-fast sağlar: ürün satırlarına gereksiz kilit alınmaz.
+      const { count } = await tx.order.updateMany({
+        where: { id, status: { in: CANCELABLE } },
+        data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.REFUNDED, cancelledAt: new Date() },
+      });
+      if (count === 0) {
+        const guncel = await tx.order.findUnique({
+          where: { id },
+          select: { status: true },
+        });
+        throw new ConflictException(
+          `Bu durumda iptal edilemez: ${guncel?.status ?? 'bulunamadı'} (sipariş bu sırada başka bir yoldan güncellendi)`,
+        );
+      }
+
       // Stok geri yükle
       for (const it of order.items) {
         await tx.product.update({
@@ -324,12 +359,6 @@ export class OrdersService {
           data: { stock: { increment: it.quantity } },
         });
       }
-
-      const updated = await tx.order.update({
-        where: { id },
-        data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.REFUNDED, cancelledAt: new Date() },
-        include: { items: true },
-      });
 
       // Teslimat kaydını iptal et (varsa)
       await tx.delivery.updateMany({
@@ -350,7 +379,7 @@ export class OrdersService {
         ],
       });
 
-      return updated;
+      return tx.order.findUnique({ where: { id }, include: { items: true } });
     });
   }
 }
