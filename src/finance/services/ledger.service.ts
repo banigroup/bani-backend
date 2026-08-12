@@ -76,7 +76,30 @@ export class LedgerService {
       },
     });
 
-    for (const line of input.lines) {
+    // KİLİT SIRASI KANONİK: satırlar her zaman walletId'ye göre artan sırada işlenir.
+    //
+    // Cüzdan satırının kilidi, o satır güncellenirken alınır ve transaction commit
+    // olana kadar tutulur. Çağıranlar `lines` dizisini kendi okunabilirlik sıralarına
+    // göre yazdığı için farklı akışlar AYNI iki satırı TERS sırada kilitliyordu:
+    //
+    //   checkout : müşteri -> escrow      (orders.service)
+    //   iade     : escrow  -> müşteri     (orders.service)   <- checkout'un tersi
+    //   transfer : gönderen -> alıcı      (finance.service)  <- ters yön transferde ters
+    //
+    // Bu klasik kilit sırası ters çevirme; iki işlem birbirinin beklediği satırı
+    // tutunca Postgres birini deadlock ile iptal ediyor. E-7 testinde ölçüldü:
+    // 20 eş zamanlı çift yönlü transferde 10 deadlock + 7 transaction timeout.
+    //
+    // Sabit bir sıraya (walletId artan) uyulduğunda döngüsel bekleme MATEMATİKSEL
+    // OLARAK imkânsız hale gelir. Sıralama KOPYA üzerinde: çağıranın dizisi
+    // değiştirilmez. Array.prototype.sort kararlıdır, dolayısıyla aynı cüzdan
+    // birden fazla satırda geçiyorsa aralarındaki sıra korunur — balanceAfter
+    // dizisi bozulmaz.
+    const siraliSatirlar = [...input.lines].sort((a, b) =>
+      a.walletId < b.walletId ? -1 : a.walletId > b.walletId ? 1 : 0,
+    );
+
+    for (const line of siraliSatirlar) {
       const wallet = await tx.wallet.findUnique({ where: { id: line.walletId } });
       if (!wallet) throw new BadRequestException('Cüzdan bulunamadı');
 
