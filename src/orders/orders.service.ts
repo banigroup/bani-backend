@@ -9,26 +9,15 @@ import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CheckoutDto } from './dto/checkout.dto';
+import { OrderStatusService } from './order-status.service';
 
 // --- Placeholder ayarları (Çarşı DIŞI dikeyler için) ---
 const DELIVERY_FEE = 1500n; // 15,00 TL
 const FREE_DELIVERY_THRESHOLD = 30000n; // 300 TL ve üzeri teslimat ücretsiz
 const VAT_INCLUDED_RATE = 20n; // komisyon KDV dahil; KDV payı = komisyon * 20 / 120
 
-// Satıcı/admin tarafından ileri durum geçişleri (READY'den sonrasını KURYE devralır)
-const NEXT_STATUS: Record<string, OrderStatus[]> = {
-  CONFIRMED: [OrderStatus.PREPARING],
-  PREPARING: [OrderStatus.READY],
-  READY: [], // kurye teslimatı devralır (Faz 4)
-  ON_THE_WAY: [],
-  DELIVERED: [],
-  CANCELLED: [],
-  REFUNDED: [],
-  PENDING: [OrderStatus.CONFIRMED],
-};
-
-// İptal edilebilir durumlar (teslimat yola çıkmadan önce)
-const CANCELABLE: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY];
+// NEXT_STATUS geçiş haritası ve CANCELABLE listesi E-4'te OrderStatusService'e taşındı
+// (sipariş durum geçişlerinin tek yetkili sahibi orası). Buradan onun üzerinden okunur.
 
 @Injectable()
 export class OrdersService {
@@ -36,6 +25,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly ledger: LedgerService,
     private readonly wallet: WalletService,
+    private readonly orderStatus: OrderStatusService,
   ) { }
 
   private isAdmin(user: AuthUser): boolean {
@@ -296,7 +286,7 @@ export class OrdersService {
         throw new ForbiddenException('Bu siparişi yönetme yetkiniz yok');
       }
 
-      const allowed = NEXT_STATUS[order.status] ?? [];
+      const allowed = this.orderStatus.NEXT_STATUS[order.status] ?? [];
       if (!allowed.includes(next)) {
         throw new ConflictException(`Geçersiz durum geçişi: ${order.status} -> ${next}`);
       }
@@ -334,7 +324,7 @@ export class OrdersService {
     }
     // Erken ret: cüzdan sorguları ve transaction açılmadan, ucuz yoldan.
     // Bağlayıcı kontrol bu DEĞİL — transaction içindeki guard + koşullu yazım.
-    if (!CANCELABLE.includes(order.status)) {
+    if (!this.orderStatus.CANCELABLE.includes(order.status)) {
       throw new ConflictException(`Bu durumda iptal edilemez: ${order.status}`);
     }
 
@@ -357,14 +347,14 @@ export class OrdersService {
       // mesajı gerçek duruma göre üretilsin ve iptal kararı yazımla aynı bağlamda alınsın.
       const iceriden = await tx.order.findUnique({ where: { id }, select: { status: true } });
       if (!iceriden) throw new NotFoundException('Sipariş bulunamadı');
-      if (!CANCELABLE.includes(iceriden.status)) {
+      if (!this.orderStatus.CANCELABLE.includes(iceriden.status)) {
         throw new ConflictException(
           `Bu durumda iptal edilemez: ${iceriden.status} (sipariş bu sırada başka bir yoldan güncellendi)`,
         );
       }
 
       const { count } = await tx.order.updateMany({
-        where: { id, status: { in: CANCELABLE } },
+        where: { id, status: { in: this.orderStatus.CANCELABLE } },
         data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.REFUNDED, cancelledAt: new Date() },
       });
       if (count === 0) {

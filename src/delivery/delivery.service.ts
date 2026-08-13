@@ -2,11 +2,12 @@ import {
   Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException,
 } from '@nestjs/common';
 import {
-  Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit, KargoFirmasi, DeliveryYontem,
+  Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit, KargoFirmasi, DeliveryYontem,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
+import { OrderStatusService } from '../orders/order-status.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class DeliveryService {
     private readonly prisma: PrismaService,
     private readonly ledger: LedgerService,
     private readonly wallet: WalletService,
+    private readonly orderStatus: OrderStatusService,
   ) { }
 
   private isCourier(user: AuthUser): boolean {
@@ -28,39 +30,8 @@ export class DeliveryService {
     }
   }
 
-  // Sipariş durumunu KOŞULLU ilerletir: yalnızca mevcut durum `beklenen` içindeyse yazar.
-  //
-  // Neden: guard'lar transaction DIŞINDA okunmuş veriye bakıyor. `where: { id }` ile
-  // yazıldığında araya giren başka bir yol siparişi değiştirmiş olsa bile üzerine
-  // yazılıyordu — iki farklı yol (kurye teslimatı ↔ müşteri iptali) birbirinden habersiz
-  // aynı siparişi güncelleyebiliyordu.
-  //
-  // updateMany + count kontrolü bunu kapatır: Read Committed'da ikinci işlem satır
-  // kilidini bekler, kilit bırakılınca WHERE koşulu YENİDEN değerlendirilir; durum artık
-  // uymadığı için 0 satır güncellenir ve burada Conflict'e döner. Ek sütun/migration
-  // gerekmez.
-  //
-  // NOT: E-4'te OrderStatusService'e taşınacak — geçiş haritasının tek sahibi orası olacak.
-  private async siparisDurumGecisi(
-    tx: Prisma.TransactionClient,
-    orderId: string,
-    beklenen: OrderStatus[],
-    data: Prisma.OrderUpdateManyMutationInput,
-  ): Promise<void> {
-    const { count } = await tx.order.updateMany({
-      where: { id: orderId, status: { in: beklenen } },
-      data,
-    });
-    if (count === 0) {
-      const guncel = await tx.order.findUnique({
-        where: { id: orderId },
-        select: { status: true },
-      });
-      throw new ConflictException(
-        `Sipariş durumu bu işlem için uygun değil (güncel: ${guncel?.status ?? 'bulunamadı'}; beklenen: ${beklenen.join(' | ')})`,
-      );
-    }
-  }
+  // Sipariş durum geçişi E-4'te OrderStatusService'e taşındı (tek yetkili sahip).
+  // Bu servis order.status'a artık this.orderStatus.gecis(...) üzerinden dokunur.
 
   // Havuz: hazır (READY) ve henüz kuryesi olmayan teslimatlar (Çarşı DIŞI)
   async available(user: AuthUser) {
@@ -176,7 +147,7 @@ export class DeliveryService {
     return this.prisma.$transaction(async (tx) => {
       // claim() siparişi READY iken üstlenilmeye izin verdi; alım da yalnızca oradan olur.
       // Araya iptal girdiyse (CANCELLED) burada durur — kurye teslim aldı sanılmaz.
-      await this.siparisDurumGecisi(tx, d.orderId, [OrderStatus.READY], {
+      await this.orderStatus.gecis(tx, d.orderId, [OrderStatus.READY], {
         status: OrderStatus.ON_THE_WAY,
       });
       return tx.delivery.update({
@@ -212,7 +183,7 @@ export class DeliveryService {
       // hem satıcı/platform/kuryeye dağıtım hem müşteriye iade yapılır ve escrow'dan
       // aynı para iki kez çıkardı (:settle ve :refund farklı reference'lar olduğu için
       // ledger'daki idempotency bunu YAKALAMAZ).
-      await this.siparisDurumGecisi(tx, order.id, [OrderStatus.ON_THE_WAY], {
+      await this.orderStatus.gecis(tx, order.id, [OrderStatus.ON_THE_WAY], {
         status: OrderStatus.DELIVERED,
         paymentStatus: PaymentStatus.RELEASED,
         deliveredAt: new Date(),
@@ -299,7 +270,7 @@ export class DeliveryService {
       // Teslimat henüz havuzdaysa/atanmışsa sipariş READY; zaten yola çıkmışsa ON_THE_WAY.
       // İkisine de izin verilir (kargo firması/takip no sonradan düzeltilebilsin), ama
       // DELIVERED ve CANCELLED siparişte aracı kuruma devir engellenir.
-      await this.siparisDurumGecisi(
+      await this.orderStatus.gecis(
         tx,
         d.orderId,
         [OrderStatus.READY, OrderStatus.ON_THE_WAY],
