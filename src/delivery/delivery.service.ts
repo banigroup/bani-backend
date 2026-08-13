@@ -30,6 +30,19 @@ export class DeliveryService {
     }
   }
 
+  // Çarşı (Kervan) siparişleri BANİGO Kurye akışına HİÇ girmez — DicleFul kendi ayrı
+  // kargo akışıyla taşır (mimari sınır: KURAL 2/3). available() Çarşı'yı zaten havuzdan
+  // dışlıyor ama cargo() DicleFul havuzunda gösteriyordu; claim/pickup/deliver ise
+  // businessUnit'e HİÇ bakmıyordu, dolayısıyla bir kurye Çarşı siparişini üstlenip
+  // teslim edebiliyordu (yerelde kanıtlandı: claim→pickup→deliver hepsi geçti).
+  // businessUnit checkout'ta yazılıp bir daha değişmediği için transaction dışı okuma
+  // güvenli; claim/pickup/deliver başında erken guard olarak çağrılır (savunma katmanı).
+  private assertKervanDisi(businessUnit: BusinessUnit) {
+    if (businessUnit === BusinessUnit.CARSI) {
+      throw new ConflictException('Çarşı (Kervan) siparişi BANİGO Kurye ile taşınmaz — DicleFul kargo akışına gider');
+    }
+  }
+
   // Sipariş durum geçişi E-4'te OrderStatusService'e taşındı (tek yetkili sahip).
   // Bu servis order.status'a artık this.orderStatus.gecis(...) üzerinden dokunur.
 
@@ -89,6 +102,7 @@ export class DeliveryService {
   async claim(user: AuthUser, id: string) {
     this.assertCourier(user);
     const d = await this.load(id);
+    this.assertKervanDisi(d.order.businessUnit);
     if (d.status !== DeliveryStatus.PENDING) {
       throw new ConflictException('Bu teslimat zaten üstlenilmiş');
     }
@@ -138,6 +152,7 @@ export class DeliveryService {
   async pickup(user: AuthUser, id: string) {
     this.assertCourier(user);
     const d = await this.load(id);
+    this.assertKervanDisi(d.order.businessUnit);
     if (d.courierId !== user.id && !(user.roles ?? []).includes(Role.SUPER_ADMIN)) {
       throw new ForbiddenException('Bu teslimat size atanmamış');
     }
@@ -162,6 +177,7 @@ export class DeliveryService {
   async deliver(user: AuthUser, id: string) {
     this.assertCourier(user);
     const d = await this.load(id);
+    this.assertKervanDisi(d.order.businessUnit);
 
     // ARACI (dış kargo firması) yöntemli teslimat, kurye tarafından TAMAMLANAMAZ.
     // aracikurumaVer teslimatı ARACI + PICKED_UP yapar ama courierId'yi temizlemez;
