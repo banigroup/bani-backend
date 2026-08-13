@@ -162,6 +162,17 @@ export class DeliveryService {
   async deliver(user: AuthUser, id: string) {
     this.assertCourier(user);
     const d = await this.load(id);
+
+    // ARACI (dış kargo firması) yöntemli teslimat, kurye tarafından TAMAMLANAMAZ.
+    // aracikurumaVer teslimatı ARACI + PICKED_UP yapar ama courierId'yi temizlemez;
+    // bu yüzden daha önce üstlenmiş kurye deliver() çağırınca sahiplik/durum kontrolleri
+    // geçiyor ve çarşı-dışı akışta kurye teslimat ücretini escrow'dan tahsil ediyordu
+    // (yerelde kanıtlandı: kurye +15,00 TL, :settle yazıldı). Paketin taşımasını dış
+    // firma yapıyor; teslim onayı takip no üzerinden yürür, DicleFul kuryesi kapatmaz.
+    if (d.yontem === DeliveryYontem.ARACI) {
+      throw new ConflictException('Bu teslimat aracı kuruma devredildi, sizin tarafınızdan tamamlanamaz');
+    }
+
     if (d.courierId !== user.id && !(user.roles ?? []).includes(Role.SUPER_ADMIN)) {
       throw new ForbiddenException('Bu teslimat size atanmamış');
     }
