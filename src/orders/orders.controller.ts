@@ -1,9 +1,11 @@
-import { Controller, Post, Get, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { AuditService } from '../common/audit/audit.service';
 import { OrdersService } from './orders.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -11,7 +13,10 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 @Controller('orders')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Post('checkout')
   checkout(@CurrentUser() user: AuthUser, @Body() dto: CheckoutDto) {
@@ -35,14 +40,21 @@ export class OrdersController {
     return this.orders.getOne(user, id);
   }
 
+  // Audit controller katmanında (kural 7: tek kaynak, serviste ikinci kayıt YOK).
+  // Kayıt yalnızca servis başarıyla dönerse yazılır — reddedilen (Conflict/Forbidden)
+  // geçişler audit'e girmez.
   @RequirePermissions(Permission.ORDER_MANAGE)
   @Patch(':id/status')
-  updateStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
-    return this.orders.updateStatus(user, id, dto.status);
+  async updateStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto, @Req() req: Request) {
+    const r = await this.orders.updateStatus(user, id, dto.status);
+    await this.audit.record({ actorId: user.id, action: 'order.status.update', entity: 'Order', entityId: id, ip: req.ip, metadata: { to: dto.status } });
+    return r;
   }
 
   @Post(':id/cancel')
-  cancel(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.orders.cancel(user, id);
+  async cancel(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+    const r = await this.orders.cancel(user, id);
+    await this.audit.record({ actorId: user.id, action: 'order.cancel', entity: 'Order', entityId: id, ip: req.ip });
+    return r;
   }
 }
