@@ -102,8 +102,19 @@ export class CatalogService {
     });
   }
 
+  // Ic kullanim: onay/red/guncelleme/silme akislari bu metodu kullanir.
+  // Onay bekleyen (isActive:false) urunu de dondurur - approve/reject onsuz calismaz.
   async getProduct(id: string) {
     const product = await this.prisma.product.findFirst({ where: { id, deletedAt: null } });
+    if (!product) throw new NotFoundException('Urun bulunamadi');
+    return product;
+  }
+
+  // Public okuma: yalnizca yayindaki urun. Onay bekleyen urunun fiyat/komisyon/KDV
+  // kirilimi disariya sizmasin diye ayri metot; getProduct'a filtre eklenemez
+  // cunku approve/reject onun uzerinden yurur.
+  async getPublicProduct(id: string) {
+    const product = await this.prisma.product.findFirst({ where: { id, isActive: true, deletedAt: null } });
     if (!product) throw new NotFoundException('Urun bulunamadi');
     return product;
   }

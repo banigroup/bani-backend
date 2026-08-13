@@ -36,7 +36,7 @@ export class CatalogController {
   @Public()
   @Get('products/:id')
   product(@Param('id') id: string) {
-    return this.catalog.getProduct(id);
+    return this.catalog.getPublicProduct(id);
   }
 
   // Onay bekleyen urunler (magaza sahibi / admin)
