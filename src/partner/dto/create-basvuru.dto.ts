@@ -22,4 +22,16 @@ export class CreateBasvuruDto {
 
   @IsString() @IsOptional()
   aracTipi?: string;  // COURIER
+
+  // DICLEFUL teklif formu. Hepsi opsiyonel: diger 5 tip bu alanlari gondermez.
+  // @IsEmail KULLANILMADI - bozuk yazilmis bir adres yuzunden teklif talebinin
+  // tamamen reddedilmesi, adresi hatali kaydetmekten daha kotu (lead kaybi).
+  @IsString() @IsOptional()
+  email?: string;     // DICLEFUL
+
+  @IsString() @IsOptional()
+  aylikAdet?: string; // DICLEFUL: serbest metin ("500-1000" gibi girilebiliyor)
+
+  @IsString() @IsOptional()
+  mesaj?: string;     // DICLEFUL
 }

@@ -23,6 +23,9 @@ export class PartnerService {
       restoran: dto.restoran ?? null,
       butce: dto.butce ?? null,
       aracTipi: dto.aracTipi ?? null,
+      email: dto.email ?? null,
+      aylikAdet: dto.aylikAdet ?? null,
+      mesaj: dto.mesaj ?? null,
       ip: ip ?? null,
       cihaz: cihaz ?? null,
     };

@@ -810,6 +810,9 @@ model PartnerBasvuru {
   restoran     String? // RESTAURANT: restoran adi
   butce        String? // FRANCHISE: yatirim butcesi
   aracTipi     String? // COURIER: arac tipi (motor/bisiklet/araba - serbest)
+  email        String? // DICLEFUL: teklif formundaki e-posta
+  aylikAdet    String? // DICLEFUL: aylik siparis adedi (serbest metin - "500-1000" gibi yazilabiliyor)
+  mesaj        String? // DICLEFUL: musterinin yazdigi talep metni
   businessUnit BusinessUnit? // SELLER icin CARSI vb.
 
   // Kanit / iletisim
