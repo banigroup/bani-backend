@@ -1,0 +1,25 @@
+-- ELLE YAZILMIS MIGRATION (migrate dev etkilesimsiz ortamda calismadigi icin dosya
+-- elle olusturuldu; ifade Prisma'nin "-- AlterEnum" ciktisiyla birebir ayni).
+--
+-- AMAC: PartnerBasvuruTip enum'una DICLEFUL degeri eklenir. DicleFul
+--   (kargo/fulfillment) basvurulari icin yeni bir @Public() ucu aciliyor:
+--   POST /partner-applications/dicleful — mevcut 5 ucun (seller / franchise /
+--   restaurant / courier / market) birebir ayni deseniyle.
+--
+-- VERIYE ETKISI: YOK. Yalnizca enum'a yeni bir etiket eklenir; mevcut satirlarin
+--   tip degeri degismez, hicbir UPDATE/DELETE yoktur. Yeni deger kullanilmaya
+--   baslanana kadar davranis aynidir.
+--
+-- POSTGRES NOTU: ALTER TYPE ... ADD VALUE, PG 12+ surumlerinde transaction
+--   BLOGU ICINDE calisabilir (Prisma migration'lari transaction ile sarar).
+--   Tek kisit, eklenen degerin AYNI transaction icinde KULLANILAMAMASIDIR; bu
+--   migration degeri yalnizca ekliyor, kullanmiyor - dolayisiyla guvenli.
+--   Yerel ve canli surum: PostgreSQL 18.
+--
+-- GERI ALMA: Postgres enum'dan deger SILMEYI desteklemez. Geri alinmasi
+--   gerekirse tip yeniden olusturulur (CREATE TYPE ... yeni; ALTER TABLE ...
+--   ALTER COLUMN ... TYPE ... USING; DROP TYPE ... eski). Bu yuzden deger
+--   eklemeden once ismin dogrulugundan emin olunmalidir.
+
+-- AlterEnum
+ALTER TYPE "PartnerBasvuruTip" ADD VALUE 'DICLEFUL';

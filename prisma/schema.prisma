@@ -785,6 +785,7 @@ enum PartnerBasvuruTip {
   RESTAURANT // Restoran (Yemek) basvurusu
   COURIER // Kurye basvurusu
   MARKET // Market basvurusu
+  DICLEFUL // DicleFul kargo/fulfillment basvurusu
 }
 
 enum PartnerBasvuruDurum {
