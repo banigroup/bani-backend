@@ -241,8 +241,15 @@ export class LoadController {
   }
 
   // ----- KYC Belge yukleme (Cloudinary) -----
+  // Limitler: dosya RAM'e aliniyor (dosya.buffer) ve tavan yoktu; multer 2.0.2
+  // DoS advisory'leri (GHSA-v52c/5528/72gw) tam bu yuzeyi hedefliyor.
+  // 10 MB kimlik/ruhsat foto-PDF'i icin fazlasiyla yeterli; parts = 1 dosya + 'tip' alani + pay.
   @Post('belge')
-  @UseInterceptors(FileInterceptor('dosya'))
+  @UseInterceptors(
+    FileInterceptor('dosya', {
+      limits: { fileSize: 10 * 1024 * 1024, fields: 10, parts: 12 },
+    }),
+  )
   async belgeYukle(
     @CurrentUser() user: AuthUser,
     @UploadedFile() dosya: any,

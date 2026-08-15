@@ -120,8 +120,14 @@ export class EvdenEveController {
   }
 
   // Kamera-zorunlu foto yukleme (ilan + kesif cekimlerinin URL'ye cevrildigi tek kapi)
+  // Limitler: bkz. load.controller belge ucu. Telefon kamerasi 48MP JPEG'i ~10-15 MB
+  // olabildigi icin tavan 15 MB; uc ek govde alani beklemiyor, o yuzden fields/parts dar.
   @Post('foto')
-  @UseInterceptors(FileInterceptor('dosya'))
+  @UseInterceptors(
+    FileInterceptor('dosya', {
+      limits: { fileSize: 15 * 1024 * 1024, fields: 5, parts: 6 },
+    }),
+  )
   async fotoYukle(@CurrentUser() user: AuthUser, @UploadedFile() dosya: any) {
     if (!dosya) throw new BadRequestException('Dosya gerekli');
     const url = await cloudinaryUpload(dosya.buffer, `baniload/ev/${user.id}`);
