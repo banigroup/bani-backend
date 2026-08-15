@@ -57,6 +57,13 @@ export class OrdersService {
     });
     if (!store) throw new BadRequestException('Mağaza aktif değil');
 
+    // Teslimat adresi ZORUNLU. Kontrol burada: cüzdan oluşturma, escrow ve
+    // transaction adımlarının hiçbirine girmeden hata dönsün.
+    if (!dto.addressId) throw new BadRequestException('Teslimat adresi gerekli');
+    const addr = await this.prisma.address.findFirst({ where: { id: dto.addressId, userId } });
+    if (!addr) throw new BadRequestException('Adres bulunamadı');
+    const addressText = [addr.city, addr.district, addr.line1].filter(Boolean).join(' / ');
+
     const isCarsi = store.businessUnit === BusinessUnit.CARSI;
 
     // Stok + tutar kontrolü (+ Çarşı için gömülü muhasebe kırılımı toplama)
@@ -131,14 +138,6 @@ export class OrdersService {
       throw new BadRequestException('Yetersiz bakiye. Lütfen cüzdana para yükleyin.');
     }
     const escrowWallet = await this.wallet.getSystemWallet(WalletType.ESCROW);
-
-    // Teslimat adresi anlık kopyası
-    let addressText: string | undefined;
-    if (dto.addressId) {
-      const addr = await this.prisma.address.findFirst({ where: { id: dto.addressId, userId } });
-      if (!addr) throw new BadRequestException('Adres bulunamadı');
-      addressText = [addr.city, addr.district, addr.line1].filter(Boolean).join(' / ');
-    }
 
     const orderNo = this.orderNo();
 
