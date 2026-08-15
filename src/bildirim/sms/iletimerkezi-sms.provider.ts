@@ -36,10 +36,27 @@ export class IletiMerkeziSmsProvider implements SmsProvider {
       });
       const txt = await res.text();
       if (!res.ok) {
-        this.logger.error(`Ileti Merkezi SMS hata (${res.status}): ${txt}`);
-      } else {
-        this.logger.log(`SMS gonderildi -> ${numara}`);
+        this.logger.error(`Ileti Merkezi SMS HTTP hata (${res.status}): ${txt}`);
+        return;
       }
+      // HTTP 200 gelse bile govdedeki status.code 200 degilse gonderim BASARISIZ.
+      let code = "";
+      let mesaj = "";
+      let orderId = "";
+      try {
+        const j = JSON.parse(txt);
+        code = String(j?.response?.status?.code ?? "");
+        mesaj = String(j?.response?.status?.message ?? "");
+        orderId = String(j?.response?.order?.id ?? "");
+      } catch {
+        this.logger.error(`Ileti Merkezi SMS yaniti ayristirilamadi: ${txt}`);
+        return;
+      }
+      if (code !== "200") {
+        this.logger.error(`Ileti Merkezi SMS reddedildi (code=${code}): ${mesaj}`);
+        return;
+      }
+      this.logger.log(`SMS gonderildi -> ${numara} (orderId=${orderId})`);
     } catch (e: any) {
       this.logger.error(`Ileti Merkezi SMS istisna: ${e?.message || e}`);
     }
