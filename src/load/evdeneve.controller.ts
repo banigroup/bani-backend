@@ -54,7 +54,7 @@ export class EvdenEveController {
   @Patch('ilan/:id/ucret-onay')
   async ucretOnay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     const r = await this.ev.ucretOnayla(user, id);
-    await this.audit.record({ actorId: user.id, action: 'load.ev.ucretOnay', entity: 'EvIlani', entityId: id });
+    await this.audit.record({ actorId: user.id, action: 'load.ev.ucretOnay', entity: 'EvIlani', entityId: id, metadata: { sigortaTalebi: !!(r as any)?.sigortaTalebi } });
     return r;
   }
 

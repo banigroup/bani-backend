@@ -4,5 +4,6 @@ import { SigortaController } from './sigorta.controller';
 @Module({
   controllers: [SigortaController],
   providers: [SigortaService],
+  exports: [SigortaService],
 })
 export class SigortaModule {}
