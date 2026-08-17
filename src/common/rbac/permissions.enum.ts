@@ -7,7 +7,11 @@ export enum Permission {
   ADDRESS_READ = 'address:read',
   ADDRESS_WRITE = 'address:write',
   WALLET_READ = 'wallet:read',
+  // WALLET_TOPUP: dogrulamasiz/manuel bakiye yazma - yalnizca SUPER_ADMIN.
+  // Musterinin odeme yaparak bakiye yuklemesi PAYMENT_INITIATE iznindedir;
+  // ikisi ayri tutulur ki manuel yazma yolu musteriye acilmasin.
   WALLET_TOPUP = 'wallet:topup',
+  PAYMENT_INITIATE = 'payment:initiate',
   WALLET_WITHDRAW = 'wallet:withdraw',
   TRANSACTION_READ = 'transaction:read',
   TRANSACTION_REVERSE = 'transaction:reverse',

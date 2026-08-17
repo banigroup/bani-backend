@@ -4,6 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Role } from '@prisma/client';
 import { FinanceService } from './finance.service';
 import { TopupDto } from './dto/topup.dto';
+import { TopupBaslatDto, TopupDogrulaDto } from './dto/topup-odeme.dto';
 import { WithdrawDto } from './dto/withdraw.dto';
 import { TransferDto } from './dto/transfer.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -29,11 +30,28 @@ export class FinanceController {
     return this.finance.transactions(user.id, Number(skip) || 0, Number(take) || 50);
   }
 
+  // MANUEL/YONETIM yolu: odeme saglayicisina danismadan bakiye yazar.
+  // WALLET_TOPUP yalnizca SUPER_ADMIN'dedir - musteri akisi asagidaki iki adimdir.
   @RequirePermissions(Permission.WALLET_TOPUP)
   @Post('topup')
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   topup(@CurrentUser() user: AuthUser, @Body() dto: TopupDto, @Req() req: Request) {
     return this.finance.topup(user.id, dto, req.ip);
+  }
+
+  // MUSTERI ODEME AKISI (iki adimli, 3DS'e hazir)
+  @RequirePermissions(Permission.PAYMENT_INITIATE)
+  @Post('topup/baslat')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  topupBaslat(@CurrentUser() user: AuthUser, @Body() dto: TopupBaslatDto, @Req() req: Request) {
+    return this.finance.topupBaslat(user.id, dto, req.ip);
+  }
+
+  @RequirePermissions(Permission.PAYMENT_INITIATE)
+  @Post('topup/dogrula')
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  topupDogrula(@CurrentUser() user: AuthUser, @Body() dto: TopupDogrulaDto, @Req() req: Request) {
+    return this.finance.topupDogrula(user.id, dto, req.ip);
   }
 
   @RequirePermissions(Permission.WALLET_WITHDRAW)

@@ -22,7 +22,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   // bakiye yaziyor (finance.service.ts topup -> ledger.post). Musteride bu izin varken
   // herkes kendine sinirsiz para basabiliyordu. Odeme saglayici adaptoru (PAYMENT_PROVIDER)
   // devreye girip tahsilat dogrulanana kadar bakiye yukleme yalnizca SUPER_ADMIN'dedir.
-  CUSTOMER: [P.ADDRESS_READ, P.ADDRESS_WRITE, P.WALLET_READ, P.STORE_READ, P.PRODUCT_READ, P.ORDER_READ, P.ORDER_WRITE],
+  CUSTOMER: [P.ADDRESS_READ, P.ADDRESS_WRITE, P.WALLET_READ, P.PAYMENT_INITIATE, P.STORE_READ, P.PRODUCT_READ, P.ORDER_READ, P.ORDER_WRITE],
   COURIER: [P.ADDRESS_READ, P.WALLET_READ, P.TRANSACTION_READ, P.DELIVERY_READ, P.DELIVERY_CLAIM, P.DELIVERY_MANAGE],
   MERCHANT: MERCHANT_LIKE,
   RESTAURANT: MERCHANT_LIKE,
