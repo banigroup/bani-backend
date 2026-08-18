@@ -63,6 +63,44 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  // ---------------- CROSS-DOMAIN OTURUM DEVRI ----------------
+  // KAYNAK taraf: oturumu olan kullanici, hedef origin icin kisa omurlu bilet alir.
+  async transferKoduUret(userId: string, hedefOrigin: string, meta: ReqMeta) {
+    return this.tokens.issueTransferCode(userId, hedefOrigin, meta);
+  }
+
+  // HEDEF taraf: bileti tuketip TAZE access+refresh alir (yetki gerektirmez -
+  // kimlik kanidi kodun kendisidir).
+  //
+  // SEPET CAKISMASI KURALI: hedefte zaten baska bir oturum varsa ve o oturumun
+  // sepeti DOLUYSA devir YAPILMAZ - hedefteki sepet korunur, kaynaktaki aktarilmaz.
+  // mevcutToken opsiyoneldir: gonderilmezse cakisma bilinemez ve devir normal isler.
+  async transferKoduTuket(kod: string, istekOrigin: string | undefined, mevcutToken: string | undefined, meta: ReqMeta) {
+    const user = await this.tokens.consumeTransferCode(kod, istekOrigin);
+    if (!user) return null;
+
+    if (mevcutToken) {
+      const payload = this.tokens.verifyAccess(mevcutToken);
+      if (payload && payload.sub !== user.id) {
+        const doluMu = await this.prisma.cartItem.count({ where: { cart: { userId: payload.sub } } });
+        if (doluMu > 0) {
+          // Kod zaten tuketildi (tek kullanimlik); token URETILMEZ ki hedefteki
+          // oturum ve sepeti oldugu gibi kalsin.
+          return { sepetCakismasi: true as const };
+        }
+      }
+    }
+
+    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles: user.roles });
+    const refreshToken = await this.tokens.issueRefresh(user.id, meta);
+    return {
+      accessToken,
+      refreshToken,
+      guest: user.phone.startsWith('guest_'),
+      user: { id: user.id, phone: user.phone, roles: user.roles, status: user.status },
+    };
+  }
+
   async logout(raw: string): Promise<{ ok: true }> {
     await this.tokens.revoke(raw);
     return { ok: true };

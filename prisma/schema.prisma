@@ -47,6 +47,7 @@ model User {
 
   otpRequests      OtpRequest[]
   refreshTokens    RefreshToken[]
+  transferCodes    TransferCode[]
   addresses        Address[]
   wallets          Wallet[]
   socialIdentities SocialIdentity[]
@@ -121,6 +122,31 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// CROSS-DOMAIN OTURUM DEVRI: kullanici markali domainler arasinda gecerken
+// (banigroup.com.tr -> banikervan.com.tr) oturumu tasiyan KISA OMURLU,
+// TEK KULLANIMLIK bilet. Kod URL'de tasindigi icin uzun omurlu bir sir
+// (refresh token) ASLA URL'e konmaz; bunun yerine bu bilet tuketilince
+// hedef domain icin TAZE access+refresh uretilir.
+//
+// Konvansiyon OtpRequest/RefreshToken ile ayni: ham deger degil HASH saklanir,
+// tuketim consumedAt ile damgalanir.
+model TransferCode {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kodHash     String    @unique // sha256(ham kod) - RefreshToken.tokenHash deseni
+  hedefOrigin String // kod YALNIZCA bu origin icin gecerli; baska siteye tasinamaz
+  consumedAt  DateTime? // tek kullanimlik damgasi (OtpRequest.consumedAt deseni)
+  expiresAt   DateTime // 60 sn TTL - URL'de gorunen bir degerin omru kisa olmali
+  ip          String?
+  cihaz       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt]) // suresi gecmis kayitlarin toplanmasi icin
+  @@map("transfer_codes")
 }
 
 // ===================== ADRES =====================
