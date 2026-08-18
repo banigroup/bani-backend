@@ -10,6 +10,7 @@ import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CheckoutDto } from './dto/checkout.dto';
 import { OrderStatusService } from './order-status.service';
+import { checkoutOriginUygun } from '../common/domain/dikey-domain';
 
 // --- Placeholder ayarları (Çarşı DIŞI dikeyler için) ---
 const DELIVERY_FEE = 1500n; // 15,00 TL
@@ -40,7 +41,7 @@ export class OrdersService {
   }
 
   // ============================ CHECKOUT ============================
-  async checkout(userId: string, dto: CheckoutDto) {
+  async checkout(userId: string, dto: CheckoutDto, origin?: string) {
     const cart = await this.prisma.cart.findUnique({
       where: { userId },
       include: { items: { include: { product: true } } },
@@ -56,6 +57,22 @@ export class OrdersService {
       where: { id: cart.storeId, isActive: true, deletedAt: null },
     });
     if (!store) throw new BadRequestException('Mağaza aktif değil');
+
+    // ORIGIN/DIKEY TUTARLILIGI — para ve stok adimlarindan ONCE, ucuz yoldan.
+    // Sepet kullanici basina TEK ve tek magazaya kilitli (Cart.userId @unique +
+    // cart.service FARKLI_MAGAZA kurali). Dolayisiyla kullanici bir markanin
+    // vitrininde baska markanin sepetiyle odemeye gidebiliyordu: siparis o
+    // vitrinle alakasiz bir dikeye yaziliyordu. Burada durduruluyor.
+    const originKontrol = checkoutOriginUygun(origin, store.businessUnit);
+    if (!originKontrol.uygun) {
+      throw new ConflictException({
+        statusCode: 409,
+        kod: 'YANLIS_DOMAIN',
+        message: `Sepetinizdeki ürünler ${originKontrol.beklenenDomain} mağazasına ait. Bu siparişi ${originKontrol.beklenenDomain} adresinden tamamlayın.`,
+        beklenenDomain: originKontrol.beklenenDomain,
+        error: 'Conflict',
+      });
+    }
 
     // Teslimat adresi ZORUNLU. Kontrol burada: cüzdan oluşturma, escrow ve
     // transaction adımlarının hiçbirine girmeden hata dönsün.

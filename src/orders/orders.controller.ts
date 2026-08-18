@@ -18,9 +18,11 @@ export class OrdersController {
     private readonly audit: AuditService,
   ) {}
 
+  // Origin, sepetteki magazanin dikeyiyle karsilastirilir (bkz. dikey-domain.ts):
+  // kullanici bir markanin vitrininde baska markanin sepetiyle odeme yapamasin.
   @Post('checkout')
-  checkout(@CurrentUser() user: AuthUser, @Body() dto: CheckoutDto) {
-    return this.orders.checkout(user.id, dto);
+  checkout(@CurrentUser() user: AuthUser, @Body() dto: CheckoutDto, @Req() req: Request) {
+    return this.orders.checkout(user.id, dto, req.headers.origin);
   }
 
   @Get()
