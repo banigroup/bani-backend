@@ -224,12 +224,27 @@ export class CatalogService {
     return this.prisma.product.update({ where: { id }, data });
   }
 
+  // Urun onayi PLATFORM YONETICISININ isidir (ADMIN / SUPER_ADMIN).
+  //
+  // Onceki hali celisikti: once magaza sahibi reddediliyor ("kendi urununu
+  // onaylayamazsin"), hemen ardindan assertOwner cagriliyordu - o da yalnizca
+  // magaza sahibini ya da SUPER_ADMIN'i geciriyordu. Iki kontrol birbirini
+  // kesiyor, geriye tek gecen olarak SUPER_ADMIN kaliyordu; PRODUCT_APPROVE
+  // izni ise hicbir ucta kullanilmadigi icin oludu.
+  private assertPlatformYoneticisi(roles: Role[]) {
+    if (!roles.includes(Role.ADMIN) && !roles.includes(Role.SUPER_ADMIN)) {
+      throw new ForbiddenException('Urun onayi icin platform yoneticisi yetkisi gerekli');
+    }
+  }
+
   // Admin: onayla -> yayinla
   async approveProduct(id: string, userId: string, roles: Role[]) {
     const product = await this.getProduct(id);
     const magazaSahip = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { ownerId: true } });
+    // Kendi urununu onaylama yasagi KALIYOR: magazasi olan bir yonetici de
+    // kendi katalogunu kendisi yayina alamaz.
     if (magazaSahip?.ownerId === userId) throw new ForbiddenException('Kendi magazanizin urununu onaylayamazsiniz');
-    await this.market.assertOwner(product.storeId, userId, roles);
+    this.assertPlatformYoneticisi(roles);
     return this.prisma.product.update({ where: { id }, data: { isActive: true } });
   }
 
@@ -238,7 +253,7 @@ export class CatalogService {
     const product = await this.getProduct(id);
     const magazaSahip = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { ownerId: true } });
     if (magazaSahip?.ownerId === userId) throw new ForbiddenException('Kendi magazanizin urununu reddedemezsiniz');
-    await this.market.assertOwner(product.storeId, userId, roles);
+    this.assertPlatformYoneticisi(roles);
     await this.prisma.product.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
     return { rejected: true };
   }

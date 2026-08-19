@@ -67,7 +67,10 @@ export class MarketService {
 
   private async ownedOrAdmin(storeId: string, userId: string, roles: Role[]) {
     const store = await this.getById(storeId);
-    const isAdmin = roles.includes(Role.SUPER_ADMIN);
+    // PLATFORM YONETICISI: ADMIN ve SUPER_ADMIN (orders.service.isAdmin ile ayni
+    // tanim). Eskiden yalnizca SUPER_ADMIN vardi cunku bu satir Faz 2'de yazildi,
+    // ADMIN rolu Faz 5'te eklendi ve bu dosya guncellenmedi.
+    const isAdmin = roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
     if (store.ownerId !== userId && !isAdmin) {
       throw new ForbiddenException('Bu mağaza size ait değil');
     }

@@ -1,7 +1,6 @@
-﻿import { Body, Controller, ForbiddenException, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+﻿import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
-import { Role } from '@prisma/client';
 import { FinanceService } from './finance.service';
 import { TopupDto } from './dto/topup.dto';
 import { TopupBaslatDto, TopupDogrulaDto } from './dto/topup-odeme.dto';
@@ -70,17 +69,18 @@ export class FinanceController {
 
   // Dikey bazlı P&L raporu (admin/süper admin) — admin panelinden çağrılır.
   // İsteğe bağlı tarih filtresi: ?from=2026-06-01&to=2026-06-30
-  @RequirePermissions(Permission.FINANCE_READ)
+  // Yetki TEK YERDE: FINANCE_REPORT_READ (ADMIN + SUPER_ADMIN).
+  // Onceden uc FINANCE_READ istiyordu; o izin ADMIN'de olmadigi icin asagidaki
+  // "ADMIN da gecsin" kontrolune sira hic gelmiyordu - guard once kesiyordu.
+  // Yorum "admin/super admin" diyor, davranis "yalniz super admin" idi. Rapora
+  // ozel izin ayrildi: FINANCE_READ /superadmin'i de actigi icin oraya
+  // dokunulmadi. Govdedeki olu rol kontrolu kaldirildi.
+  @RequirePermissions(Permission.FINANCE_REPORT_READ)
   @Get('report/business-units')
   businessUnitReport(
-    @CurrentUser() user: AuthUser,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const roles = user.roles ?? [];
-    if (!roles.includes(Role.SUPER_ADMIN) && !roles.includes(Role.ADMIN)) {
-      throw new ForbiddenException('Bu rapor için admin yetkisi gerekli');
-    }
     const parse = (s?: string) => {
       if (!s) return undefined;
       const d = new Date(s);

@@ -70,16 +70,20 @@ export class CatalogController {
   }
 
   // Admin: onayla / reddet
+  // PRODUCT_WRITE degil PRODUCT_APPROVE: birincisi saticida da var, yani onay
+  // ucuna satici da girebiliyordu (iceride reddediliyordu ama kapi aciktI).
+  // PRODUCT_APPROVE yalnizca ADMIN + SUPER_ADMIN'de; bu izin bugune kadar
+  // hicbir ucta kullanilmadigi icin oludur, yeri burasidir.
   @Patch('products/:id/approve')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.PRODUCT_WRITE)
+  @RequirePermissions(Permission.PRODUCT_APPROVE)
   approve(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.approveProduct(id, user.id, user.roles);
   }
 
   @Patch('products/:id/reject')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.PRODUCT_WRITE)
+  @RequirePermissions(Permission.PRODUCT_APPROVE)
   reject(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.rejectProduct(id, user.id, user.roles);
   }
