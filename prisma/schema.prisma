@@ -52,7 +52,7 @@ model User {
   wallets          Wallet[]
   socialIdentities SocialIdentity[]
   ownedStores      Store[]
-  cart             Cart?
+  carts            Cart[] // dikey basina bir sepet
   orders           Order[]
   deliveries       Delivery[]       @relation("CourierDeliveries")
 
@@ -416,15 +416,20 @@ model Product {
 }
 
 model Cart {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @unique @db.Uuid
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeId   String?  @db.Uuid
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String       @id @default(uuid()) @db.Uuid
+  userId       String       @db.Uuid
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Sepet DIKEYE kilitli: kullanicinin her dikeyde ayri sepeti olur. Bilerek
+  // @default YOK - dikey her yaratmada acikca verilsin, unutulan yer derlenmesin.
+  businessUnit BusinessUnit
+  storeId      String?      @db.Uuid
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   items CartItem[]
 
+  // userId onek oldugu icin "kullanicinin sepetleri" sorgusu da bu indeksi kullanir.
+  @@unique([userId, businessUnit])
   @@map("carts")
 }
 
