@@ -237,13 +237,23 @@ export class CatalogService {
     }
   }
 
+  /**
+   * "Kendi urununu onaylama" yasagi SAHIPLIKLE SINIRLI DEGIL: magazanin personeli
+   * de kendi katalogunu yayina alamaz. Aksi halde StoreUser eklendigi anda kapi
+   * yeniden acilirdi - sahip onaylayamaz ama onun ekledigi personel onaylardi.
+   */
+  private async magazayaBagliMi(storeId: string, userId: string): Promise<boolean> {
+    const store = await this.prisma.store.findUnique({ where: { id: storeId }, select: { ownerId: true } });
+    if (store?.ownerId === userId) return true;
+    return this.market.uyeMi(storeId, userId);
+  }
+
   // Admin: onayla -> yayinla
   async approveProduct(id: string, userId: string, roles: Role[]) {
     const product = await this.getProduct(id);
-    const magazaSahip = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { ownerId: true } });
-    // Kendi urununu onaylama yasagi KALIYOR: magazasi olan bir yonetici de
-    // kendi katalogunu kendisi yayina alamaz.
-    if (magazaSahip?.ownerId === userId) throw new ForbiddenException('Kendi magazanizin urununu onaylayamazsiniz');
+    if (await this.magazayaBagliMi(product.storeId, userId)) {
+      throw new ForbiddenException('Kendi magazanizin urununu onaylayamazsiniz');
+    }
     this.assertPlatformYoneticisi(roles);
     return this.prisma.product.update({ where: { id }, data: { isActive: true } });
   }
@@ -251,8 +261,9 @@ export class CatalogService {
   // Admin: reddet -> sil (soft delete)
   async rejectProduct(id: string, userId: string, roles: Role[]) {
     const product = await this.getProduct(id);
-    const magazaSahip = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { ownerId: true } });
-    if (magazaSahip?.ownerId === userId) throw new ForbiddenException('Kendi magazanizin urununu reddedemezsiniz');
+    if (await this.magazayaBagliMi(product.storeId, userId)) {
+      throw new ForbiddenException('Kendi magazanizin urununu reddedemezsiniz');
+    }
     this.assertPlatformYoneticisi(roles);
     await this.prisma.product.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
     return { rejected: true };

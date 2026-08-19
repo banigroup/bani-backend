@@ -52,6 +52,7 @@ model User {
   wallets          Wallet[]
   socialIdentities SocialIdentity[]
   ownedStores      Store[]
+  magazaUyelikleri StoreUser[] // personel olarak calistigi magazalar
   carts            Cart[] // dikey basina bir sepet
   orders           Order[]
   deliveries       Delivery[]       @relation("CourierDeliveries")
@@ -347,10 +348,45 @@ model Store {
   categories Category[]
   products   Product[]
   orders     Order[]
+  personel   StoreUser[]
 
   @@index([ownerId])
   @@index([type, isActive])
   @@map("stores")
+}
+
+// MAGAZA PERSONELI — operasyonel erisim.
+//
+// Magazaya erisim bugune kadar TEK kaynaktan geliyordu: stores.ownerId. Bu yuzden
+// MARKET_OPERATOR / RESTAURANT / COFFEE_BRANCH rolleri ORDER_MANAGE iznini tasiyip
+// hicbir siparise erisemiyordu (sahibi olmadiklari magazada 403).
+//
+// SAHIPLIK BURAYA TASINMADI: stores.ownerId hukuki/finansal sahip olarak KALIR -
+// teslimat tamamlaninca satici hakedisi onun cuzdanina yaziliyor
+// (delivery.service: getOrCreateUserWallet(order.store.ownerId)). Sahipligi coklu
+// bir tabloya dagitmak "bu paranin sahibi kim" sorusunu belirsizlestirirdi.
+//
+// UYELIK YETKI DEGIL KAPSAM verir: kullanicinin rolundeki izinleri O MAGAZADA
+// kullanilabilir kilar, yeni izin eklemez.
+model StoreUser {
+  id      String @id @default(uuid()) @db.Uuid
+  storeId String @db.Uuid
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  userId  String @db.Uuid
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Isten ayrilan personel SILINMEZ, kapatilir: gecmis audit kayitlari "bu kisi
+  // o sirada uyeydi" baglamini korumali.
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Cascade (iki tarafta da): uyelik turetilmis erisim kaydidir, deger/delil
+  // tasimaz - magaza ya da kullanici yoksa anlamsizdir. Deger tasiyan baglarda
+  // (wallets, deliveries.courierId) Restrict tercih edilmisti; burasi o sinifta degil.
+  @@unique([storeId, userId]) // bir kisi bir magazada tek uyelik
+  @@index([userId]) // "bu kullanicinin magazalari": bilesik unique'in oneki storeId
+  @@map("store_users")
 }
 
 model Category {

@@ -7,6 +7,7 @@ import {
 import { randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { BildirimService } from '../bildirim/bildirim.service';
+import { MarketService } from '../market/market.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -30,6 +31,10 @@ export class OrdersService {
     private readonly wallet: WalletService,
     private readonly orderStatus: OrderStatusService,
     private readonly bildirim: BildirimService,
+    // Magaza erisim kurali (sahip | personel | platform yoneticisi) TEK YERDE
+    // yasiyor: market.service.erisebilir. Burada ikinci bir kopyasi yazilmadi -
+    // isAdmin'in iki dosyada ayrisip ADMIN'i kilitlemesi tam olarak boyle olmustu.
+    private readonly market: MarketService,
   ) { }
 
   // Teslim kodu: musteriye bildirilen, kuryenin teslimatta girdigi 6 hane.
@@ -323,8 +328,10 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
     const isOwner = order.userId === user.id;
-    const isStoreOwner = order.store.ownerId === user.id;
-    if (!isOwner && !isStoreOwner && !this.isAdmin(user)) {
+    // Magaza tarafi: sahip, AKTIF personel ya da platform yoneticisi (tek kaynak:
+    // market.service.erisebilir). Magaza zaten okundu, tekrar sorgu acilmiyor.
+    const magazaYetkisi = await this.market.erisebilir(order.store, user.id, user.roles ?? []);
+    if (!isOwner && !magazaYetkisi) {
       throw new ForbiddenException('Bu siparişi görme yetkiniz yok');
     }
     // Teslim kodunu YALNIZCA sipariş sahibi görür. Bu uç satıcıya ve süper admine
@@ -338,7 +345,7 @@ export class OrdersService {
   async storeOrders(user: AuthUser, storeId: string, status?: string) {
     const store = await this.prisma.store.findUnique({ where: { id: storeId } });
     if (!store) throw new NotFoundException('Mağaza bulunamadı');
-    if (store.ownerId !== user.id && !this.isAdmin(user)) {
+    if (!(await this.market.erisebilir(store, user.id, user.roles ?? []))) {
       throw new ForbiddenException('Bu mağazanın siparişlerini görme yetkiniz yok');
     }
     const where: Prisma.OrderWhereInput = { storeId };
@@ -372,7 +379,9 @@ export class OrdersService {
         include: { store: true },
       });
       if (!order) throw new NotFoundException('Sipariş bulunamadı');
-      if (order.store.ownerId !== user.id && !this.isAdmin(user)) {
+      // Uyelik okumasi transaction DISINDAKI istemciyle yapiliyor: yaris konusu
+      // olan sey siparis durumu, personel listesi degil.
+      if (!(await this.market.erisebilir(order.store, user.id, user.roles ?? []))) {
         throw new ForbiddenException('Bu siparişi yönetme yetkiniz yok');
       }
 
@@ -408,8 +417,8 @@ export class OrdersService {
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
     const isOwner = order.userId === user.id;
-    const isStoreOwner = order.store.ownerId === user.id;
-    if (!isOwner && !isStoreOwner && !this.isAdmin(user)) {
+    const magazaYetkisi = await this.market.erisebilir(order.store, user.id, user.roles ?? []);
+    if (!isOwner && !magazaYetkisi) {
       throw new ForbiddenException('Bu siparişi iptal etme yetkiniz yok');
     }
     // Erken ret: cüzdan sorguları ve transaction açılmadan, ucuz yoldan.

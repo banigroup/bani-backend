@@ -34,9 +34,18 @@ export class MarketService {
     return store;
   }
 
+  // Sahip olunan VE personel olarak calisilan magazalar. Paneller buradan
+  // basliyor; uyelik eklendiginde magaza listede gorunmezse uye hicbir yere
+  // ulasamaz (storeId'yi bilmesinin baska yolu yok).
   myStores(ownerId: string) {
     return this.prisma.store.findMany({
-      where: { ownerId, deletedAt: null },
+      where: {
+        deletedAt: null,
+        OR: [
+          { ownerId },
+          { personel: { some: { userId: ownerId, isActive: true } } },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -65,16 +74,98 @@ export class MarketService {
     return store;
   }
 
+  // PLATFORM YONETICISI: ADMIN ve SUPER_ADMIN (orders.service.isAdmin ile ayni
+  // tanim). Eskiden yalnizca SUPER_ADMIN vardi cunku o satir Faz 2'de yazildi,
+  // ADMIN rolu Faz 5'te eklendi ve bu dosya guncellenmedi.
+  private platformYoneticisi(roles: Role[]): boolean {
+    return roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
+  }
+
+  /** Kullanici bu magazada AKTIF personel mi. */
+  async uyeMi(storeId: string, userId: string): Promise<boolean> {
+    const uyelik = await this.prisma.storeUser.findUnique({
+      where: { storeId_userId: { storeId, userId } },
+      select: { isActive: true },
+    });
+    return uyelik?.isActive === true;
+  }
+
+  /**
+   * MAGAZA ERISIMININ TEK KAYNAGI: sahip | aktif personel | platform yoneticisi.
+   *
+   * Magaza NESNESINI alir, id'yi degil - cagiran taraf magazayi zaten okumussa
+   * (orders.service'te oyle) ikinci bir sorgu acilmasin diye. isAdmin'in iki ayri
+   * yerde farkli tanimlanmasi gibi bir ayrisma olmasin diye kural burada TEK.
+   */
+  async erisebilir(store: { id: string; ownerId: string }, userId: string, roles: Role[]): Promise<boolean> {
+    if (store.ownerId === userId) return true;
+    if (this.platformYoneticisi(roles)) return true;
+    return this.uyeMi(store.id, userId);
+  }
+
   private async ownedOrAdmin(storeId: string, userId: string, roles: Role[]) {
     const store = await this.getById(storeId);
-    // PLATFORM YONETICISI: ADMIN ve SUPER_ADMIN (orders.service.isAdmin ile ayni
-    // tanim). Eskiden yalnizca SUPER_ADMIN vardi cunku bu satir Faz 2'de yazildi,
-    // ADMIN rolu Faz 5'te eklendi ve bu dosya guncellenmedi.
-    const isAdmin = roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
-    if (store.ownerId !== userId && !isAdmin) {
+    if (!(await this.erisebilir(store, userId, roles))) {
       throw new ForbiddenException('Bu mağaza size ait değil');
     }
     return store;
+  }
+
+  /**
+   * UYELIK YONETIMI erisimden DAHA DAR: yalnizca magaza sahibi ve platform
+   * yoneticisi. Personelin personel eklemesi kapali - aksi halde bir uye
+   * kendini cogaltip magazayi ele gecirebilirdi.
+   */
+  private async sahipVeyaYonetici(storeId: string, userId: string, roles: Role[]) {
+    const store = await this.getById(storeId);
+    if (store.ownerId !== userId && !this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Personel yönetimi için mağaza sahibi ya da admin yetkisi gerekli');
+    }
+    return store;
+  }
+
+  // ---------------- MAGAZA PERSONELI ----------------
+
+  async personelListesi(storeId: string, userId: string, roles: Role[]) {
+    await this.sahipVeyaYonetici(storeId, userId, roles);
+    return this.prisma.storeUser.findMany({
+      where: { storeId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true, userId: true, isActive: true, createdAt: true,
+        user: { select: { phone: true, name: true, surname: true, roles: true } },
+      },
+    });
+  }
+
+  async personelEkle(storeId: string, userId: string, roles: Role[], eklenecekUserId: string) {
+    const store = await this.sahipVeyaYonetici(storeId, userId, roles);
+    const kisi = await this.prisma.user.findFirst({ where: { id: eklenecekUserId, deletedAt: null } });
+    if (!kisi) throw new NotFoundException('Kullanıcı bulunamadı');
+    if (kisi.id === store.ownerId) {
+      throw new ForbiddenException('Mağaza sahibi zaten tam yetkili; personel olarak eklenmez');
+    }
+    // upsert: daha once kapatilmis bir uyelik varsa yeniden ACILIR, ikinci satir
+    // yaratilmaz (bilesik unique zaten engellerdi, burada net hata yerine niyet).
+    return this.prisma.storeUser.upsert({
+      where: { storeId_userId: { storeId, userId: eklenecekUserId } },
+      create: { storeId, userId: eklenecekUserId },
+      update: { isActive: true },
+      select: { id: true, userId: true, isActive: true, createdAt: true },
+    });
+  }
+
+  async personelDurum(storeId: string, userId: string, roles: Role[], hedefUserId: string, isActive: boolean) {
+    await this.sahipVeyaYonetici(storeId, userId, roles);
+    const uyelik = await this.prisma.storeUser.findUnique({
+      where: { storeId_userId: { storeId, userId: hedefUserId } },
+    });
+    if (!uyelik) throw new NotFoundException('Personel kaydı bulunamadı');
+    return this.prisma.storeUser.update({
+      where: { id: uyelik.id },
+      data: { isActive },
+      select: { id: true, userId: true, isActive: true },
+    });
   }
 
   async update(storeId: string, userId: string, roles: Role[], dto: UpdateStoreDto, ip?: string) {
