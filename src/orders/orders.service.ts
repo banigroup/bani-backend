@@ -4,7 +4,9 @@ import {
 import {
   Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit,
 } from '@prisma/client';
+import { randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { BildirimService } from '../bildirim/bildirim.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -27,7 +29,14 @@ export class OrdersService {
     private readonly ledger: LedgerService,
     private readonly wallet: WalletService,
     private readonly orderStatus: OrderStatusService,
+    private readonly bildirim: BildirimService,
   ) { }
+
+  // Teslim kodu: musteriye bildirilen, kuryenin teslimatta girdigi 6 hane.
+  // OtpService ile ayni uretim deseni (crypto.randomInt); Math.random KULLANILMAZ.
+  private teslimKoduUret(): string {
+    return randomInt(0, 1_000_000).toString().padStart(6, '0');
+  }
 
   private isAdmin(user: AuthUser): boolean {
     return (user.roles ?? []).includes(Role.SUPER_ADMIN);
@@ -180,6 +189,8 @@ export class OrdersService {
     const escrowWallet = await this.wallet.getSystemWallet(WalletType.ESCROW);
 
     const orderNo = this.orderNo();
+    // Transaction DIŞINDA üretilir: değeri SMS için transaction sonrasında da lazım.
+    const teslimKod = this.teslimKoduUret();
 
     // Hepsi tek transaction'da: stok düş + sipariş yarat + escrow'a al + sepeti temizle
     const order = await this.prisma.$transaction(async (tx) => {
@@ -245,8 +256,10 @@ export class OrdersService {
       });
 
       // Teslimat kaydı (havuzda bekliyor). Çarşı = DicleFul kargo havuzu.
+      // Teslim kodu SİPARİŞ ONAYLANIRKEN üretilir: müşteri kodu sipariş ekranından
+      // görür, kurye teslimatta bu kodu ister (bkz. delivery.service.deliver).
       await tx.delivery.create({
-        data: { orderId: created.id, fee: deliveryFee, status: DeliveryStatus.PENDING },
+        data: { orderId: created.id, fee: deliveryFee, status: DeliveryStatus.PENDING, teslimKod },
       });
 
       // Sepeti temizle
@@ -255,6 +268,16 @@ export class OrdersService {
 
       return created;
     });
+
+    // İKİNCİL KANAL — SMS. Transaction'ın DIŞINDA: sipariş ve para hareketi
+    // bildirime bağlı olmamalı. BildirimService hatayı zaten yutup kayda geçiyor.
+    // Telefonu olmayan (misafir) siparişte tek kanal sipariş ekranıdır.
+    if (order.contactPhone) {
+      await this.bildirim.gonderSms(order.contactPhone, 'TESLIM_KODU', {
+        orderNo: order.orderNo,
+        kod: teslimKod,
+      });
+    }
 
     return order;
   }
@@ -266,20 +289,36 @@ export class OrdersService {
       orderBy: { createdAt: 'desc' },
       skip,
       take: Math.min(take, 100),
-      include: { items: true, store: { select: { name: true } } },
+      // Teslim kodu BU uçta dönebilir: where zaten userId'ye kilitli, yani
+      // yalnızca siparişin sahibi kendi kodunu görür. Müşteri ekranının kodu
+      // gösterebildiği birincil kanal burasıdır.
+      include: {
+        items: true,
+        store: { select: { name: true } },
+        delivery: { select: { status: true, teslimKod: true, teslimKodDogrulandiAt: true } },
+      },
     });
   }
 
   async getOne(user: AuthUser, id: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: { items: true, store: true },
+      include: {
+        items: true,
+        store: true,
+        delivery: { select: { status: true, teslimKod: true, teslimKodDogrulandiAt: true } },
+      },
     });
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
     const isOwner = order.userId === user.id;
     const isStoreOwner = order.store.ownerId === user.id;
     if (!isOwner && !isStoreOwner && !this.isAdmin(user)) {
       throw new ForbiddenException('Bu siparişi görme yetkiniz yok');
+    }
+    // Teslim kodunu YALNIZCA sipariş sahibi görür. Bu uç satıcıya ve süper admine
+    // de açık; kod oralara sızarsa teslimat müşteriye sorulmadan kapatılabilirdi.
+    if (!isOwner && order.delivery) {
+      return { ...order, delivery: { ...order.delivery, teslimKod: undefined } };
     }
     return order;
   }
