@@ -61,6 +61,45 @@ export class DeliveryService {
     }
   }
 
+  // KARGO HAVUZU (Carsi) BANIGO kuryesinin isi DEGIL: claim() Carsi'yi
+  // assertKervanDisi ile reddediyor, yani kurye bu kuyruktan hicbir kaydi
+  // ustlenemiyordu ama hepsinin adresini goruyordu. Kuyrugun sahibi DicleFul
+  // tarafi: DICLEFUL_OPERATOR / DICLEFUL_DRIVER + platform yoneticisi.
+  private assertKargoYetkisi(user: AuthUser) {
+    const roles = user.roles ?? [];
+    const yetkili =
+      roles.includes(Role.DICLEFUL_OPERATOR) ||
+      roles.includes(Role.DICLEFUL_DRIVER) ||
+      roles.includes(Role.ADMIN) ||
+      roles.includes(Role.SUPER_ADMIN);
+    if (!yetkili) {
+      throw new ForbiddenException('Bu kuyruk DicleFul kargo tarafına aittir');
+    }
+  }
+
+  // 'Sehir / Ilce / Sokak...' -> 'Sehir / Ilce'. Bicim checkout'ta sabit
+  // yaziliyor: [city, district, line1].filter(Boolean).join(' / ').
+  //
+  // ilce BOS ise metin iki parcali olur ('Sehir / Sokak...') ve konumdan ikinci
+  // parcayi almak SOKAGI sizdirirdi. Bu yuzden ikinci parca yalnizca UC parcali
+  // metinlerde aliniyor; aksi halde sadece sehir doner. (Canli olcum: 26/26
+  // kayit uc parcali, ama ilcesiz adres sematik olarak mumkun.)
+  private kabaBolge(addressText?: string | null): string | null {
+    if (!addressText) return null;
+    const parcalar = addressText.split(' / ').map((s) => s.trim()).filter(Boolean);
+    if (parcalar.length === 0) return null;
+    return parcalar.length >= 3 ? `${parcalar[0]} / ${parcalar[1]}` : parcalar[0];
+  }
+
+  // HAVUZ KAYDI: musteri PII'si (acik adres, telefon) AYIKLANIR, yerine kaba
+  // bolge konur. Kurye isi almadan once "hangi ilce, ne kadar ucret" bilgisiyle
+  // karar verir; tam adres ve telefon claim SONRASI mine() yanitinda gelir.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private havuzKaydi(d: any) {
+    const { addressText, contactPhone, ...order } = d.order ?? {};
+    return { ...d, order: { ...order, teslimatBolgesi: this.kabaBolge(addressText) } };
+  }
+
   // Çarşı (Kervan) siparişleri BANİGO Kurye akışına HİÇ girmez — DicleFul kendi ayrı
   // kargo akışıyla taşır (mimari sınır: KURAL 2/3). available() Çarşı'yı zaten havuzdan
   // dışlıyor ama cargo() DicleFul havuzunda gösteriyordu; claim/pickup/deliver ise
@@ -80,7 +119,10 @@ export class DeliveryService {
   // Havuz: hazır (READY) ve henüz kuryesi olmayan teslimatlar (Çarşı DIŞI)
   async available(user: AuthUser) {
     this.assertCourier(user);
-    return this.prisma.delivery.findMany({
+    // addressText BURADA seciliyor ama YANITTA DONMUYOR: havuzKaydi onu kaba
+    // bolgeye cevirip ayikliyor. Magaza adresi kaliyor - o musteri PII'si degil,
+    // kuryenin gidecegi alim noktasi.
+    const kayitlar = await this.prisma.delivery.findMany({
       where: { status: DeliveryStatus.PENDING, order: { status: OrderStatus.READY, businessUnit: { not: BusinessUnit.CARSI } } },
       orderBy: { createdAt: 'asc' },
       take: 100,
@@ -95,17 +137,21 @@ export class DeliveryService {
         },
       },
     });
+    return kayitlar.map((d) => this.havuzKaydi(d));
   }
 
   // DicleFul kargo havuzu: SADECE Carsi (kargo) siparisleri
   async cargoQueue(user: AuthUser) {
-    this.assertCourier(user);
-    return this.prisma.delivery.findMany({
+    this.assertKargoYetkisi(user);
+    // contactPhone ARTIK SECILMIYOR: bu kuyruk claim oncesi goruntuydu ve
+    // musteri telefonunu, o teslimati ustlenemeyecek kisilere aciyordu.
+    const kayitlar = await this.prisma.delivery.findMany({
       where: { status: DeliveryStatus.PENDING, order: { status: OrderStatus.READY, businessUnit: BusinessUnit.CARSI } },
       orderBy: { createdAt: 'asc' },
       take: 100,
-      select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, total: true, deliveryFee: true, addressText: true, contactPhone: true, storeId: true, store: { select: { name: true, city: true, district: true, line1: true } } } } },
+      select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, total: true, deliveryFee: true, addressText: true, storeId: true, store: { select: { name: true, city: true, district: true, line1: true } } } } },
     });
+    return kayitlar.map((d) => this.havuzKaydi(d));
   }
 
   // Kuryenin kendi teslimatlari
@@ -117,7 +163,11 @@ export class DeliveryService {
       where,
       orderBy: { updatedAt: 'desc' },
       take: 100,
-      select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, total: true, status: true, addressText: true } } },
+      // CLAIM SONRASI: burada tam adres VE telefon doner. Kurye isi ustlendikten
+      // sonra teslimati yapabilmek icin ikisine de ihtiyac duyar; havuzda
+      // gorunmemelerinin sebebi "hic gorunmesinler" degil, "isi almadan
+      // gorunmesinler" (veri minimizasyonu).
+      select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, total: true, status: true, addressText: true, contactPhone: true } } },
     });
   }
 
