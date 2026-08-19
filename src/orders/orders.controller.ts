@@ -22,7 +22,9 @@ export class OrdersController {
   // kullanici bir markanin vitrininde baska markanin sepetiyle odeme yapamasin.
   @Post('checkout')
   checkout(@CurrentUser() user: AuthUser, @Body() dto: CheckoutDto, @Req() req: Request) {
-    return this.orders.checkout(user.id, dto, req.headers.origin);
+    // X-Bani-Dikey: sepet dikeye kilitli oldugu icin hangi sepetle odeme
+    // yapildigini ana domainden gelen istekte yalnizca istemci bildirebilir.
+    return this.orders.checkout(user.id, dto, req.headers.origin, req.headers['x-bani-dikey'] as string | undefined);
   }
 
   @Get()

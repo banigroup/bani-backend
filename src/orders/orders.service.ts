@@ -10,7 +10,7 @@ import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CheckoutDto } from './dto/checkout.dto';
 import { OrderStatusService } from './order-status.service';
-import { checkoutOriginUygun } from '../common/domain/dikey-domain';
+import { checkoutOriginUygun, dikeyCoz } from '../common/domain/dikey-domain';
 
 // --- Placeholder ayarları (Çarşı DIŞI dikeyler için) ---
 const DELIVERY_FEE = 1500n; // 15,00 TL
@@ -41,11 +41,22 @@ export class OrdersService {
   }
 
   // ============================ CHECKOUT ============================
-  async checkout(userId: string, dto: CheckoutDto, origin?: string) {
-    const cart = await this.prisma.cart.findUnique({
-      where: { userId },
-      include: { items: { include: { product: true } } },
-    });
+  async checkout(userId: string, dto: CheckoutDto, origin?: string, dikeyBaslik?: string) {
+    // Sepet dikeye kilitli: hangi dikeyin sepetiyle odeme yapildigi cozulmeli.
+    // Cozulemezse (baslik gondermeyen istemci) gecis kurali: dolu olan en son
+    // sepet - bugunku tek-sepet davranisiyla ayni sonucu verir.
+    const dikey = dikeyCoz(origin, dikeyBaslik);
+    const sepetIcerik = { items: { include: { product: true } } } as const;
+    const cart = dikey
+      ? await this.prisma.cart.findUnique({
+          where: { userId_businessUnit: { userId, businessUnit: dikey } },
+          include: sepetIcerik,
+        })
+      : await this.prisma.cart.findFirst({
+          where: { userId, items: { some: {} } },
+          orderBy: { updatedAt: 'desc' },
+          include: sepetIcerik,
+        });
     if (!cart || cart.items.length === 0) {
       throw new BadRequestException('Sepet boş');
     }
@@ -57,6 +68,18 @@ export class OrdersService {
       where: { id: cart.storeId, isActive: true, deletedAt: null },
     });
     if (!store) throw new BadRequestException('Mağaza aktif değil');
+
+    // Sepetin dikeyi ile magazanin dikeyi ayrisamaz: sepete urun eklerken dikey
+    // urunun magazasindan turetiliyor (cart.service). Ayrisiyorsa veri bozuktur,
+    // siparis yazilmadan durulur.
+    if (cart.businessUnit !== store.businessUnit) {
+      throw new ConflictException({
+        statusCode: 409,
+        kod: 'SEPET_DIKEY_TUTARSIZ',
+        message: 'Sepet ile mağaza dikeyi uyuşmuyor. Sepeti temizleyip tekrar deneyin.',
+        error: 'Conflict',
+      });
+    }
 
     // ORIGIN/DIKEY TUTARLILIGI — para ve stok adimlarindan ONCE, ucuz yoldan.
     // Sepet kullanici basina TEK ve tek magazaya kilitli (Cart.userId @unique +

@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BusinessUnit } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddItemDto } from './dto/add-item.dto';
 
@@ -6,14 +7,50 @@ import { AddItemDto } from './dto/add-item.dto';
 export class CartService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async getOrCreate(userId: string) {
-    const existing = await this.prisma.cart.findUnique({ where: { userId } });
-    if (existing) return existing;
-    return this.prisma.cart.create({ data: { userId } });
+  /**
+   * YAZMA yolu: dikey kesin oldugunda sepeti bulur, yoksa yaratir.
+   * upsert kullaniliyor - eski findUnique+create ikilisi es zamanli iki istekte
+   * bilesik unique'i ihlal edip P2002 atabilirdi.
+   */
+  private async getOrCreate(userId: string, dikey: BusinessUnit) {
+    return this.prisma.cart.upsert({
+      where: { userId_businessUnit: { userId, businessUnit: dikey } },
+      create: { userId, businessUnit: dikey },
+      update: {},
+    });
   }
 
-  async view(userId: string) {
-    const cart = await this.getOrCreate(userId);
+  /**
+   * OKUMA yolu: sepeti bulur, YARATMAZ (bos GET her ziyaretcide cop satir
+   * uretmesin - canlida boyle birikmis 20 bos sepet var).
+   *
+   * GECIS KURALI: dikey cozulemediyse (ana domainden gelen, X-Bani-Dikey
+   * basligini henuz gondermeyen istemci) en son dokunulan sepet doner - yani
+   * bugunku tek-sepet davranisi. Istemci basligi gondermeye basladiginda bu
+   * dal olulesir ve kaldirilabilir.
+   */
+  private async sepetBul(userId: string, dikey: BusinessUnit | null) {
+    if (dikey) {
+      return this.prisma.cart.findUnique({
+        where: { userId_businessUnit: { userId, businessUnit: dikey } },
+      });
+    }
+    return this.prisma.cart.findFirst({ where: { userId }, orderBy: { updatedAt: 'desc' } });
+  }
+
+  async view(userId: string, dikey: BusinessUnit | null) {
+    const cart = await this.sepetBul(userId, dikey);
+    if (!cart) {
+      return {
+        cartId: null,
+        businessUnit: dikey,
+        storeId: null,
+        store: null,
+        itemCount: 0,
+        subtotal: 0n,
+        items: [],
+      };
+    }
     const items = await this.prisma.cartItem.findMany({
       where: { cartId: cart.id },
       orderBy: { createdAt: 'asc' },
@@ -55,6 +92,7 @@ export class CartService {
 
     return {
       cartId: cart.id,
+      businessUnit: cart.businessUnit,
       storeId: cart.storeId,
       store,
       itemCount: lines.reduce((n, l) => n + l.quantity, 0),
@@ -64,12 +102,15 @@ export class CartService {
   }
 
   async addItem(userId: string, dto: AddItemDto) {
-    const cart = await this.getOrCreate(userId);
+    // DIKEY URUNDEN TURETILIR, istemciden gelen basliktan DEGIL: boylece baslikla
+    // oynayarak bir urunu baska dikeyin sepetine yazmak mumkun olmaz.
     const product = await this.prisma.product.findFirst({
       where: { id: dto.productId, deletedAt: null, isActive: true },
+      include: { store: { select: { businessUnit: true } } },
     });
     if (!product) throw new NotFoundException('Ürün bulunamadı veya pasif');
 
+    const cart = await this.getOrCreate(userId, product.store.businessUnit);
     const qty = dto.quantity ?? 1;
 
     // Tek-mağaza kuralı: sepette ürün varken başka mağazanın ürünü eklenemez
@@ -102,34 +143,46 @@ export class CartService {
       });
     }
 
-    return this.view(userId);
+    return this.view(userId, cart.businessUnit);
+  }
+
+  /**
+   * Kalem duzeyi islemlerde dikeye ihtiyac YOK: kalem zaten bir sepete bagli,
+   * sepet de bir kullaniciya. Sahiplik dogrudan o zincirden dogrulanir.
+   */
+  private async kalemBul(userId: string, itemId: string) {
+    const item = await this.prisma.cartItem.findUnique({
+      where: { id: itemId },
+      include: { cart: { select: { userId: true, businessUnit: true } } },
+    });
+    if (!item || item.cart.userId !== userId) {
+      throw new NotFoundException('Sepet kalemi bulunamadı');
+    }
+    return item;
   }
 
   async updateItem(userId: string, itemId: string, quantity: number) {
-    const cart = await this.getOrCreate(userId);
-    const item = await this.prisma.cartItem.findUnique({ where: { id: itemId } });
-    if (!item || item.cartId !== cart.id) throw new NotFoundException('Sepet kalemi bulunamadı');
+    const item = await this.kalemBul(userId, itemId);
 
     if (quantity <= 0) {
       await this.prisma.cartItem.delete({ where: { id: itemId } });
     } else {
       await this.prisma.cartItem.update({ where: { id: itemId }, data: { quantity } });
     }
-    return this.view(userId);
+    return this.view(userId, item.cart.businessUnit);
   }
 
   async removeItem(userId: string, itemId: string) {
-    const cart = await this.getOrCreate(userId);
-    const item = await this.prisma.cartItem.findUnique({ where: { id: itemId } });
-    if (!item || item.cartId !== cart.id) throw new NotFoundException('Sepet kalemi bulunamadı');
+    const item = await this.kalemBul(userId, itemId);
     await this.prisma.cartItem.delete({ where: { id: itemId } });
-    return this.view(userId);
+    return this.view(userId, item.cart.businessUnit);
   }
 
-  async clear(userId: string) {
-    const cart = await this.getOrCreate(userId);
+  async clear(userId: string, dikey: BusinessUnit | null) {
+    const cart = await this.sepetBul(userId, dikey);
+    if (!cart) return this.view(userId, dikey);
     await this.prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
     await this.prisma.cart.update({ where: { id: cart.id }, data: { storeId: null } });
-    return this.view(userId);
+    return this.view(userId, cart.businessUnit);
   }
 }

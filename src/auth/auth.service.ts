@@ -4,6 +4,7 @@ import { UserStatus, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp/otp.service';
 import { TokenService } from './tokens/token.service';
+import { originDikey } from '../common/domain/dikey-domain';
 
 interface ReqMeta { ip?: string; userAgent?: string }
 
@@ -82,7 +83,16 @@ export class AuthService {
     if (mevcutToken) {
       const payload = this.tokens.verifyAccess(mevcutToken);
       if (payload && payload.sub !== user.id) {
-        const doluMu = await this.prisma.cartItem.count({ where: { cart: { userId: payload.sub } } });
+        // Sepet dikeye kilitli oldugundan cakisma da DIKEY BAZLIDIR: hedef
+        // banikervan ise oradaki carsi sepeti korunur, kullanicinin dolu market
+        // sepeti devri bloklamaz. Hedef dikey cozulemezse (ana domain) eski
+        // davranis surer: herhangi bir dolu sepet devri durdurur.
+        const hedefDikey = originDikey(istekOrigin);
+        const doluMu = await this.prisma.cartItem.count({
+          where: {
+            cart: { userId: payload.sub, ...(hedefDikey ? { businessUnit: hedefDikey } : {}) },
+          },
+        });
         if (doluMu > 0) {
           // Kod zaten tuketildi (tek kullanimlik); token URETILMEZ ki hedefteki
           // oturum ve sepeti oldugu gibi kalsin.

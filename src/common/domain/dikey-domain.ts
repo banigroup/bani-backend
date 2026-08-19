@@ -24,6 +24,14 @@ export const DIKEY_DOMAIN: Partial<Record<BusinessUnit, string>> = {
   [BusinessUnit.DICLEFUL]: 'diclefulfillment.com.tr',
 };
 
+/**
+ * Markali domain -> dikey. DIKEY_DOMAIN'in tersi; elle degil turetilerek tutulur
+ * ki iki harita birbirinden ayrisamasin.
+ */
+const DOMAIN_DIKEY: Record<string, BusinessUnit> = Object.fromEntries(
+  Object.entries(DIKEY_DOMAIN).map(([dikey, host]) => [host, dikey as BusinessUnit]),
+);
+
 /** Origin basligindan host cikarir: www ve port atilir, kucuk harfe inilir. */
 export function originHost(origin?: string): string | null {
   if (!origin) return null;
@@ -32,6 +40,41 @@ export function originHost(origin?: string): string | null {
   } catch {
     return null; // 'null' string'i ya da bozuk deger
   }
+}
+
+/**
+ * Origin markali bir dikeye aitse o dikeyi doner. Ana domain her dikeyi sundugu
+ * icin oradan gelen istekte dikey ORIGIN'DEN CIKARILAMAZ -> null.
+ */
+export function originDikey(origin?: string): BusinessUnit | null {
+  const host = originHost(origin);
+  if (!host) return null;
+  return DOMAIN_DIKEY[host] ?? null;
+}
+
+/** Istemcinin bildirdigi serbest metni enum degerine cevirir; taninmayan deger null. */
+export function dikeyAyristir(deger?: string): BusinessUnit | null {
+  if (!deger) return null;
+  const buyuk = deger.trim().toUpperCase();
+  return (Object.values(BusinessUnit) as string[]).includes(buyuk)
+    ? (buyuk as BusinessUnit)
+    : null;
+}
+
+/**
+ * Sepet islemleri icin dikeyi cozer.
+ *
+ * SIRA: origin (markali domainse) > istemci basligi. Origin markali bir domainse
+ * OTORITERDIR - kullanici banimarket.com.tr'deyken market sepetini gormeli,
+ * baslik ne derse desin. Ikisi de coz(e)mezse null doner; cagiran taraf o zaman
+ * gecis kuralini uygular (bkz. CartService.sepetCoz).
+ *
+ * NOT: urun eklemede dikey BURADAN alinmaz - urunun magazasinin dikeyi
+ * otoriterdir; boylece istemci basligiyla oynayarak sepeti yanlis dikeye
+ * yazamaz.
+ */
+export function dikeyCoz(origin?: string, baslik?: string): BusinessUnit | null {
+  return originDikey(origin) ?? dikeyAyristir(baslik);
 }
 
 export interface OriginKontrolSonuc {
