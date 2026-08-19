@@ -10,6 +10,21 @@ import { WalletService } from '../finance/services/wallet.service';
 import { OrderStatusService } from '../orders/order-status.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 
+// Hatali teslim kodu denemesi siniri. OtpService.maxAttempts ile ayni sayi (5).
+const MAX_KOD_DENEME = 5;
+
+// KURYE/ADMIN UCLARININ DONDUGU ALANLAR — teslimKod BILEREK YOK.
+// Prisma findMany/update varsayilan olarak TUM skaler alanlari dondurur; select
+// yazilmazsa teslim kodu kuryenin kendi yanitinda gorunur ve dogrulama anlamsiz
+// hale gelirdi (kurye musteriye sormadan kendi ekranindan okur). Kodu yalnizca
+// siparis sahibi gorur (orders.service).
+const KURYE_ALAN = {
+  id: true, orderId: true, courierId: true, status: true, fee: true, note: true,
+  yontem: true, kargoFirmasi: true, takipNo: true,
+  teslimKodDogrulandiAt: true, // dogrulandi mi bilgisi kuryeye acik; KODUN KENDISI degil
+  assignedAt: true, pickedUpAt: true, deliveredAt: true, createdAt: true, updatedAt: true,
+} as const;
+
 @Injectable()
 export class DeliveryService {
   constructor(
@@ -53,7 +68,8 @@ export class DeliveryService {
       where: { status: DeliveryStatus.PENDING, order: { status: OrderStatus.READY, businessUnit: { not: BusinessUnit.CARSI } } },
       orderBy: { createdAt: 'asc' },
       take: 100,
-      include: {
+      select: {
+        ...KURYE_ALAN,
         order: {
           select: {
             id: true, orderNo: true, total: true, deliveryFee: true,
@@ -72,7 +88,7 @@ export class DeliveryService {
       where: { status: DeliveryStatus.PENDING, order: { status: OrderStatus.READY, businessUnit: BusinessUnit.CARSI } },
       orderBy: { createdAt: 'asc' },
       take: 100,
-      include: { order: { select: { id: true, orderNo: true, total: true, deliveryFee: true, addressText: true, contactPhone: true, storeId: true, store: { select: { name: true, city: true, district: true, line1: true } } } } },
+      select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, total: true, deliveryFee: true, addressText: true, contactPhone: true, storeId: true, store: { select: { name: true, city: true, district: true, line1: true } } } } },
     });
   }
 
@@ -85,7 +101,7 @@ export class DeliveryService {
       where,
       orderBy: { updatedAt: 'desc' },
       take: 100,
-      include: { order: { select: { id: true, orderNo: true, total: true, status: true, addressText: true } } },
+      select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, total: true, status: true, addressText: true } } },
     });
   }
 
@@ -144,7 +160,7 @@ export class DeliveryService {
 
     return this.prisma.delivery.findUnique({
       where: { id },
-      include: { order: { select: { id: true, orderNo: true, status: true } } },
+      select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, status: true } } },
     });
   }
 
@@ -168,13 +184,17 @@ export class DeliveryService {
       return tx.delivery.update({
         where: { id },
         data: { status: DeliveryStatus.PICKED_UP, pickedUpAt: new Date() },
-        include: { order: { select: { id: true, orderNo: true, status: true } } },
+        select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, status: true } } },
       });
     });
   }
 
-  // Teslim ettim: PICKED_UP -> DELIVERED, sipariş -> DELIVERED, escrow dağıtımı
-  async deliver(user: AuthUser, id: string) {
+  // Teslim ettim: PICKED_UP -> DELIVERED, sipariş -> DELIVERED, escrow dağıtımı.
+  //
+  // TESLIM KANITI: teslimat ancak müşterinin okuduğu 6 haneli kod doğrulanırsa
+  // kapanır. Kod doğrulanmadan ne sipariş DELIVERED olur ne de escrow dağıtılır —
+  // ikisi de aşağıdaki transaction'ın İÇİNDE, kod kapısının ARDINDA.
+  async deliver(user: AuthUser, id: string, teslimKod: string) {
     this.assertCourier(user);
     const d = await this.load(id);
     this.assertKervanDisi(d.order.businessUnit);
@@ -195,6 +215,32 @@ export class DeliveryService {
     if (d.status !== DeliveryStatus.PICKED_UP) {
       throw new ConflictException(`Bu durumda teslim edilemez: ${d.status}`);
     }
+
+    // ---- TESLIM KODU: erken ret ----
+    // Bağlayıcı kontrol bu DEĞİL (o, transaction içindeki koşullu yazım). Buradaki
+    // amaç ucuz yoldan durmak ve hatalı denemeyi sayaca yazmak: sayaç artışı
+    // transaction'ın İÇİNDE olsaydı hata fırlatınca rollback ile birlikte silinir,
+    // deneme sınırı hiç dolmazdı.
+    if (!d.teslimKod) {
+      throw new ConflictException(
+        'Bu teslimatta teslim kodu tanımlı değil; kod doğrulanmadan teslimat kapatılamaz. Destek ile iletişime geçin.',
+      );
+    }
+    if (d.teslimKodDeneme >= MAX_KOD_DENEME) {
+      throw new ConflictException('Çok fazla hatalı teslim kodu denemesi. Destek ile iletişime geçin.');
+    }
+    const girilenKod = (teslimKod ?? '').trim();
+    if (girilenKod !== d.teslimKod) {
+      const kalan = MAX_KOD_DENEME - (d.teslimKodDeneme + 1);
+      await this.prisma.delivery.update({
+        where: { id },
+        data: { teslimKodDeneme: { increment: 1 } },
+      });
+      throw new BadRequestException(
+        kalan > 0 ? `Teslim kodu hatalı. Kalan deneme: ${kalan}` : 'Teslim kodu hatalı. Deneme hakkı doldu.',
+      );
+    }
+
     const order = d.order;
     const isCarsi = order.businessUnit === BusinessUnit.CARSI;
 
@@ -205,6 +251,27 @@ export class DeliveryService {
     const courierWallet = await this.wallet.getOrCreateUserWallet(user.id);
 
     return this.prisma.$transaction(async (tx) => {
+      // KOD KAPISI: para kapısından da ÖNCE. Yukarıdaki karşılaştırma transaction
+      // DIŞINDA okunmuş veriye bakıyor; aynı kodla gelen ikinci bir istek (çift
+      // tıklama, tekrar gönderim) araya girip ikinci kez dağıtım tetikleyebilirdi.
+      // Koşullu yazım bunu kapatır: teslimKodDogrulandiAt yalnızca NULL iken
+      // damgalanır, ikinci istek 0 satır günceller ve burada durur. Aynı koşul
+      // durumu da çiviler — kod doğru olsa bile teslimat PICKED_UP değilse yazmaz.
+      const { count } = await tx.delivery.updateMany({
+        where: {
+          id,
+          status: DeliveryStatus.PICKED_UP,
+          teslimKod: girilenKod,
+          teslimKodDogrulandiAt: null,
+        },
+        data: { teslimKodDogrulandiAt: new Date() },
+      });
+      if (count === 0) {
+        throw new ConflictException(
+          'Teslim kodu bu sırada doğrulanmış ya da teslimat durumu değişmiş; teslimat kapatılmadı.',
+        );
+      }
+
       // PARA KAPISI: escrow dağıtımından ÖNCE ve aynı transaction içinde.
       // Sipariş araya giren bir iptalle CANCELLED olduysa burada durulur; aksi hâlde
       // hem satıcı/platform/kuryeye dağıtım hem müşteriye iade yapılır ve escrow'dan
@@ -218,7 +285,7 @@ export class DeliveryService {
       const updated = await tx.delivery.update({
         where: { id },
         data: { status: DeliveryStatus.DELIVERED, deliveredAt: new Date() },
-        include: { order: { select: { id: true, orderNo: true, status: true } } },
+        select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, status: true } } },
       });
 
       // ---- Dağıtım ----
@@ -312,7 +379,7 @@ export class DeliveryService {
           status: DeliveryStatus.PICKED_UP,
           pickedUpAt: new Date(),
         },
-        include: { order: { select: { id: true, orderNo: true, status: true } } },
+        select: { ...KURYE_ALAN, order: { select: { id: true, orderNo: true, status: true } } },
       });
     });
   }

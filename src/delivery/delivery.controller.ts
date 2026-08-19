@@ -8,6 +8,7 @@ import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorat
 import { AuditService } from '../common/audit/audit.service';
 import { DeliveryService } from './delivery.service';
 import { AraciKurumDto } from './dto/araci-kurum.dto';
+import { TeslimKoduDto } from './dto/teslim-kodu.dto';
 
 @Controller('delivery')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -54,10 +55,12 @@ export class DeliveryController {
     return r;
   }
 
+  // Teslim kodu ZORUNLU: musteriden alinan 6 hane dogrulanmadan teslimat
+  // kapanmaz ve escrow dagitilmaz (bkz. delivery.service.deliver).
   @RequirePermissions(Permission.DELIVERY_CLAIM)
   @Post(':id/deliver')
-  async deliver(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
-    const r = await this.delivery.deliver(user, id);
+  async deliver(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: TeslimKoduDto, @Req() req: Request) {
+    const r = await this.delivery.deliver(user, id, dto.teslimKod);
     await this.audit.record({ actorId: user.id, action: 'delivery.deliver', entity: 'Delivery', entityId: id, ip: req.ip });
     return r;
   }

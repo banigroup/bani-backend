@@ -562,11 +562,26 @@ model Delivery {
   yontem       DeliveryYontem @default(KENDI) // kendi kuryesi mi, aracı kurum mu
   kargoFirmasi KargoFirmasi? // ARACI ise hangi firma
   takipNo      String?        @unique // aracı firmanın takip no'su (public takip anahtarı)
-  assignedAt   DateTime?
-  pickedUpAt   DateTime?
-  deliveredAt  DateTime?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+
+  // TESLIM KANITI — tek kullanimlik teslim kodu.
+  // Siparis onaylandiginda uretilir, musteriye bildirilir (siparis ekrani birincil
+  // kanal; contactPhone varsa SMS ikincil), kurye teslimat aninda girer.
+  // deliver() bu kod dogrulanmadan DELIVERED yazmaz ve escrow dagitimi yapmaz.
+  //
+  // DUZ METIN saklanir (hash degil): musteri kodu her an tekrar gorebilmeli.
+  // Siparislerin buyuk cogunlugu misafir ve telefonsuz oldugu icin "yalnizca
+  // uretim aninda goster" pratikte kodu kaybettirirdi. Kod bir kimlik dogrulama
+  // sirri degil, fiziksel teslimin ikinci teyididir; KURYE UCLARINDA DONMEZ.
+  // unique DEGIL: 6 hanede cakisma normaldir, unique olsa uretim rastgele patlardi.
+  teslimKod             String?
+  teslimKodDogrulandiAt DateTime?
+  teslimKodDeneme       Int       @default(0)
+
+  assignedAt  DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   deletedAt DateTime?
 

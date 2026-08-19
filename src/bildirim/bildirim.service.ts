@@ -12,6 +12,10 @@ const SABLONLAR: Record<string, string> = {
   BELGE_ONAY: 'BaniLoad: {belge} belgeniz onaylandi.',
   BELGE_RED: 'BaniLoad: {belge} belgeniz reddedildi. Gerekce: {gerekce}',
   KOMISYON_ONAY: 'BaniLoad: komisyon odemeniz onaylandi.',
+  // Teslim kodu IKINCIL kanaldir: birincil kanal siparis ekranidir (musterilerin
+  // buyuk cogunlugu misafir ve kayitli telefonu yok). Yalnizca contactPhone dolu
+  // siparislerde gonderilir.
+  TESLIM_KODU: 'BANI GROUP: {orderNo} siparisinizin teslim kodu: {kod}. Kuryeye teslim aninda soyleyin.',
 };
 
 @Injectable()
