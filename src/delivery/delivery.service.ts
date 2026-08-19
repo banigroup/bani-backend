@@ -34,9 +34,25 @@ export class DeliveryService {
     private readonly orderStatus: OrderStatusService,
   ) { }
 
+  // COURIER + PLATFORM YONETICISI (ADMIN, SUPER_ADMIN).
+  //
+  // ADMIN eskiden buraya giremiyordu: DELIVERY_READ/DELIVERY_MANAGE izinleri
+  // PermissionsGuard'i geciyor, sonra bu kontrol 403 veriyordu. Sonuc celiskiliydi
+  // - aracikurumaVer (:345) ADMIN sarti ariyor, yani admin bir teslimati kargo
+  // firmasina devredebiliyor ama devredecegi teslimatin id'sini listeleyebilecegi
+  // hicbir uc yoktu. orders.service.isAdmin ile ayni tanima hizalandi.
+  //
+  // KAPSAM: bu kapi ADMIN'e yalnizca OKUMA ve DEVIR aciyor, kurye isini degil.
+  // Sinir izin katmanindan geliyor - ADMIN_OPERATIONAL'da DELIVERY_READ ve
+  // DELIVERY_MANAGE var ama DELIVERY_CLAIM YOK:
+  //   available / cargo   (DELIVERY_READ)   -> ADMIN gecer
+  //   aracikurum          (DELIVERY_MANAGE) -> ADMIN gecer
+  //   mine/claim/pickup/deliver (DELIVERY_CLAIM) -> ADMIN'i guard keser, buraya
+  //   hic gelmez. Yani ADMIN bir teslimati ustlenip teslimat ucretini kendi
+  //   cuzdanina yazamaz; o yol COURIER ve SUPER_ADMIN'de kalir. (Yerelde dogrulandi.)
   private isCourier(user: AuthUser): boolean {
     const roles = user.roles ?? [];
-    return roles.includes(Role.COURIER) || roles.includes(Role.SUPER_ADMIN);
+    return roles.includes(Role.COURIER) || roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
   }
 
   private assertCourier(user: AuthUser) {

@@ -38,4 +38,10 @@ export enum Permission {
 
   // Finans — sadece Süper Admin
   FINANCE_READ = 'finance:read',
+
+  // Dikey bazlı P&L raporu. FINANCE_READ'den AYRI tutuluyor: o izin /superadmin
+  // controller'ının tamamını da açıyor ve Süper Admin'e özel kalmalı. Rapor ise
+  // ADMIN'in (platform operatörü) işi — eskiden uç FINANCE_READ istediği için
+  // gövdedeki "ADMIN da geçsin" kontrolü hiçbir zaman çalışmıyordu.
+  FINANCE_REPORT_READ = 'finance:report:read',
 }

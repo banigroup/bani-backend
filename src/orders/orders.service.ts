@@ -38,8 +38,20 @@ export class OrdersService {
     return randomInt(0, 1_000_000).toString().padStart(6, '0');
   }
 
+  // PLATFORM YONETICISI: ADMIN ve SUPER_ADMIN.
+  //
+  // Eskiden yalnizca SUPER_ADMIN'i kabul ediyordu; sebep politika degil TARIH:
+  // bu satir Faz 3'te (2026-06-14, 1700138) yazildi, ADMIN rolu Faz 5'te
+  // (2026-06-20, 794d2c2) eklendi ve o commit bu dosyaya hic dokunmadi. Sonuc:
+  // ADMIN'in ORDER_READ/ORDER_MANAGE izni PermissionsGuard'i geciyor ama burada
+  // sahiplik kontrolune takiliyordu - izni olan, verisi olmayan bir rol.
+  // Load tarafi (load.service.ts:737, evdeneve.service.ts:20) dogru desende;
+  // burasi ona hizalandi. ADMIN artik platform operatorudur: tum magazalarin
+  // siparislerini gorur ve durum ilerletir. Musteri adres/telefon verisine
+  // erisim bu kapsamin bilincli parcasidir.
   private isAdmin(user: AuthUser): boolean {
-    return (user.roles ?? []).includes(Role.SUPER_ADMIN);
+    const roles = user.roles ?? [];
+    return roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
   }
 
   private orderNo(): string {
