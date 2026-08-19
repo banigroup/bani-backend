@@ -18,16 +18,25 @@ export class DeliveryController {
     private readonly audit: AuditService,
   ) { }
 
+  // HAVUZ OKUMALARI AUDIT'LENIR: bu iki uc, siparis basina kaba konum ve tutar
+  // donduren TOPLU okumalar. Kimin havuzu ne sıklıkta cektigi daha once hicbir
+  // yerde iz birakmiyordu (audit yalnizca claim/pickup/deliver/aracikurum
+  // uzerindeydi). Kayit yalnizca servis basariyla donerse yazilir - reddedilen
+  // istek audit'e girmez (kural 7 ile ayni desen).
   @RequirePermissions(Permission.DELIVERY_READ)
   @Get('available')
-  available(@CurrentUser() user: AuthUser) {
-    return this.delivery.available(user);
+  async available(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    const r = await this.delivery.available(user);
+    await this.audit.record({ actorId: user.id, action: 'delivery.available.read', entity: 'Delivery', ip: req.ip, metadata: { kayit: r.length } });
+    return r;
   }
 
   @RequirePermissions(Permission.DELIVERY_READ)
   @Get('cargo')
-  cargo(@CurrentUser() user: AuthUser) {
-    return this.delivery.cargoQueue(user);
+  async cargo(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    const r = await this.delivery.cargoQueue(user);
+    await this.audit.record({ actorId: user.id, action: 'delivery.cargo.read', entity: 'Delivery', ip: req.ip, metadata: { kayit: r.length } });
+    return r;
   }
 
   @RequirePermissions(Permission.DELIVERY_CLAIM)

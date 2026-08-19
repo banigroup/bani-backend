@@ -29,8 +29,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   RESTAURANT: MERCHANT_LIKE,
   MARKET_OPERATOR: MERCHANT_LIKE,
   COFFEE_BRANCH: [P.ADDRESS_READ, P.WALLET_READ, P.TRANSACTION_READ, P.STORE_READ, P.PRODUCT_READ, P.PRODUCT_WRITE, P.ORDER_READ, P.ORDER_MANAGE],
-  DICLEFUL_OPERATOR: [P.USER_READ, P.ADDRESS_READ, P.WALLET_READ, P.TRANSACTION_READ],
-  DICLEFUL_DRIVER: [P.ADDRESS_READ, P.WALLET_READ],
+  // DELIVERY_READ eklendi: Carsi/kargo kuyrugu (GET /delivery/cargo) DicleFul'un
+  // isi. Kuyruk daha once yalnizca COURIER'a acikti - o rol ise Carsi teslimatini
+  // ustlenemiyor (claim -> assertKervanDisi), yani calisamayacagi kayitlarin
+  // adresini goruyordu. Kurye havuzu (GET /delivery/available) bu izinle ACILMAZ:
+  // orada assertCourier DicleFul rollerini disarida birakiyor.
+  DICLEFUL_OPERATOR: [P.USER_READ, P.ADDRESS_READ, P.WALLET_READ, P.TRANSACTION_READ, P.DELIVERY_READ],
+  DICLEFUL_DRIVER: [P.ADDRESS_READ, P.WALLET_READ, P.DELIVERY_READ],
   LOAD_CUSTOMER: [P.ADDRESS_READ, P.ADDRESS_WRITE, P.WALLET_READ, P.TRANSACTION_READ],
   CARRIER: [P.ADDRESS_READ, P.WALLET_READ, P.TRANSACTION_READ],
 };
