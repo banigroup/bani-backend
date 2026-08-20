@@ -1,0 +1,214 @@
+// FAZ 3 / ADIM 4b — VITRINDE SECENEK OKUMA
+// Calistir: npm run build && node test-vitrin-secenek.js
+//
+// ASIL KURAL: vitrinde gorulen ek ucret ile sepette odenen ek ucret AYRISAMAZ.
+// Bu yuzden test iki tarafi da gercek kodla calistirip karsilastiriyor
+// (CatalogService.getPublicProduct / listProducts ve CartService.addItem).
+//
+// YALNIZCA YEREL DOCKER DB: kapi localhost disinda calismayi reddeder.
+// Test verisi benzersiz onekle yaratilir ve sonunda TAMAMEN silinir.
+const fs = require('fs');
+const path = require('path');
+try {
+  const env = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+  env.split('\n').forEach((line) => {
+    const m = line.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  });
+} catch (e) { /* .env yoksa ortam degiskeni beklenir */ }
+
+const u = new URL(process.env.DATABASE_URL || 'postgres://yok/yok');
+if (!['localhost', '127.0.0.1'].includes(u.hostname)) {
+  console.error(`REDDEDILDI: bu betik yalnizca yerel DB'de calisir. Hedef: ${u.hostname}:${u.port}`);
+  process.exit(1);
+}
+console.log(`DB: ${u.hostname}:${u.port}${u.pathname}\n`);
+
+const { PrismaClient } = require('@prisma/client');
+const { CatalogService } = require('./dist/src/catalog/catalog.service');
+const { CartService } = require('./dist/src/cart/cart.service');
+const { vitrinFiyatHesapla, ekUcretHesapla } = require('./dist/src/delivery/pricing');
+
+const prisma = new PrismaClient();
+// Public okuma yollari market.assertOwner cagirmaz; bos vekil yeterli.
+const bosVekil = new Proxy({}, { get: () => async () => undefined });
+const katalog = new CatalogService(prisma, bosVekil);
+const cart = new CartService(prisma);
+
+const ON = `__TEST_VIT_${Date.now()}`;
+let gecti = 0;
+let kaldi = 0;
+function ok(ad, sonuc, detay = '') {
+  if (sonuc) { gecti++; console.log(`  GECTI  ${ad}${detay ? ' — ' + detay : ''}`); }
+  else { kaldi++; console.log(`  KALDI  ${ad}${detay ? ' — ' + detay : ''}`); }
+}
+
+async function kur() {
+  const user = await prisma.user.create({ data: { phone: ON.slice(0, 20), name: 'Test', status: 'ACTIVE' } });
+  const seller = await prisma.seller.create({
+    data: {
+      ownerUserId: user.id, sellerType: 'RESTORAN',
+      legalName: `${ON} AS`, displayName: ON, status: 'ACTIVE',
+    },
+  });
+  const magaza = (dikey, komisyonBinde) => prisma.store.create({
+    data: {
+      ownerId: user.id, sellerId: seller.id, name: `${ON}-${dikey}`,
+      slug: `${ON}-${dikey}`.toLowerCase(), type: 'RESTAURANT',
+      businessUnit: dikey, commissionRate: komisyonBinde, isActive: true,
+    },
+  });
+  const marketMagaza = await magaza('MARKET', 1000);
+  const carsiMagaza = await magaza('CARSI', 800);
+
+  const marketUrun = await prisma.product.create({
+    data: {
+      storeId: marketMagaza.id, name: `${ON} Doner`, slug: `${ON}-doner`.toLowerCase(),
+      price: 10000n, stock: 100, isActive: true, kdvOrani: 10,
+    },
+  });
+  // Secenegi OLMAYAN urun: yanit sekli degismedigini gostermek icin.
+  const sadeUrun = await prisma.product.create({
+    data: {
+      storeId: marketMagaza.id, name: `${ON} Ayran`, slug: `${ON}-ayran`.toLowerCase(),
+      price: 2000n, stock: 100, isActive: true, kdvOrani: 1,
+    },
+  });
+
+  const carsiNet = 20000n;
+  const h = vitrinFiyatHesapla(carsiNet, 1, 1, 'A', 10, 8n);
+  if (!h.ok) throw new Error(h.sebep);
+  const carsiUrun = await prisma.product.create({
+    data: {
+      storeId: carsiMagaza.id, name: `${ON} Kolye`, slug: `${ON}-kolye`.toLowerCase(),
+      price: h.vitrinKurus, netFiyat: carsiNet, stock: 100, isActive: true, kdvOrani: 10,
+      komisyonTutari: h.komisyonKurus, kargoTutari: h.kargoKurus + h.yuvarlamaKurus,
+      malKdvTutari: h.malKdvKurus, hizmetKdvTutari: h.hizmetKdvKurus,
+      desi: 1, weightKg: 1, satisModeli: 'A',
+    },
+  });
+
+  const grupYap = async (storeId, ad, min, max, zorunlu, secenekler, grupAktif = true) => {
+    const g = await prisma.optionGroup.create({
+      data: { storeId, name: ad, minSecim: min, maxSecim: max, zorunlu, isActive: grupAktif },
+    });
+    const o = [];
+    for (const [sad, ucret, aktif] of secenekler) {
+      o.push(await prisma.option.create({
+        data: { optionGroupId: g.id, name: sad, ekUcret: BigInt(ucret), isActive: aktif !== false },
+      }));
+    }
+    return { g, o };
+  };
+
+  // MARKET urunu: bir aktif grup (biri PASIF secenek) + bir PASIF grup.
+  const sos = await grupYap(marketMagaza.id, 'Sos', 0, 2, false,
+    [['Ketcap', 500], ['Mayonez', 700], ['Kaldirilmis', 900, false]]);
+  const kapali = await grupYap(marketMagaza.id, 'Kapali grup', 0, 1, false, [['Gizli', 1234]], false);
+  const boy = await grupYap(marketMagaza.id, 'Boy', 1, 1, true, [['Normal', 0], ['Buyuk', 2500]]);
+  await prisma.productOptionGroup.createMany({
+    data: [
+      { productId: marketUrun.id, optionGroupId: sos.g.id, sortOrder: 0 },
+      { productId: marketUrun.id, optionGroupId: kapali.g.id, sortOrder: 1 },
+      { productId: marketUrun.id, optionGroupId: boy.g.id, sortOrder: 2 },
+    ],
+  });
+
+  // CARSI urunu: ek ucret 1000 kurus NET.
+  const kaplama = await grupYap(carsiMagaza.id, 'Kaplama', 0, 1, false, [['Altin', 1000]]);
+  await prisma.productOptionGroup.create({
+    data: { productId: carsiUrun.id, optionGroupId: kaplama.g.id, sortOrder: 0 },
+  });
+
+  return { user, marketMagaza, marketUrun, sadeUrun, carsiUrun, sos, boy, kaplama, kapali };
+}
+
+async function temizle(f) {
+  if (!f) return;
+  const urunler = [f.marketUrun?.id, f.sadeUrun?.id, f.carsiUrun?.id].filter(Boolean);
+  await prisma.cartItem.deleteMany({ where: { cart: { userId: f.user.id } } });
+  await prisma.cart.deleteMany({ where: { userId: f.user.id } });
+  await prisma.productOptionGroup.deleteMany({ where: { productId: { in: urunler } } });
+  await prisma.option.deleteMany({ where: { group: { store: { name: { startsWith: ON } } } } });
+  await prisma.optionGroup.deleteMany({ where: { store: { name: { startsWith: ON } } } });
+  await prisma.product.deleteMany({ where: { id: { in: urunler } } });
+  await prisma.store.deleteMany({ where: { name: { startsWith: ON } } });
+  await prisma.seller.deleteMany({ where: { displayName: { startsWith: ON } } });
+  await prisma.user.deleteMany({ where: { id: f.user.id } });
+}
+
+(async () => {
+  let f;
+  try {
+    f = await kur();
+
+    // ---- 1) CARSI: musteri fiyati doner, satici neti DEGIL ----
+    console.log('1) Carsi urun detayi -> musteri fiyati');
+    const cUrun = await katalog.getPublicProduct(f.carsiUrun.id);
+    const beklenen = ekUcretHesapla(1000n, 10, 8n).vitrinKurus;
+    const altin = cUrun.secenekGruplari[0].secenekler[0];
+    ok('grup doner', cUrun.secenekGruplari.length === 1 && cUrun.secenekGruplari[0].name === 'Kaplama');
+    ok('ek ucret musteri fiyati', altin.ekUcret === beklenen, `${altin.ekUcret}`);
+    ok('satici neti SIZMIYOR', altin.ekUcret !== 1000n, `ham 1000 degil, ${altin.ekUcret}`);
+    ok('magaza alani yanitta yok', cUrun.store === undefined);
+
+    // ---- 2) ASIL KURAL: vitrin fiyati == sepete yazilan ek ucret ----
+    console.log('\n2) Vitrinde gorulen == sepette odenen');
+    const g = await cart.addItem(f.user.id, { productId: f.carsiUrun.id, optionIds: [altin.id] });
+    ok('sepet ek ucreti vitrinle ayni', g.items[0].ekUcretToplam === altin.ekUcret,
+      `vitrin ${altin.ekUcret} / sepet ${g.items[0].ekUcretToplam}`);
+    await cart.clear(f.user.id, 'CARSI');
+
+    // ---- 3) CARSI DISI: ekUcret oldugu gibi ----
+    console.log('\n3) Carsi disi dikey -> ekUcret dogrudan');
+    const mUrun = await katalog.getPublicProduct(f.marketUrun.id);
+    const sosGrubu = mUrun.secenekGruplari.find((x) => x.name === 'Sos');
+    const ketcap = sosGrubu.secenekler.find((s) => s.name === 'Ketcap');
+    ok('ek ucret ham deger', ketcap.ekUcret === 500n, `${ketcap.ekUcret}`);
+
+    // ---- 4) PASIF secenek ve PASIF grup vitrinde YOK ----
+    console.log('\n4) Pasif kayitlar suzuluyor');
+    ok('pasif secenek gizli', !sosGrubu.secenekler.some((s) => s.name === 'Kaldirilmis'),
+      `secenekler: ${sosGrubu.secenekler.map((s) => s.name).join(', ')}`);
+    ok('pasif grup gizli', !mUrun.secenekGruplari.some((x) => x.name === 'Kapali grup'),
+      `gruplar: ${mUrun.secenekGruplari.map((x) => x.name).join(', ')}`);
+
+    // ---- 5) Istemci dogrulamasi icin sinirlar doner ----
+    console.log('\n5) Grup sinirlari yanitta');
+    const boyGrubu = mUrun.secenekGruplari.find((x) => x.name === 'Boy');
+    ok('zorunlu/min/max doner',
+      boyGrubu.zorunlu === true && boyGrubu.minSecim === 1 && boyGrubu.maxSecim === 1);
+    ok('grup sirasi urun bagindan', mUrun.secenekGruplari[0].name === 'Sos',
+      mUrun.secenekGruplari.map((x) => x.name).join(' < '));
+
+    // ---- 6) LISTE ucu da ayni fiyati veriyor ----
+    console.log('\n6) Urun listesi ucu');
+    const liste = await katalog.listProducts(f.marketUrun.storeId);
+    const listeDoner = liste.find((p) => p.id === f.marketUrun.id);
+    const listeKetcap = listeDoner.secenekGruplari
+      .find((x) => x.name === 'Sos').secenekler.find((s) => s.name === 'Ketcap');
+    ok('listede de secenekler var', listeKetcap.ekUcret === 500n, `${listeKetcap.ekUcret}`);
+    ok('listede magaza alani yok', listeDoner.store === undefined);
+
+    const carsiListe = await katalog.listProducts(f.carsiUrun.storeId);
+    const carsiListeUrun = carsiListe.find((p) => p.id === f.carsiUrun.id);
+    ok('listede de musteri fiyati',
+      carsiListeUrun.secenekGruplari[0].secenekler[0].ekUcret === beklenen,
+      `${carsiListeUrun.secenekGruplari[0].secenekler[0].ekUcret}`);
+
+    // ---- 7) Secenegi olmayan urun -> gorunum degismedi ----
+    console.log('\n7) Secenegi olmayan urun');
+    const sade = await katalog.getPublicProduct(f.sadeUrun.id);
+    ok('secenekGruplari bos dizi', Array.isArray(sade.secenekGruplari) && sade.secenekGruplari.length === 0);
+    ok('urun alanlari yerinde', sade.id === f.sadeUrun.id && sade.price === 2000n);
+
+    console.log(`\n=== GECTI: ${gecti} | KALDI: ${kaldi} ===`);
+  } catch (e) {
+    console.error('\nBETIK HATASI:', e?.response?.message ?? e?.message ?? e);
+    kaldi++;
+  } finally {
+    await temizle(f).catch((e) => console.error('temizlik:', e.message));
+    await prisma.$disconnect();
+    process.exit(kaldi > 0 ? 1 : 0);
+  }
+})();

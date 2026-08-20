@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
-import { BusinessUnit, Role, SellerStatus } from '@prisma/client';
+import { BusinessUnit, Prisma, Role, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MarketService } from '../market/market.service';
 import { slugify, randomSuffix } from '../common/util/slug';
@@ -10,7 +10,45 @@ import {
   UrunSecenekGruplariDto, MedyaEkleDto, MedyaGuncelleDto,
 } from './dto/varyant.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { vitrinFiyatHesapla, kdvOraniBul } from '../delivery/pricing';
+import { vitrinFiyatHesapla, kdvOraniBul, ekUcretHesapla } from '../delivery/pricing';
+
+// VITRINDE GORUNEN SECENEK YAPISI — okuma uclarinin ortak include'u.
+// Yalnizca AKTIF grup ve AKTIF secenek doner: sepet dogrulamasi da tam olarak
+// bunu suzuyor (cart.secimleriCoz), dolayisiyla vitrinde gorunen her secenek
+// sepete eklenebilir. Siralama urun<->grup baginin sortOrder'i: ayni grup iki
+// urunde farkli sirada durabilsin.
+const VITRIN_SECENEKLERI = Prisma.validator<Prisma.Product$secenekGruplariArgs>()({
+  where: { group: { isActive: true } },
+  orderBy: { sortOrder: 'asc' },
+  include: {
+    group: {
+      select: {
+        id: true,
+        name: true,
+        minSecim: true,
+        maxSecim: true,
+        zorunlu: true,
+        options: {
+          where: { isActive: true },
+          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+          select: { id: true, name: true, ekUcret: true, sortOrder: true },
+        },
+      },
+    },
+  },
+});
+
+type VitrinSecenekBagi = {
+  sortOrder: number;
+  group: {
+    id: string;
+    name: string;
+    minSecim: number;
+    maxSecim: number;
+    zorunlu: boolean;
+    options: { id: string; name: string; ekUcret: bigint; sortOrder: number }[];
+  };
+};
 
 @Injectable()
 export class CatalogService {
@@ -94,8 +132,62 @@ export class CatalogService {
   }
 
   // ---- Urunler ----
-  listProducts(storeId: string, categoryId?: string, skip = 0, take = 50) {
-    return this.prisma.product.findMany({
+
+  /**
+   * SECENEKLERI MUSTERI FIYATIYLA DONDURUR — vitrin uclarinin TEK YERI.
+   *
+   * Carsi'da Option.ekUcret SATICININ NETIDIR; musterinin odeyecegi tutar
+   * komisyon + mal KDV + hizmet KDV eklenerek uretilir. Ikinci bir fiyat
+   * formulu YAZILMADI: sepet de (cart.secimleriCoz) ayni ekUcretHesapla'yi
+   * cagiriyor, dolayisiyla vitrinde gorulen ile sepette odenen ayrisamaz.
+   * Ham ekUcret disariya hicbir kosulda cikmaz.
+   *
+   * Carsi disi dikeylerde ekUcret zaten satis tutaridir, oldugu gibi doner.
+   */
+  private secenekleriVitrine(
+    urun: { kdvOrani: number },
+    magaza: { businessUnit: BusinessUnit; commissionRate: number },
+    baglar: VitrinSecenekBagi[],
+  ) {
+    const carsi = magaza.businessUnit === BusinessUnit.CARSI;
+    const komisyonOran = BigInt(magaza.commissionRate) / 100n;
+    return baglar.map((b) => ({
+      id: b.group.id,
+      name: b.group.name,
+      minSecim: b.group.minSecim,
+      maxSecim: b.group.maxSecim,
+      zorunlu: b.group.zorunlu,
+      sortOrder: b.sortOrder,
+      secenekler: b.group.options.map((o) => ({
+        id: o.id,
+        name: o.name,
+        // MUSTERI FIYATI (kurus). Istemci bunu oldugu gibi gosterir ve
+        // sepete optionId gonderir; ceviriyi tekrar yapmasi gerekmez.
+        ekUcret: carsi
+          ? ekUcretHesapla(o.ekUcret, urun.kdvOrani, komisyonOran).vitrinKurus
+          : o.ekUcret,
+        sortOrder: o.sortOrder,
+      })),
+    }));
+  }
+
+  /**
+   * Ham urun kaydini vitrin gorunumune cevirir. store BILEREK cikariliyor:
+   * yalnizca secenek fiyatlandirmasi icin okundu, yanitin sekli degismesin.
+   */
+  private vitrinUrun<
+    T extends {
+      kdvOrani: number;
+      store: { businessUnit: BusinessUnit; commissionRate: number };
+      secenekGruplari: VitrinSecenekBagi[];
+    },
+  >(kayit: T) {
+    const { store, secenekGruplari, ...urun } = kayit;
+    return { ...urun, secenekGruplari: this.secenekleriVitrine(urun, store, secenekGruplari) };
+  }
+
+  async listProducts(storeId: string, categoryId?: string, skip = 0, take = 50) {
+    const kayitlar = await this.prisma.product.findMany({
       // Ust baslik secilirse alt basliklarin urunleri de gelir (iki seviyeli agac).
       where: {
         storeId, isActive: true, deletedAt: null,
@@ -108,7 +200,14 @@ export class CatalogService {
       orderBy: { createdAt: 'desc' },
       skip,
       take: Math.min(take, 100),
+      include: {
+        // Menu ekrani: restoran vitrininde secenekler urunle birlikte gorunur,
+        // istemci her urun icin ayri detay cagrisi yapmak zorunda kalmasin.
+        store: { select: { businessUnit: true, commissionRate: true } },
+        secenekGruplari: VITRIN_SECENEKLERI,
+      },
     });
+    return kayitlar.map((u) => this.vitrinUrun(u));
   }
 
   // Onay bekleyen (yayinda olmayan) urunler - magaza sahibi veya admin gorur
@@ -134,9 +233,13 @@ export class CatalogService {
   async getPublicProduct(id: string) {
     const product = await this.prisma.product.findFirst({
       where: { id, isActive: true, deletedAt: null, store: { seller: { status: SellerStatus.ACTIVE } } },
+      include: {
+        store: { select: { businessUnit: true, commissionRate: true } },
+        secenekGruplari: VITRIN_SECENEKLERI,
+      },
     });
     if (!product) throw new NotFoundException('Urun bulunamadi');
-    return product;
+    return this.vitrinUrun(product);
   }
 
   // Kategori adini cekip urun adi ile birlikte KDV oranini otomatik tanir.
