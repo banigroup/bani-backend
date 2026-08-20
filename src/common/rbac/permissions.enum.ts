@@ -17,6 +17,13 @@ export enum Permission {
   TRANSACTION_REVERSE = 'transaction:reverse',
   AUDIT_READ = 'audit:read',
 
+  // Faz 1 / A2 — izin matrisini panelden degistirme yetkisi.
+  // DIKKAT: bu izne sahip olan, KENDI rolune de izin verebilir - yani yetki
+  // yukseltmenin anahtaridir. Bu yuzden yalnizca SUPER_ADMIN'de duruyor.
+  // ADMIN'e (veya operasyon/IK rollerine) verilecekse once "kendi rolunu
+  // duzenleyemez" kurali yazilmali, yoksa ADMIN kendine finance:read verebilir.
+  PERMISSION_MANAGE = 'permission:manage',
+
   // Faz 2 — Market / Katalog
   STORE_READ = 'store:read',
   STORE_WRITE = 'store:write',

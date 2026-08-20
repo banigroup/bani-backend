@@ -6,6 +6,7 @@ import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import configuration from './config/configuration';
 import { PrismaModule } from './prisma/prisma.module';
+import { RbacModule } from './common/rbac/rbac.module';
 import { AuditModule } from './common/audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -29,6 +30,7 @@ import { NewsletterModule } from './newsletter/newsletter.module';
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PrismaModule,
+    RbacModule,
     AuditModule,
     AuthModule,
     UsersModule,

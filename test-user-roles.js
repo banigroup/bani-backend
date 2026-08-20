@@ -25,7 +25,7 @@ console.log(`DB: ${u.hostname}:${u.port}${u.pathname}\n`);
 const { PrismaClient } = require('@prisma/client');
 const { rolleriOku, rolleriYaz } = require('./dist/src/common/rbac/kullanici-rolleri');
 const { platformYoneticisi } = require('./dist/src/common/rbac/rol-kontrol');
-const { permissionsForRoles } = require('./dist/src/common/rbac/role-permissions');
+const { IzinMatrisi } = require('./dist/src/common/rbac/izin-matrisi.service');
 const { UsersService } = require('./dist/src/users/users.service');
 const { JwtStrategy } = require('./dist/src/auth/strategies/jwt.strategy');
 
@@ -131,7 +131,7 @@ async function temizle(f) {
     ok('platformYoneticisi bos/undefined dayanikli', !platformYoneticisi(undefined) && !platformYoneticisi([]));
     await rolleriYaz(prisma, uid, ['ADMIN']);
     const izinAuth = await jwt.validate({ sub: uid, phone: f.kullanici.phone, roles: [] });
-    const izinler = permissionsForRoles(izinAuth.roles);
+    const izinler = await new IzinMatrisi(prisma).izinler(izinAuth.roles);
     ok('izin matrisi tablodan gelen rolle calisiyor', izinler.has('order:manage') && !izinler.has('wallet:topup'),
       `${izinler.size} izin`);
 

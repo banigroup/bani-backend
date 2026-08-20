@@ -551,6 +551,34 @@ model UserRole {
   @@map("user_roles")
 }
 
+// FAZ 1 / A2 — IZIN MATRISI ARTIK VERI.
+// Permission ENUM OLARAK KALIYOR (Role gibi): 59 uctaki @RequirePermissions(...)
+// derleme zamani guvenligini oradan aliyor. Bu tablo enum degerlerini SATIR olarak
+// tutar; ikisinin ayrismadigini test dogrular (yeni enum degeri tabloya da girmeli).
+model Permission {
+  key         String  @id // 'store:write' - Permission enum'inin DEGERI
+  description String? // panelde gosterilecek aciklama (A2/adim 2)
+
+  createdAt DateTime @default(now())
+
+  rolAtamalari RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id            String     @id @default(uuid()) @db.Uuid
+  role          Role
+  permissionKey String
+  permission    Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([role, permissionKey])
+  @@index([role]) // her istekte okunan yol: PermissionsGuard -> IzinMatrisi
+  @@map("role_permissions")
+}
+
 model StoreUser {
   id      String @id @default(uuid()) @db.Uuid
   storeId String @db.Uuid
