@@ -43,6 +43,13 @@ const ALTIN = {
   CARRIER: ["address:read","transaction:read","wallet:read"],
 };
 
+// A2 adim 2'de BILEREK eklenen izin. Altin kopya A2 ONCESININ kaydi olarak
+// dokunulmadan duruyor; beklenen matris = altin kopya + bu fark. Boylece
+// "davranis degismedi" iddiasi ile "bilerek eklenen" ayri ayri gorunur kaliyor.
+const ADIM2_EKLENEN = { SUPER_ADMIN: ['permission:manage'] };
+const BEKLENEN = {};
+for (const rol of Object.keys(ALTIN)) BEKLENEN[rol] = [...ALTIN[rol], ...(ADIM2_EKLENEN[rol] || [])].sort();
+
 const prisma = new PrismaClient();
 let gecti = 0;
 let kaldi = 0;
@@ -79,15 +86,17 @@ const TEST_IZIN = '__test:a2:izin';
     const satirlar = await prisma.rolePermission.findMany({ select: { role: true, permissionKey: true } });
     const dbMatris = {};
     for (const s of satirlar) (dbMatris[s.role] = dbMatris[s.role] || []).push(s.permissionKey);
-    for (const rol of Object.keys(ALTIN)) {
-      const beklenen = [...ALTIN[rol]].sort();
+    for (const rol of Object.keys(BEKLENEN)) {
+      const beklenen = BEKLENEN[rol];
       const gelen = [...(dbMatris[rol] || [])].sort();
       ok(`${rol} (${beklenen.length} izin)`, JSON.stringify(beklenen) === JSON.stringify(gelen),
         beklenen.length === gelen.length ? '' : `beklenen ${beklenen.length}, gelen ${gelen.length}`);
     }
-    ok('tabloda fazladan rol yok', Object.keys(dbMatris).every((r) => ALTIN[r]),
-      Object.keys(dbMatris).filter((r) => !ALTIN[r]).join(', '));
-    ok('toplam cift sayisi', satirlar.length === Object.values(ALTIN).reduce((a, b) => a + b.length, 0), `${satirlar.length} satir`);
+    ok('tabloda fazladan rol yok', Object.keys(dbMatris).every((r) => BEKLENEN[r]),
+      Object.keys(dbMatris).filter((r) => !BEKLENEN[r]).join(', '));
+    ok('toplam cift sayisi', satirlar.length === Object.values(BEKLENEN).reduce((a, b) => a + b.length, 0), `${satirlar.length} satir`);
+    ok('adim 2: permission:manage YALNIZCA SUPER_ADMIN de',
+      satirlar.filter((s) => s.permissionKey === 'permission:manage').map((s) => s.role).join(',') === 'SUPER_ADMIN');
 
     // ---- 3) IzinMatrisi servisi ----
     console.log('\n3) IzinMatrisi servisi');
