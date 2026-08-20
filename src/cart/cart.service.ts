@@ -129,8 +129,14 @@ export class CartService {
       await this.prisma.cart.update({ where: { id: cart.id }, data: { storeId: product.storeId } });
     }
 
-    const existing = await this.prisma.cartItem.findUnique({
-      where: { cartId_productId: { cartId: cart.id, productId: product.id } },
+    // VARYANTSIZ SATIR ARAMASI findFirst ILE: bilesik unique artik variantId'yi
+    // de kapsiyor (@@unique([cartId, productId, variantId])) ve Postgres'te
+    // NULL != NULL oldugu icin findUnique bu anahtarla null kabul etmez.
+    // Tekillik korumasi burada, uygulamada: ayni urun+varyant zaten varsa
+    // miktari artiriliyor. (Varyant secimi Faz 3'un 2. adiminda gelecek;
+    // su an tum satirlar variantId = null.)
+    const existing = await this.prisma.cartItem.findFirst({
+      where: { cartId: cart.id, productId: product.id, variantId: null },
     });
 
     if (existing) {

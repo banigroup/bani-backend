@@ -477,11 +477,12 @@ model Store {
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
 
-  categories   Category[]
-  products     Product[]
-  orders       Order[]
-  personel     StoreUser[]
-  calismaSaati StoreHour[]
+  categories      Category[]
+  products        Product[]
+  secenekGruplari OptionGroup[]
+  orders          Order[]
+  personel        StoreUser[]
+  calismaSaati    StoreHour[]
 
   @@index([ownerId])
   @@index([sellerId])
@@ -522,6 +523,182 @@ model StoreUser {
   @@unique([storeId, userId]) // bir kisi bir magazada tek uyelik
   @@index([userId]) // "bu kullanicinin magazalari": bilesik unique'in oneki storeId
   @@map("store_users")
+}
+
+// ===================== FAZ 3 — KATALOG: VARYANT / SECENEK / MEDYA =====================
+enum ProductType {
+  FIZIKSEL
+  YEMEK
+  HIZMET
+  MENU
+}
+
+enum UnitType {
+  ADET
+  GRAM
+  KILOGRAM
+  LITRE
+  MILILITRE
+  PORSIYON
+}
+
+// Siparis satirinin akibeti: eksik cikan ya da muadille degistirilen kalem.
+// ALAN SIMDI EKLENIYOR: sonradan eklemek gecmis siparisleri siniflandirilamaz
+// birakirdi. Davranis (otomatik iade) kismi iade altyapisi gelince baglanacak.
+enum OrderItemStatus {
+  NORMAL
+  EKSIK
+  IKAME
+}
+
+// VARYANT: boy/porsiyon/renk. Fiyat ve stok varyanttaysa oradan, YOKSA urunden
+// okunur (null = "urunun degeri gecerli"). Boylece mevcut varyantsiz urunler
+// hicbir sey degismeden calismaya devam eder.
+model ProductVariant {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  sku       String?
+  barcode   String?
+
+  price BigInt? // null -> product.price
+  stock Int? // null -> product.stock
+
+  // Carsi muhasebe kirilimi varyant bazinda gerekirse; null ise urunun degeri.
+  netFiyat        BigInt?
+  komisyonTutari  BigInt?
+  kargoTutari     BigInt?
+  malKdvTutari    BigInt?
+  hizmetKdvTutari BigInt?
+
+  isActive  Boolean   @default(true)
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  cartItems CartItem[]
+
+  @@unique([productId, name])
+  @@index([productId, isActive])
+  @@map("product_variants")
+}
+
+// SECENEK GRUBU MAGAZAYA AIT: "Ekstra malzeme" grubu bir kez tanimlanip
+// birden cok urune baglanir (Banitemek menu deseni).
+model OptionGroup {
+  id        String  @id @default(uuid()) @db.Uuid
+  storeId   String  @db.Uuid
+  store     Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name      String
+  minSecim  Int     @default(0)
+  maxSecim  Int     @default(1)
+  zorunlu   Boolean @default(false)
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  options Option[]
+  urunler ProductOptionGroup[]
+
+  @@index([storeId])
+  @@map("option_groups")
+}
+
+model Option {
+  id            String      @id @default(uuid()) @db.Uuid
+  optionGroupId String      @db.Uuid
+  group         OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  name          String
+  ekUcret       BigInt      @default(0) // kurus
+  isActive      Boolean     @default(true)
+  sortOrder     Int         @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([optionGroupId])
+  @@map("options")
+}
+
+model ProductOptionGroup {
+  productId     String      @db.Uuid
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  optionGroupId String      @db.Uuid
+  group         OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  sortOrder     Int         @default(0)
+
+  @@id([productId, optionGroupId])
+  @@index([optionGroupId])
+  @@map("product_option_groups")
+}
+
+// COKLU MEDYA. Product.imageUrl KALDI (kapak gorseli): tum vitrin okumalari ona
+// bakiyor, kaldirmak bu adimi gereksiz buyuturdu. Backfill'de her imageUrl
+// buraya birincil medya olarak kopyalanir; tek kaynaga indirme sonraki fazda.
+model ProductMedia {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  tur       String  @default("GORSEL") // GORSEL | VIDEO | BELGE
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([productId, sortOrder])
+  @@map("product_media")
+}
+
+// MUADIL: TEK YONLU ve oncelikli. Hedef urun Restrict - muadil olarak gosterilen
+// urun sessizce silinemez.
+model ProductSubstitution {
+  id           String  @id @default(uuid()) @db.Uuid
+  productId    String  @db.Uuid
+  product      Product @relation("MuadilKaynak", fields: [productId], references: [id], onDelete: Cascade)
+  substituteId String  @db.Uuid
+  substitute   Product @relation("MuadilHedef", fields: [substituteId], references: [id], onDelete: Restrict)
+  oncelik      Int     @default(0)
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, substituteId])
+  @@index([productId, oncelik])
+  @@map("product_substitutions")
+}
+
+// Sepete tasinan secimler (secim anindaki ek ucret ANLIK KOPYA).
+model CartItemOption {
+  id         String   @id @default(uuid()) @db.Uuid
+  cartItemId String   @db.Uuid
+  cartItem   CartItem @relation(fields: [cartItemId], references: [id], onDelete: Cascade)
+  optionId   String   @db.Uuid
+  optionAdi  String
+  ekUcret    BigInt   @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([cartItemId, optionId])
+  @@map("cart_item_options")
+}
+
+// Siparis satirindaki secim SNAPSHOT'i: Option silinse de kayit bozulmaz,
+// bu yuzden optionId'ye FK YOK, ad ve ucret kopyalanir (OrderItem deseni).
+model OrderItemOption {
+  id          String    @id @default(uuid()) @db.Uuid
+  orderItemId String    @db.Uuid
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  optionId    String?   @db.Uuid
+  optionAdi   String
+  ekUcret     BigInt    @default(0)
+
+  @@index([orderItemId])
+  @@map("order_item_options")
 }
 
 model Category {
@@ -573,16 +750,41 @@ model Product {
   netFiyat        BigInt    @default(0) // satıcının girdiği net fiyat (kuruş)
   kdvOrani        Int       @default(20) // ürün KDV oranı: 1 / 10 / 20
   satisModeli     String    @default("A") // A=kendi ürün, B=dropshipping
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  deletedAt       DateTime?
 
-  cartItems CartItem[]
+  // ===== FAZ 3 — KATALOG =====
+  barcode                String? // GTIN/EAN. Merkezi katalog eslesmesinin anahtari olacak.
+  shortDescription       String?
+  productType            ProductType @default(FIZIKSEL)
+  // TARTILI URUN KURALI: quantity/stock EN KUCUK BIRIMDE TAM SAYIDIR.
+  // 750 g -> quantity 750, price = GRAM basina kurus. unitType neyin sayildigini
+  // soyler. Paranin kuruşta tutulmasiyla ayni desen: ondalik hic girmiyor, bu
+  // sayede orders.service'teki BigInt(quantity) carpimlarinin hicbiri degismedi.
+  unitType               UnitType    @default(ADET)
+  minimumQuantity        Int? // tartilida en az satis miktari (or. 100 g)
+  quantityStep           Int? // tartilida artis adimi
+  preparationTimeMinutes Int? // Banitemek: hazirlama suresi
+  // MERKEZI KATALOG icin YER AYRILDI — FK YOK, cunku MasterProduct tablosu
+  // henuz yok. Tablo gelince FK eklenecek; simdi FK koymak olmayan bir tabloya
+  // baglanmak olurdu.
+  masterProductId        String?     @db.Uuid
+
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  cartItems       CartItem[]
+  varyantlar      ProductVariant[]
+  medya           ProductMedia[]
+  secenekGruplari ProductOptionGroup[]
+  muadilleri      ProductSubstitution[] @relation("MuadilKaynak")
+  muadiliOldugu   ProductSubstitution[] @relation("MuadilHedef")
 
   @@unique([storeId, slug])
   @@index([storeId, isActive])
   @@index([categoryId])
+  @@index([barcode])
+  @@index([masterProductId])
   @@map("products")
 }
 
@@ -605,17 +807,28 @@ model Cart {
 }
 
 model CartItem {
-  id        String   @id @default(uuid()) @db.Uuid
-  cartId    String   @db.Uuid
-  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
-  productId String   @db.Uuid
-  product   Product  @relation(fields: [productId], references: [id])
-  quantity  Int      @default(1)
+  id        String          @id @default(uuid()) @db.Uuid
+  cartId    String          @db.Uuid
+  cart      Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String          @db.Uuid
+  product   Product         @relation(fields: [productId], references: [id])
+  // Varyant OPSIYONEL: null = varyantsiz urun (bugunku tum kayitlar boyle).
+  variantId String?         @db.Uuid
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  // TAM SAYI MIKTAR: adet urunde adet, tartilida en kucuk birim (gram/ml).
+  quantity  Int             @default(1)
   unitPrice BigInt // ürünün sepete eklendiği andaki fiyatı (kuruş)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
-  @@unique([cartId, productId])
+  secimler CartItemOption[]
+
+  // DIKKAT — NULLABLE UNIQUE: Postgres'te NULL != NULL oldugu icin variantId
+  // NULL olan ayni urun teorik olarak iki kez eklenebilir. Koruma UYGULAMADA:
+  // cart.service varyantsiz durumda findFirst ile ariyor (findUnique bilesik
+  // anahtarda null kabul etmez). Kismi unique index tercih edilmedi: Prisma
+  // semasinda ifade edilemedigi icin her migrate diff'te drift uretirdi.
+  @@unique([cartId, productId, variantId])
   // @@index([cartId]) KALDIRILDI: yukaridaki unique'in oneki ayni isi goruyor
   @@index([productId]) // FK: Postgres otomatik indekslemez - urun bazli sorgu + FK dogrulamasi
   @@map("cart_items")
@@ -689,6 +902,17 @@ model OrderItem {
   unitPrice BigInt // anlık kopya (kuruş)
   quantity  Int
   lineTotal BigInt // unitPrice * quantity
+
+  // VARYANT SNAPSHOT: ad kopyalanir, variantId'ye FK YOK - varyant silinse de
+  // gecmis siparis okunabilir kalmali (OrderItem.name ile ayni gerekce).
+  variantId  String?         @db.Uuid
+  variantAdi String?
+  // "750" neyin 750'si oldugu siparise de yazilir; urun sonradan degisse bile
+  // gecmis satir kendi basina anlasilir kalir.
+  unitType   UnitType        @default(ADET)
+  status     OrderItemStatus @default(NORMAL)
+
+  secimler OrderItemOption[]
 
   @@index([orderId])
   @@map("order_items")
