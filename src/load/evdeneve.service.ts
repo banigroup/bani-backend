@@ -5,6 +5,7 @@ import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { KuyrukService } from '../kuyruk/kuyruk.service';
 import { SigortaService } from '../sigorta/sigorta.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { platformYoneticisi } from '../common/rbac/rol-kontrol';
 import { EvIlaniOlusturDto } from './dto/ev-ilani-olustur.dto';
 import { EvTeklifVerDto } from './dto/ev-teklif-ver.dto';
 
@@ -15,9 +16,9 @@ export class EvdenEveService {
   private readonly logger = new Logger(EvdenEveService.name);
   constructor(private readonly prisma: PrismaService, private readonly sozlesme: SozlesmeService, private readonly kuyruk: KuyrukService, private readonly sigorta: SigortaService) {}
 
+  // Tanim TEK KAYNAKTA: common/rbac/rol-kontrol. Buradaki yerel kopya kaldirildi.
   private isAdmin(user: AuthUser): boolean {
-    const roles = (user as any)?.roles ?? [];
-    return roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
+    return platformYoneticisi(user?.roles);
   }
 
   // TASITAN: ilan olustur -> ODEME_BEKLIYOR (dusuk pesin ucret, havale + admin onay)

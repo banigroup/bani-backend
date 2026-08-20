@@ -19,11 +19,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
+  // ROLLER TOKEN'DAN DEGIL DB'DEN: payload.roles bilerek yok sayiliyor, boylece
+  // rol degisikligi ANINDA etkili olur ve token flush gerekmez. A1'de kaynak
+  // user_roles tablosu oldu; iliski ayni sorguya eklendi, yeni gidis-donus YOK.
   async validate(payload: AccessPayload): Promise<AuthUser> {
-    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      include: { rolAtamalari: { select: { role: true } } },
+    });
     if (!user || user.status === 'BANNED' || user.status === 'DELETED') {
       throw new UnauthorizedException();
     }
-    return { id: user.id, phone: user.phone, roles: user.roles };
+    // Tekillestirme: bkz. schema UserRole nullable-unique notu.
+    return { id: user.id, phone: user.phone, roles: [...new Set(user.rolAtamalari.map((r) => r.role))] };
   }
 }

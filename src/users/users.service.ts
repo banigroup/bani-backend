@@ -3,6 +3,7 @@ import { Role, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { rolleriOku, rolleriYaz } from '../common/rbac/kullanici-rolleri';
 
 interface Actor { actorId?: string; ip?: string }
 
@@ -33,18 +34,22 @@ export class UsersService {
     return this.prisma.user.update({ where: { id }, data: dto });
   }
 
+  // ROL YAZMANIN TEK KAPISI. Kaynak artik user_roles tablosu (Faz 1 / A1);
+  // audit kaydi ONCEKI ve SONRAKI rolleri tasimaya devam ediyor - "kim ne zaman
+  // hangi rolu acti/kapatti" izi bu adimda kaybolmamali.
   async assignRoles(id: string, roles: Role[], actor?: Actor) {
-    const before = await this.findById(id);
-    const updated = await this.prisma.user.update({ where: { id }, data: { roles } });
+    await this.findById(id); // kullanici var mi (yoksa 404)
+    const oncekiRoller = await rolleriOku(this.prisma, id);
+    const sonrakiRoller = await rolleriYaz(this.prisma, id, roles);
     await this.audit.record({
       actorId: actor?.actorId,
       action: 'user.role.assign',
       entity: 'User',
       entityId: id,
       ip: actor?.ip,
-      metadata: { from: before.roles, to: roles },
+      metadata: { from: oncekiRoller, to: sonrakiRoller },
     });
-    return updated;
+    return this.findById(id);
   }
 
   async setStatus(id: string, status: UserStatus, actor?: Actor) {

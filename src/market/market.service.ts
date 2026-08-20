@@ -7,6 +7,7 @@ import { sifrele, son4 } from '../common/crypto/gizli-alan';
 import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
+import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/rol-kontrol';
 
 @Injectable()
 export class MarketService {
@@ -100,11 +101,11 @@ export class MarketService {
     return store;
   }
 
-  // PLATFORM YONETICISI: ADMIN ve SUPER_ADMIN (orders.service.isAdmin ile ayni
-  // tanim). Eskiden yalnizca SUPER_ADMIN vardi cunku o satir Faz 2'de yazildi,
-  // ADMIN rolu Faz 5'te eklendi ve bu dosya guncellenmedi.
+  // Tanim TEK KAYNAKTA: common/rbac/rol-kontrol. Eskiden burada yerel kopya
+  // vardi; ADMIN rolu Faz 5'te eklendiginde kopyalarin ayrismasi ADMIN'i
+  // kilitlemisti - o sinifin tekrarlanmamasi icin kural tek dosyada.
   private platformYoneticisi(roles: Role[]): boolean {
-    return roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
+    return platformYoneticisiKurali(roles);
   }
 
   /** Kullanici bu magazada AKTIF personel mi. */
@@ -159,7 +160,14 @@ export class MarketService {
       orderBy: { createdAt: 'asc' },
       select: {
         id: true, userId: true, isActive: true, createdAt: true,
-        user: { select: { phone: true, name: true, surname: true, roles: true } },
+        // Rol artik ayri tabloda (Faz 1 / A1). Personel ekraninin gordugu sey
+        // degismesin diye ayni yerden, ayni ad altinda donuluyor.
+        user: {
+          select: {
+            phone: true, name: true, surname: true,
+            rolAtamalari: { select: { role: true } },
+          },
+        },
       },
     });
   }

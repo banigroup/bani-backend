@@ -12,7 +12,6 @@ async function main() {
       phoneVerified: true,
       name: 'Platform',
       surname: 'Admin',
-      roles: [Role.SUPER_ADMIN],
       status: UserStatus.ACTIVE,
     },
   });
@@ -32,7 +31,6 @@ async function main() {
       phoneVerified: true,
       name: 'Demo',
       surname: 'Market',
-      roles: [Role.MERCHANT],
       status: UserStatus.ACTIVE,
     },
   });
@@ -40,16 +38,30 @@ async function main() {
   // --- Örnek kurye (Faz 4) ---
   const courier = await prisma.user.upsert({
     where: { phone: '+905222222222' },
-    update: { roles: [Role.COURIER] },
+    update: {},
     create: {
       phone: '+905222222222',
       phoneVerified: true,
       name: 'Demo',
       surname: 'Kurye',
-      roles: [Role.COURIER],
       status: UserStatus.ACTIVE,
     },
   });
+
+  // ROL ARTIK AYRI TABLODA (Faz 1 / A1): user.roles dizisi yerine user_roles.
+  //
+  // ONCE SIL SONRA YAZ, skipDuplicates DEGIL: bilesik unique storeId'yi de
+  // kapsiyor ve storeId NULL iken Postgres'te NULL != NULL - skipDuplicates
+  // catismayi goremez, seed her calistiginda satir cogalirdi.
+  const seedRolleri = [
+    { userId: admin.id, role: Role.SUPER_ADMIN },
+    { userId: merchant.id, role: Role.MERCHANT },
+    { userId: courier.id, role: Role.COURIER },
+  ];
+  await prisma.userRole.deleteMany({
+    where: { userId: { in: seedRolleri.map((r) => r.userId) }, storeId: null },
+  });
+  await prisma.userRole.createMany({ data: seedRolleri });
 
   // --- Satıcı (Faz 2): mağaza artık bir satıcıya bağlı ---
   const seller =
