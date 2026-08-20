@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessUnit, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { etkinFiyat } from '../common/domain/varyant';
 import { AddItemDto } from './dto/add-item.dto';
 
 @Injectable()
@@ -58,10 +59,11 @@ export class CartService {
         product: {
           select: {
             id: true, name: true, imageUrl: true, price: true, stock: true, isActive: true,
-            storeId: true,
+            unitType: true, storeId: true,
             store: { select: { id: true, name: true, slug: true } },
           },
         },
+        variant: { select: { id: true, name: true } },
       },
     });
 
@@ -74,6 +76,12 @@ export class CartService {
         productId: it.productId,
         name: it.product.name,
         imageUrl: it.product.imageUrl,
+        // Varyantsiz kalemde ikisi de null -> istemci gorunumunde degisiklik yok.
+        variantId: it.variantId,
+        variantAdi: it.variant?.name ?? null,
+        // "5" neyin 5'i: adet mi gram mi. Tartili urunde istemci bunu
+        // "0,75 kg" gibi gostermek icin kullanir.
+        unitType: it.product.unitType,
         unitPrice: it.unitPrice,
         quantity: it.quantity,
         lineTotal,
@@ -111,6 +119,19 @@ export class CartService {
     });
     if (!product) throw new NotFoundException('Ürün bulunamadı veya pasif');
 
+    // VARYANT DOGRULAMA: varyantin O URUNE ait ve aktif olmasi sart. Aksi halde
+    // istemci baska bir urunun varyant kimligini gonderip fiyat karistirabilirdi.
+    const variant = dto.variantId
+      ? await this.prisma.productVariant.findFirst({
+          where: { id: dto.variantId, productId: product.id, isActive: true, deletedAt: null },
+        })
+      : null;
+    if (dto.variantId && !variant) {
+      throw new NotFoundException('Ürün varyantı bulunamadı veya pasif');
+    }
+    // Varyantsizda etkinFiyat urunun fiyatini dondurur -> davranis degismez.
+    const birimFiyat = etkinFiyat(product, variant);
+
     const cart = await this.getOrCreate(userId, product.store.businessUnit);
     const qty = dto.quantity ?? 1;
 
@@ -133,20 +154,25 @@ export class CartService {
     // de kapsiyor (@@unique([cartId, productId, variantId])) ve Postgres'te
     // NULL != NULL oldugu icin findUnique bu anahtarla null kabul etmez.
     // Tekillik korumasi burada, uygulamada: ayni urun+varyant zaten varsa
-    // miktari artiriliyor. (Varyant secimi Faz 3'un 2. adiminda gelecek;
-    // su an tum satirlar variantId = null.)
+    // miktari artiriliyor. Farkli varyantlar AYRI KALEM olur.
     const existing = await this.prisma.cartItem.findFirst({
-      where: { cartId: cart.id, productId: product.id, variantId: null },
+      where: { cartId: cart.id, productId: product.id, variantId: variant?.id ?? null },
     });
 
     if (existing) {
       await this.prisma.cartItem.update({
         where: { id: existing.id },
-        data: { quantity: existing.quantity + qty, unitPrice: product.price },
+        data: { quantity: existing.quantity + qty, unitPrice: birimFiyat },
       });
     } else {
       await this.prisma.cartItem.create({
-        data: { cartId: cart.id, productId: product.id, quantity: qty, unitPrice: product.price },
+        data: {
+          cartId: cart.id,
+          productId: product.id,
+          variantId: variant?.id ?? null,
+          quantity: qty,
+          unitPrice: birimFiyat,
+        },
       });
     }
 

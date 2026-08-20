@@ -21,7 +21,17 @@ export class CatalogService {
   // ikisi ayri kavramdir, karistirilmaz.
   // tumu=true -> yonetim ekranlari icin: bos kategoriler de doner (urun atamak icin gerekli).
   async listCategories(storeId: string, tumu = false) {
-    const dolu = { isActive: true, deletedAt: null, stock: { gt: 0 } };
+    // "Dolu" urun: kendi stogu varsa YA DA stoklu bir varyanti varsa.
+    // Varyantsiz urunde ikinci dal hicbir zaman saglanmaz -> sonuc Faz 3
+    // oncesiyle birebir ayni (kanit: yerel testte kategori sayilari degismedi).
+    const dolu = {
+      isActive: true,
+      deletedAt: null,
+      OR: [
+        { stock: { gt: 0 } },
+        { varyantlar: { some: { isActive: true, deletedAt: null, stock: { gt: 0 } } } },
+      ],
+    };
     const kayitlar = await this.prisma.category.findMany({
       where: {
         storeId,

@@ -14,6 +14,7 @@ import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CheckoutDto } from './dto/checkout.dto';
 import { OrderStatusService } from './order-status.service';
 import { checkoutOriginUygun, dikeyCoz } from '../common/domain/dikey-domain';
+import { etkinStok, etkinKirilim } from '../common/domain/varyant';
 
 // --- Placeholder ayarları (Çarşı DIŞI dikeyler için) ---
 const DELIVERY_FEE = 1500n; // 15,00 TL
@@ -72,7 +73,10 @@ export class OrdersService {
     // Cozulemezse (baslik gondermeyen istemci) gecis kurali: dolu olan en son
     // sepet - bugunku tek-sepet davranisiyla ayni sonucu verir.
     const dikey = dikeyCoz(origin, dikeyBaslik);
-    const sepetIcerik = { items: { include: { product: true } } } as const;
+    // Varyant da yukleniyor: fiyat/stok/kirilim varyantta tanimliysa oradan
+    // okunacak (bkz. common/domain/varyant). Varyantsiz kalemde variant null
+    // doner ve tum degerler urunden gelir - Faz 3 oncesiyle ayni sonuc.
+    const sepetIcerik = { items: { include: { product: true, variant: true } } } as const;
     const cart = dikey
       ? await this.prisma.cart.findUnique({
           where: { userId_businessUnit: { userId, businessUnit: dikey } },
@@ -171,19 +175,25 @@ export class OrdersService {
       if (!it.product || !it.product.isActive || it.product.deletedAt) {
         throw new BadRequestException(`Ürün artık satışta değil: ${it.product?.name ?? it.productId}`);
       }
-      if (it.product.stock < it.quantity) {
-        throw new BadRequestException(`Yetersiz stok: ${it.product.name} (kalan ${it.product.stock})`);
+      const stok = etkinStok(it.product, it.variant);
+      if (stok < it.quantity) {
+        const ad = it.variant ? `${it.product.name} (${it.variant.name})` : it.product.name;
+        throw new BadRequestException(`Yetersiz stok: ${ad} (kalan ${stok})`);
       }
       const q = BigInt(it.quantity);
       if (isCarsi) {
         // Çarşı: kargo + komisyon + KDV ürün fiyatına GÖMÜLÜ.
-        // subtotal'ı güncel ürün fiyatından kur (kırılımla birebir uyuşsun).
-        subtotal += it.product.price * q;
-        carsiKargo += it.product.kargoTutari * q;
-        carsiKom += it.product.komisyonTutari * q;
-        carsiHizmetKdv += it.product.hizmetKdvTutari * q;
-        carsiMalKdv += it.product.malKdvTutari * q;
-        carsiNet += it.product.netFiyat * q;
+        // subtotal'ı güncel fiyattan kur (kırılımla birebir uyuşsun).
+        // Kırılım kalemleri TEK TEK çözülür: varyantta yalnız fiyat tanımlanıp
+        // kırılım boş bırakılabilir; o durumda kırılım üründen gelir ve
+        // aşağıdaki "dağıtım == subtotal" güvencesi bozulmaz.
+        const k = etkinKirilim(it.product, it.variant);
+        subtotal += k.price * q;
+        carsiKargo += k.kargoTutari * q;
+        carsiKom += k.komisyonTutari * q;
+        carsiHizmetKdv += k.hizmetKdvTutari * q;
+        carsiMalKdv += k.malKdvTutari * q;
+        carsiNet += k.netFiyat * q;
       } else {
         subtotal += it.unitPrice * q;
       }
@@ -237,11 +247,21 @@ export class OrdersService {
 
     // Hepsi tek transaction'da: stok düş + sipariş yarat + escrow'a al + sepeti temizle
     const order = await this.prisma.$transaction(async (tx) => {
+      // STOK DUSUMU: varyantli kalemde varyantin stogu duser, varyantsizda
+      // urunun. Varyantta stock NULL ise stok urun duzeyinde tutuluyor demektir
+      // (etkinStok orada urune dusuyordu), dolayisiyla dusum de urunden yapilir.
       for (const it of cart.items) {
-        await tx.product.update({
-          where: { id: it.productId },
-          data: { stock: { decrement: it.quantity } },
-        });
+        if (it.variantId && it.variant?.stock !== null && it.variant?.stock !== undefined) {
+          await tx.productVariant.update({
+            where: { id: it.variantId },
+            data: { stock: { decrement: it.quantity } },
+          });
+        } else {
+          await tx.product.update({
+            where: { id: it.productId },
+            data: { stock: { decrement: it.quantity } },
+          });
+        }
       }
 
       const created = await tx.order.create({
@@ -266,11 +286,17 @@ export class OrdersService {
           confirmedAt: new Date(),
           items: {
             create: cart.items.map((it) => {
-              // Çarşı'da OrderItem fiyatı güncel ürün fiyatı (kırılımla uyumlu)
-              const up = isCarsi ? it.product.price : it.unitPrice;
+              // Çarşı'da OrderItem fiyatı güncel fiyat (kırılımla uyumlu);
+              // varyant varsa onun fiyatı geçerli.
+              const up = isCarsi ? etkinKirilim(it.product, it.variant).price : it.unitPrice;
               return {
                 productId: it.productId,
                 name: it.product.name,
+                // SNAPSHOT: varyant adı kopyalanır; variantId'ye FK yok, varyant
+                // sonradan silinse de geçmiş sipariş okunabilir kalır.
+                variantId: it.variantId,
+                variantAdi: it.variant?.name ?? null,
+                unitType: it.product.unitType,
                 unitPrice: up,
                 quantity: it.quantity,
                 lineTotal: up * BigInt(it.quantity),
@@ -492,12 +518,25 @@ export class OrdersService {
         );
       }
 
-      // Stok geri yükle
+      // Stok geri yükle — DÜŞÜMÜN AYNASI olmalı: stok hangi kayıttan düştüyse
+      // oraya geri gider. variantId dolu olan satırda düşüm varyanttan yapılmış
+      // olabilir; varyantın stock'u NULL ise düşüm üründen yapılmıştır, iade de
+      // öyle olur. Aynası tutmazsa stok sessizce şişer ya da kaybolur.
       for (const it of order.items) {
-        await tx.product.update({
-          where: { id: it.productId },
-          data: { stock: { increment: it.quantity } },
-        });
+        const varyant = it.variantId
+          ? await tx.productVariant.findUnique({ where: { id: it.variantId }, select: { stock: true } })
+          : null;
+        if (it.variantId && varyant && varyant.stock !== null) {
+          await tx.productVariant.update({
+            where: { id: it.variantId },
+            data: { stock: { increment: it.quantity } },
+          });
+        } else {
+          await tx.product.update({
+            where: { id: it.productId },
+            data: { stock: { increment: it.quantity } },
+          });
+        }
       }
 
       // Teslimat kaydını iptal et (varsa)
