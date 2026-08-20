@@ -613,6 +613,12 @@ model Option {
   optionGroupId String      @db.Uuid
   group         OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
   name          String
+  // CARSI'DA NET (satici payi); musteriye gosterilecek tutar
+  // ekUcretHesapla(...).vitrinKurus'tan gelir, DOGRUDAN OKUNMAZ. Aksi halde
+  // musteri satici netini gorup vitrin ucretini oder. Sepet bu cevrimi
+  // yapiyor (cart.secimleriCoz); vitrin okuma ucu de AYNI fonksiyonu
+  // cagirmali - ikinci bir fiyat formulu yazilmaz.
+  // Carsi disi dikeylerde ekUcret dogrudan satis tutaridir.
   ekUcret       BigInt      @default(0) // kurus
   isActive      Boolean     @default(true)
   sortOrder     Int         @default(0)
