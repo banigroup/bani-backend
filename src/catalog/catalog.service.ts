@@ -70,7 +70,9 @@ const VITRIN_URUN_ALANLARI = Prisma.validator<Prisma.ProductSelect>()({
   desi: true,
   weightKg: true,
   kdvOrani: true,
-  satisModeli: true,
+  // satisModeli (A=kendi urun / B=dropshipping) BILEREK YOK: kirilim degil ama
+  // is modeli bilgisi, musteriyi ilgilendirmez. Fiyat hattinda kullanildigi
+  // yerlerin hepsi satici/yonetim yolu ve tam satiri okuyor (getProduct).
   barcode: true,
   shortDescription: true,
   productType: true,

@@ -39,6 +39,8 @@ const cart = new CartService(prisma);
 
 // Muhasebe kirilimi: musteriye ASLA gitmemeli, saticiya gitmeli.
 const KIRILIM = ['netFiyat', 'komisyonTutari', 'kargoTutari', 'malKdvTutari', 'hizmetKdvTutari'];
+// Kirilim degil ama is modeli bilgisi; o da musteriye kapali.
+const GIZLI_DIGER = ['satisModeli'];
 
 const ON = `__TEST_VIT_${Date.now()}`;
 let gecti = 0;
@@ -252,10 +254,14 @@ async function temizle(f) {
     const listeCarsi = (await katalog.listProducts(f.carsiUrun.storeId)).find((p) => p.id === f.carsiUrun.id);
     ok('liste ucunda da kirilim YOK', KIRILIM.every((a) => listeCarsi[a] === undefined));
 
+    ok('satisModeli musteriye kapali',
+      GIZLI_DIGER.every((a) => cUrun[a] === undefined && listeCarsi[a] === undefined));
+
     const saticiDetay = await katalog.urunDetay(f.carsiUrun.id, f.user.id, []);
     ok('satici detayi kirilimi GORUYOR',
       KIRILIM.every((a) => saticiDetay[a] !== undefined) && saticiDetay.netFiyat === 20000n,
       `netFiyat=${saticiDetay.netFiyat}`);
+    ok('satici detayi satisModeli GORUYOR', saticiDetay.satisModeli === 'A');
 
     const bekleyenler = await katalog.listPending(f.marketMagaza.id, f.user.id, []);
     const bekleyen = bekleyenler.find((p) => p.id === f.bekleyenUrun.id);
