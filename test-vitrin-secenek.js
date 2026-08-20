@@ -134,19 +134,40 @@ async function kur() {
       malKdvTutari: 400n, hizmetKdvTutari: 64n, stock: 5, isActive: false, kdvOrani: 10,
     },
   });
+  // VARYANTLAR (market urunu):
+  //  - Kucuk: fiyat ve stok NULL -> urunun degeri gecerli (etkinFiyat/etkinStok)
+  //  - Buyuk: kendi fiyati + kendi stogu
+  //  - Tukenmis: stok 0 -> vitrinde GIZLENMEZ, stok:0 ile doner
+  //  - Kaldirilmis: isActive:false -> vitrinde YOK
+  // Carsi kirilim kolonlari da dolduruluyor: public uctan SIZMADIGI gorulsun.
+  const varyant = (ad, price, stock, isActive, ekstra = {}) => prisma.productVariant.create({
+    data: { productId: marketUrun.id, name: ad, price, stock, isActive, ...ekstra },
+  });
+  const vKucuk = await varyant('Kucuk', null, null, true);
+  const vBuyuk = await varyant('Buyuk', 13000n, 7, true, {
+    netFiyat: 9000n, komisyonTutari: 720n, kargoTutari: 1000n,
+    malKdvTutari: 900n, hizmetKdvTutari: 344n,
+  });
+  const vTukenmis = await varyant('Tukenmis', 11000n, 0, true);
+  await varyant('Kaldirilmis', 12000n, 5, false);
+
   // Magazayla ilgisi olmayan kullanici: urunDetay yetkisinin gercekten
   // kapandigini gostermek icin (bos vekil degil, gercek MarketService).
   const yabanci = await prisma.user.create({
     data: { phone: `${ON.slice(0, 19)}Y`, name: 'Yabanci', status: 'ACTIVE' },
   });
 
-  return { user, yabanci, marketMagaza, marketUrun, sadeUrun, carsiUrun, bekleyenUrun, sos, boy, kaplama, kapali };
+  return {
+    user, yabanci, marketMagaza, marketUrun, sadeUrun, carsiUrun, bekleyenUrun,
+    sos, boy, kaplama, kapali, vKucuk, vBuyuk, vTukenmis,
+  };
 }
 
 async function temizle(f) {
   if (!f) return;
   const urunler = [f.marketUrun?.id, f.sadeUrun?.id, f.carsiUrun?.id, f.bekleyenUrun?.id].filter(Boolean);
   await prisma.cartItem.deleteMany({ where: { cart: { userId: f.user.id } } });
+  await prisma.productVariant.deleteMany({ where: { productId: { in: urunler } } });
   await prisma.cart.deleteMany({ where: { userId: f.user.id } });
   await prisma.productOptionGroup.deleteMany({ where: { productId: { in: urunler } } });
   await prisma.option.deleteMany({ where: { group: { store: { name: { startsWith: ON } } } } });
@@ -248,6 +269,44 @@ async function temizle(f) {
       const m = e?.response?.message ?? e?.message ?? String(e);
       ok('yabanciya kapali', String(m).includes('ait değil'), `"${m}"`);
     }
+
+    // ---- 9) VARYANTLAR public ucta ----
+    console.log('\n9) Varyantlar vitrinde');
+    const vUrun = await katalog.getPublicProduct(f.marketUrun.id);
+    const vAd = (a) => vUrun.varyantlar.find((v) => v.name === a);
+    ok('aktif varyantlar doner', vUrun.varyantlar.length === 3,
+      vUrun.varyantlar.map((v) => v.name).join(', '));
+    ok('pasif varyant gizli', !vAd('Kaldirilmis'));
+
+    // NULL fiyat/stok -> urunun degeri (etkinFiyat/etkinStok)
+    ok('NULL fiyat urunden geliyor', vAd('Kucuk').fiyat === 10000n, `${vAd('Kucuk').fiyat}`);
+    ok('NULL stok urunden geliyor', vAd('Kucuk').stok === 100, `${vAd('Kucuk').stok}`);
+    ok('NULL varyantta fiyat farki 0', vAd('Kucuk').fiyatFarki === 0n);
+
+    ok('varyant kendi fiyatini kullaniyor', vAd('Buyuk').fiyat === 13000n);
+    ok('fiyat farki hesaplandi', vAd('Buyuk').fiyatFarki === 3000n, `${vAd('Buyuk').fiyatFarki}`);
+    ok('varyant kendi stogunu kullaniyor', vAd('Buyuk').stok === 7);
+
+    ok('tukenmis varyant GIZLENMIYOR', !!vAd('Tukenmis') && vAd('Tukenmis').stok === 0);
+
+    // Varyantta da muhasebe kolonlari var; sizmadigini dogrula.
+    ok('varyant kirilimi SIZMIYOR', KIRILIM.every((a) => vAd('Buyuk')[a] === undefined),
+      `alanlar: ${Object.keys(vAd('Buyuk')).join(', ')}`);
+
+    // Vitrinde gorulen varyant fiyati == sepete yazilan birim fiyat.
+    const vg = await cart.addItem(f.user.id, {
+      productId: f.marketUrun.id, variantId: f.vBuyuk.id, optionIds: [f.boy.o[0].id],
+    });
+    const vKalem = vg.items.find((i) => i.variantId === f.vBuyuk.id);
+    ok('sepet birim fiyati vitrinle ayni', vKalem.unitPrice === vAd('Buyuk').fiyat,
+      `vitrin ${vAd('Buyuk').fiyat} / sepet ${vKalem.unitPrice}`);
+    await cart.clear(f.user.id, 'MARKET');
+
+    // Liste ucu ve varyantsiz urun
+    const listeM = (await katalog.listProducts(f.marketUrun.storeId)).find((p) => p.id === f.marketUrun.id);
+    ok('listede de varyantlar var', listeM.varyantlar.length === 3);
+    ok('varyantsiz urunde bos dizi',
+      Array.isArray(sade.varyantlar) && sade.varyantlar.length === 0);
 
     console.log(`\n=== GECTI: ${gecti} | KALDI: ${kaldi} ===`);
   } catch (e) {
