@@ -1,10 +1,14 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { Role, SellerStatus } from '@prisma/client';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { BusinessUnit, Role, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MarketService } from '../market/market.service';
 import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import {
+  VaryantOlusturDto, VaryantGuncelleDto, SecenekGrubuDto, SecenekDto,
+  UrunSecenekGruplariDto, MedyaEkleDto, MedyaGuncelleDto,
+} from './dto/varyant.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { vitrinFiyatHesapla, kdvOraniBul } from '../delivery/pricing';
 
@@ -278,6 +282,341 @@ export class CatalogService {
         `Satıcı aktif değil (${store?.seller?.status ?? 'bulunamadı'}); ürün yayına alınamaz`,
       );
     }
+  }
+
+  // ============================================================
+  // FAZ 3 / ADIM 2.5 — KATALOG YAZMA UCLARI
+  // Varyant, secenek grubu, secenek ve medya yonetimi.
+  // Yetki her yerde AYNI KAPIDAN: market.assertOwner (sahip | aktif personel |
+  // platform yoneticisi). Id ile gelen kayitlarda once magaza cozulur.
+  // ============================================================
+
+  /**
+   * CARSI FIYATLANDIRMASI VARYANT BASINA.
+   * Carsi'da kargo + komisyon + KDV urun fiyatina GOMULU; satici NET fiyat
+   * verir, vitrin fiyati ve muhasebe kirilimi uretilir. createProduct'taki
+   * desenin aynisi - ikinci bir formul yazilmadi, ayni vitrinFiyatHesapla
+   * cagriliyor. Carsi disinda price dogrudan satis fiyatidir ve kirilim NULL
+   * kalir (etkinKirilim o durumda urunun kirilimina duser).
+   */
+  private varyantFiyatAlanlari(
+    store: { businessUnit: BusinessUnit; commissionRate: number },
+    urun: { kdvOrani: number; desi: number; weightKg: number; satisModeli: string },
+    dto: VaryantOlusturDto | VaryantGuncelleDto,
+  ) {
+    if (store.businessUnit !== BusinessUnit.CARSI) {
+      return dto.price !== undefined ? { price: BigInt(dto.price) } : {};
+    }
+    const netKurus = BigInt(dto.netFiyat ?? dto.price ?? 0);
+    if (netKurus <= 0n) throw new BadRequestException('Carsi varyantinda net fiyat zorunlu');
+    const hesap = vitrinFiyatHesapla(
+      netKurus,
+      dto.desi ?? urun.desi,
+      dto.weightKg ?? urun.weightKg,
+      dto.satisModeli ?? urun.satisModeli,
+      dto.kdvOrani ?? urun.kdvOrani,
+      BigInt(store.commissionRate) / 100n,
+    );
+    if (!hesap.ok) throw new BadRequestException(hesap.sebep);
+    return {
+      price: hesap.vitrinKurus,
+      netFiyat: netKurus,
+      komisyonTutari: hesap.komisyonKurus,
+      // yuvarlama farki kargoya - urun tarafiyla ayni kural
+      kargoTutari: hesap.kargoKurus + hesap.yuvarlamaKurus,
+      malKdvTutari: hesap.malKdvKurus,
+      hizmetKdvTutari: hesap.hizmetKdvKurus,
+    };
+  }
+
+  private async urunVeMagaza(productId: string, userId: string, roles: Role[]) {
+    const urun = await this.prisma.product.findFirst({
+      where: { id: productId, deletedAt: null },
+      include: { store: { select: { id: true, businessUnit: true, commissionRate: true } } },
+    });
+    if (!urun) throw new NotFoundException('Urun bulunamadi');
+    await this.market.assertOwner(urun.storeId, userId, roles);
+    return urun;
+  }
+
+  // ---------------- VARYANT ----------------
+
+  async varyantListesi(productId: string, userId: string, roles: Role[]) {
+    await this.urunVeMagaza(productId, userId, roles);
+    return this.prisma.productVariant.findMany({
+      where: { productId, deletedAt: null },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async varyantOlustur(productId: string, userId: string, roles: Role[], dto: VaryantOlusturDto) {
+    const urun = await this.urunVeMagaza(productId, userId, roles);
+    const cakisma = await this.prisma.productVariant.findFirst({ where: { productId, name: dto.name } });
+    if (cakisma) throw new ConflictException('Bu isimde bir varyant zaten var');
+    return this.prisma.productVariant.create({
+      data: {
+        productId,
+        name: dto.name,
+        sku: dto.sku,
+        barcode: dto.barcode,
+        // null birakilirsa stok urun duzeyinde tutulur (etkinStok urune duser)
+        stock: dto.stock ?? null,
+        sortOrder: dto.sortOrder ?? 0,
+        ...this.varyantFiyatAlanlari(urun.store, urun, dto),
+      },
+    });
+  }
+
+  async varyantGuncelle(variantId: string, userId: string, roles: Role[], dto: VaryantGuncelleDto) {
+    const varyant = await this.prisma.productVariant.findFirst({
+      where: { id: variantId, deletedAt: null },
+      include: {
+        product: { include: { store: { select: { businessUnit: true, commissionRate: true } } } },
+      },
+    });
+    if (!varyant) throw new NotFoundException('Varyant bulunamadi');
+    await this.market.assertOwner(varyant.product.storeId, userId, roles);
+
+    // Fiyat girdisi GELDIYSE yeniden hesaplanir; gelmediyse mevcut degerlere
+    // dokunulmaz - kismi guncellemede fiyat sessizce sifirlanmasin.
+    const fiyatGirdisiVar =
+      dto.price !== undefined || dto.netFiyat !== undefined || dto.desi !== undefined ||
+      dto.weightKg !== undefined || dto.kdvOrani !== undefined || dto.satisModeli !== undefined;
+
+    return this.prisma.productVariant.update({
+      where: { id: variantId },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name } : {}),
+        ...(dto.sku !== undefined ? { sku: dto.sku } : {}),
+        ...(dto.barcode !== undefined ? { barcode: dto.barcode } : {}),
+        ...(dto.stock !== undefined ? { stock: dto.stock } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(fiyatGirdisiVar
+          ? this.varyantFiyatAlanlari(varyant.product.store, varyant.product, dto)
+          : {}),
+      },
+    });
+  }
+
+  // SOFT DELETE: sepette ve gecmis siparislerde referansi olabilir; sert silme
+  // gecmisi bozar (OrderItem.variantId'ye FK koymamamizla ayni gerekce).
+  async varyantSil(variantId: string, userId: string, roles: Role[]) {
+    const varyant = await this.prisma.productVariant.findFirst({
+      where: { id: variantId, deletedAt: null },
+      include: { product: { select: { storeId: true } } },
+    });
+    if (!varyant) throw new NotFoundException('Varyant bulunamadi');
+    await this.market.assertOwner(varyant.product.storeId, userId, roles);
+    await this.prisma.productVariant.update({
+      where: { id: variantId },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+    return { deleted: true };
+  }
+
+  // ---------------- SECENEK GRUBU VE SECENEKLER ----------------
+
+  // min > max mantiksal olarak imkansiz; zorunlu grupta min en az 1 olmali,
+  // yoksa "zorunlu" bilgisi hicbir sey ifade etmez.
+  private secimSiniriDogrula(min: number, max: number, zorunlu: boolean) {
+    if (min > max) throw new BadRequestException('minSecim maxSecim degerinden buyuk olamaz');
+    if (zorunlu && min < 1) throw new BadRequestException('Zorunlu grupta minSecim en az 1 olmali');
+  }
+
+  async secenekGruplari(storeId: string, userId: string, roles: Role[]) {
+    await this.market.assertOwner(storeId, userId, roles);
+    return this.prisma.optionGroup.findMany({
+      where: { storeId },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      include: { options: { orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] } },
+    });
+  }
+
+  async secenekGrubuOlustur(storeId: string, userId: string, roles: Role[], dto: SecenekGrubuDto) {
+    await this.market.assertOwner(storeId, userId, roles);
+    const min = dto.minSecim ?? 0;
+    const max = dto.maxSecim ?? 1;
+    this.secimSiniriDogrula(min, max, dto.zorunlu ?? false);
+    return this.prisma.optionGroup.create({
+      data: {
+        storeId,
+        name: dto.name,
+        minSecim: min,
+        maxSecim: max,
+        zorunlu: dto.zorunlu ?? false,
+        sortOrder: dto.sortOrder ?? 0,
+      },
+    });
+  }
+
+  async secenekGrubuGuncelle(groupId: string, userId: string, roles: Role[], dto: SecenekGrubuDto) {
+    const grup = await this.prisma.optionGroup.findUnique({ where: { id: groupId } });
+    if (!grup) throw new NotFoundException('Secenek grubu bulunamadi');
+    await this.market.assertOwner(grup.storeId, userId, roles);
+    this.secimSiniriDogrula(
+      dto.minSecim ?? grup.minSecim,
+      dto.maxSecim ?? grup.maxSecim,
+      dto.zorunlu ?? grup.zorunlu,
+    );
+    return this.prisma.optionGroup.update({
+      where: { id: groupId },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name } : {}),
+        ...(dto.minSecim !== undefined ? { minSecim: dto.minSecim } : {}),
+        ...(dto.maxSecim !== undefined ? { maxSecim: dto.maxSecim } : {}),
+        ...(dto.zorunlu !== undefined ? { zorunlu: dto.zorunlu } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      },
+    });
+  }
+
+  // SILME DEGIL KAPATMA: grup silinirse ona bagli urun eslesmeleri Cascade ile
+  // gider ve gecmis menu yapisi kaybolur.
+  async secenekGrubuSil(groupId: string, userId: string, roles: Role[]) {
+    const grup = await this.prisma.optionGroup.findUnique({ where: { id: groupId } });
+    if (!grup) throw new NotFoundException('Secenek grubu bulunamadi');
+    await this.market.assertOwner(grup.storeId, userId, roles);
+    await this.prisma.optionGroup.update({ where: { id: groupId }, data: { isActive: false } });
+    return { deactivated: true };
+  }
+
+  async secenekEkle(groupId: string, userId: string, roles: Role[], dto: SecenekDto) {
+    const grup = await this.prisma.optionGroup.findUnique({ where: { id: groupId } });
+    if (!grup) throw new NotFoundException('Secenek grubu bulunamadi');
+    await this.market.assertOwner(grup.storeId, userId, roles);
+    return this.prisma.option.create({
+      data: {
+        optionGroupId: groupId,
+        name: dto.name,
+        ekUcret: BigInt(dto.ekUcret ?? 0),
+        sortOrder: dto.sortOrder ?? 0,
+      },
+    });
+  }
+
+  async secenekGuncelle(optionId: string, userId: string, roles: Role[], dto: SecenekDto) {
+    const secenek = await this.prisma.option.findUnique({
+      where: { id: optionId },
+      include: { group: { select: { storeId: true } } },
+    });
+    if (!secenek) throw new NotFoundException('Secenek bulunamadi');
+    await this.market.assertOwner(secenek.group.storeId, userId, roles);
+    return this.prisma.option.update({
+      where: { id: optionId },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name } : {}),
+        ...(dto.ekUcret !== undefined ? { ekUcret: BigInt(dto.ekUcret) } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      },
+    });
+  }
+
+  async secenekSil(optionId: string, userId: string, roles: Role[]) {
+    const secenek = await this.prisma.option.findUnique({
+      where: { id: optionId },
+      include: { group: { select: { storeId: true } } },
+    });
+    if (!secenek) throw new NotFoundException('Secenek bulunamadi');
+    await this.market.assertOwner(secenek.group.storeId, userId, roles);
+    await this.prisma.option.update({ where: { id: optionId }, data: { isActive: false } });
+    return { deactivated: true };
+  }
+
+  // Urun <-> grup eslesmesi TOPLU yazilir: gonderilen liste NIHAI durumdur.
+  // Kismi guncellemede istemcinin iki cagri arasinda tutarsiz durum birakma
+  // ihtimali boylece ortadan kalkar.
+  async urunSecenekGruplari(productId: string, userId: string, roles: Role[], dto: UrunSecenekGruplariDto) {
+    const urun = await this.urunVeMagaza(productId, userId, roles);
+    const idler = dto.optionGroupIds ?? [];
+    if (idler.length > 0) {
+      // Gruplar AYNI MAGAZAYA ait olmali: baska magazanin menu grubu bu urune
+      // baglanamaz.
+      const sayi = await this.prisma.optionGroup.count({
+        where: { id: { in: idler }, storeId: urun.storeId },
+      });
+      if (sayi !== idler.length) {
+        throw new BadRequestException('Secenek gruplarindan bazilari bu magazaya ait degil');
+      }
+    }
+    await this.prisma.$transaction([
+      this.prisma.productOptionGroup.deleteMany({ where: { productId } }),
+      this.prisma.productOptionGroup.createMany({
+        data: idler.map((optionGroupId, i) => ({ productId, optionGroupId, sortOrder: i })),
+      }),
+    ]);
+    return this.prisma.productOptionGroup.findMany({
+      where: { productId },
+      orderBy: { sortOrder: 'asc' },
+      include: { group: { include: { options: true } } },
+    });
+  }
+
+  // ---------------- MEDYA ----------------
+
+  async medyaListesi(productId: string, userId: string, roles: Role[]) {
+    await this.urunVeMagaza(productId, userId, roles);
+    return this.prisma.productMedia.findMany({ where: { productId }, orderBy: { sortOrder: 'asc' } });
+  }
+
+  async medyaEkle(productId: string, userId: string, roles: Role[], dto: MedyaEkleDto) {
+    await this.urunVeMagaza(productId, userId, roles);
+    const medya = await this.prisma.productMedia.create({
+      data: {
+        productId,
+        url: dto.url,
+        tur: dto.tur ?? 'GORSEL',
+        sortOrder: dto.sortOrder ?? 0,
+        isPrimary: dto.isPrimary ?? false,
+      },
+    });
+    if (medya.isPrimary) await this.birincilMedyayiUygula(productId, medya.id, medya.url);
+    return medya;
+  }
+
+  async medyaGuncelle(mediaId: string, userId: string, roles: Role[], dto: MedyaGuncelleDto) {
+    const mevcut = await this.prisma.productMedia.findUnique({
+      where: { id: mediaId },
+      include: { product: { select: { storeId: true } } },
+    });
+    if (!mevcut) throw new NotFoundException('Medya bulunamadi');
+    await this.market.assertOwner(mevcut.product.storeId, userId, roles);
+    const medya = await this.prisma.productMedia.update({
+      where: { id: mediaId },
+      data: {
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.isPrimary !== undefined ? { isPrimary: dto.isPrimary } : {}),
+      },
+    });
+    if (medya.isPrimary) await this.birincilMedyayiUygula(medya.productId, medya.id, medya.url);
+    return medya;
+  }
+
+  async medyaSil(mediaId: string, userId: string, roles: Role[]) {
+    const medya = await this.prisma.productMedia.findUnique({
+      where: { id: mediaId },
+      include: { product: { select: { storeId: true } } },
+    });
+    if (!medya) throw new NotFoundException('Medya bulunamadi');
+    await this.market.assertOwner(medya.product.storeId, userId, roles);
+    await this.prisma.productMedia.delete({ where: { id: mediaId } });
+    return { deleted: true };
+  }
+
+  /**
+   * BIRINCIL MEDYA TEKTIR: yeni birincil isaretlenince digerleri dusurulur ve
+   * Product.imageUrl (kapak gorseli; tum vitrin okumalarinin baktigi alan) ayni
+   * degere cekilir. Iki kaynak arasindaki tutarsizlik YAZMA ANINDA kapatilir;
+   * tek kaynaga indirme (imageUrl'i tamamen medyadan turetme) F4'e birakildi.
+   */
+  private async birincilMedyayiUygula(productId: string, mediaId: string, url: string) {
+    await this.prisma.productMedia.updateMany({
+      where: { productId, id: { not: mediaId } },
+      data: { isPrimary: false },
+    });
+    await this.prisma.product.update({ where: { id: productId }, data: { imageUrl: url } });
   }
 
   // Admin: onayla -> yayinla
