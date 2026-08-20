@@ -373,3 +373,45 @@ export function vitrinFiyatHesapla(
     yuvarlamaKurus,
   };
 }
+
+
+// ============================================================
+// EK UCRET (SECENEK) FIYATLANDIRMASI — Carsi
+// ------------------------------------------------------------
+// Secenek ek ucreti de tam fiyat hattindan gecer: komisyon ve KDV ayristirilir,
+// kirilim siparis satirinda saklanir. TEK FARK: KARGO EKLENMEZ.
+//
+// Neden: kargoKurusHesapla(0, 0) taban tarifeyi (12061 kurus = 120,61 TL)
+// dondurur. vitrinFiyatHesapla dogrudan cagrilsaydi HER EKSTRA MALZEME 120 TL
+// kargo eklerdi. Kargo gonderi basinadir ve urun fiyatinin icinde zaten var.
+//
+// Yuvarlama da yapilmaz: urun tarafinda yuvarlama farki kargoya yaziliyor,
+// burada kargo kalemi olmadigi icin farki yazacak yer yok. Yuvarlamasiz
+// kaldiginda kirilim ek ucrete BIREBIR oturur ve checkout'un
+// "dagitim == subtotal" guvencesi bozulmaz.
+export interface EkUcretSonuc {
+  vitrinKurus: bigint; // musterinin odedigi ek ucret
+  netKurus: bigint; // saticinin mali
+  komisyonKurus: bigint;
+  malKdvKurus: bigint;
+  hizmetKdvKurus: bigint;
+}
+
+export function ekUcretHesapla(
+  netKurus: bigint,
+  kdvOrani: number,
+  komisyonOran: bigint = KOMISYON_ORAN_VARSAYILAN,
+): EkUcretSonuc {
+  const komisyonKurus = (netKurus * komisyonOran) / 100n;
+  const malKdvKurus = (netKurus * BigInt(kdvOrani)) / 100n;
+  // Kargo olmadigi icin hizmet KDV tabani yalnizca komisyondur; A ve B satis
+  // modelleri burada ayrismaz.
+  const hizmetKdvKurus = (komisyonKurus * HIZMET_KDV_ORAN) / 100n;
+  return {
+    vitrinKurus: netKurus + komisyonKurus + malKdvKurus + hizmetKdvKurus,
+    netKurus,
+    komisyonKurus,
+    malKdvKurus,
+    hizmetKdvKurus,
+  };
+}

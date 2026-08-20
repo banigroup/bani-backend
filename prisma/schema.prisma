@@ -679,7 +679,22 @@ model CartItemOption {
   cartItem   CartItem @relation(fields: [cartItemId], references: [id], onDelete: Cascade)
   optionId   String   @db.Uuid
   optionAdi  String
+  // MUSTERININ ODEDIGI ek ucret. Carsi'da bu, Option.ekUcret'in (satici neti)
+  // uzerine komisyon + KDV eklenmis halidir; Carsi disinda Option.ekUcret'in
+  // aynisi.
   ekUcret    BigInt   @default(0)
+
+  // CARSI MUHASEBE KIRILIMI — ek ucret de tam fiyat hattindan gecer.
+  // NULL = Carsi disi (kirilim yok), urun/varyant tarafiyla ayni desen.
+  // Kargo kalemi YOK: kargo gonderi basinadir ve urun fiyatinin icinde zaten
+  // var; her ekstra malzemeye taban tarife (120,61 TL) eklenemez. Yuvarlama da
+  // yok - yuvarlama farkini yazacak kargo kalemi olmadigi icin. Boylece
+  // ekUcret == netFiyat + komisyon + malKdv + hizmetKdv BIREBIR tutar ve
+  // checkout'un "dagitim == subtotal" guvencesi bozulmaz.
+  netFiyat        BigInt?
+  komisyonTutari  BigInt?
+  malKdvTutari    BigInt?
+  hizmetKdvTutari BigInt?
 
   createdAt DateTime @default(now())
 
@@ -823,13 +838,22 @@ model CartItem {
 
   secimler CartItemOption[]
 
-  // DIKKAT — NULLABLE UNIQUE: Postgres'te NULL != NULL oldugu icin variantId
-  // NULL olan ayni urun teorik olarak iki kez eklenebilir. Koruma UYGULAMADA:
-  // cart.service varyantsiz durumda findFirst ile ariyor (findUnique bilesik
-  // anahtarda null kabul etmez). Kismi unique index tercih edilmedi: Prisma
-  // semasinda ifade edilemedigi icin her migrate diff'te drift uretirdi.
-  @@unique([cartId, productId, variantId])
-  // @@index([cartId]) KALDIRILDI: yukaridaki unique'in oneki ayni isi goruyor
+  // TEKILLIK ARTIK DB'DE DEGIL, UYGULAMADA — Faz 3 / adim 3 karari.
+  //
+  // Ayni urun+varyant, FARKLI SECIM KUMESI = AYRI KALEM (ayranli ve ayransiz
+  // ayni doner iki satirdir). Tekillik anahtari artik secim kumesini de
+  // kapsiyor; secimler ayri tabloda (cart_item_options) durdugu icin bu, ne
+  // @@unique ile ne de kismi indeksle ifade edilebilir. Eski
+  // @@unique([cartId, productId, variantId]) tam da bu ikinci kalemi P2002 ile
+  // reddediyordu, o yuzden DUSURULDU (bkz. 20260820140000_faz3_sepet_secenekleri).
+  //
+  // Yerine gecen koruma: cart.service.addItem adaylari okuyup secim kumesini
+  // karsilastiriyor. BEDELI BILINEREK ALINDI: es zamanli iki istek ayni kalemi
+  // iki satir yazabilir (miktar birlesmez, para yanlis olmaz).
+  //
+  // Asagidaki indeks o aday aramasinin (+ cartId onekiyle sepet okumasinin)
+  // indeksidir; unique'in yerini alir.
+  @@index([cartId, productId, variantId])
   @@index([productId]) // FK: Postgres otomatik indekslemez - urun bazli sorgu + FK dogrulamasi
   @@map("cart_items")
 }
