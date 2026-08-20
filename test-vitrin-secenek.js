@@ -27,13 +27,18 @@ console.log(`DB: ${u.hostname}:${u.port}${u.pathname}\n`);
 const { PrismaClient } = require('@prisma/client');
 const { CatalogService } = require('./dist/src/catalog/catalog.service');
 const { CartService } = require('./dist/src/cart/cart.service');
+const { MarketService } = require('./dist/src/market/market.service');
 const { vitrinFiyatHesapla, ekUcretHesapla } = require('./dist/src/delivery/pricing');
 
 const prisma = new PrismaClient();
-// Public okuma yollari market.assertOwner cagirmaz; bos vekil yeterli.
+// MarketService GERCEK: urunDetay yetkisi (assertOwner) gercekten sinaniyor.
+// Onun audit / satici durumu bagimliliklari bu yolda cagrilmiyor -> bos vekil.
 const bosVekil = new Proxy({}, { get: () => async () => undefined });
-const katalog = new CatalogService(prisma, bosVekil);
+const katalog = new CatalogService(prisma, new MarketService(prisma, bosVekil, bosVekil));
 const cart = new CartService(prisma);
+
+// Muhasebe kirilimi: musteriye ASLA gitmemeli, saticiya gitmeli.
+const KIRILIM = ['netFiyat', 'komisyonTutari', 'kargoTutari', 'malKdvTutari', 'hizmetKdvTutari'];
 
 const ON = `__TEST_VIT_${Date.now()}`;
 let gecti = 0;
@@ -120,12 +125,27 @@ async function kur() {
     data: { productId: carsiUrun.id, optionGroupId: kaplama.g.id, sortOrder: 0 },
   });
 
-  return { user, marketMagaza, marketUrun, sadeUrun, carsiUrun, sos, boy, kaplama, kapali };
+  // Onay bekleyen urun: satici ucunun (listPending) kirilimi hala gordugunu
+  // gostermek icin. Kirilim degerleri ACIK yaziliyor ki "0 mi yok mu" karismasin.
+  const bekleyenUrun = await prisma.product.create({
+    data: {
+      storeId: marketMagaza.id, name: `${ON} Bekleyen`, slug: `${ON}-bekleyen`.toLowerCase(),
+      price: 5000n, netFiyat: 4000n, komisyonTutari: 320n, kargoTutari: 400n,
+      malKdvTutari: 400n, hizmetKdvTutari: 64n, stock: 5, isActive: false, kdvOrani: 10,
+    },
+  });
+  // Magazayla ilgisi olmayan kullanici: urunDetay yetkisinin gercekten
+  // kapandigini gostermek icin (bos vekil degil, gercek MarketService).
+  const yabanci = await prisma.user.create({
+    data: { phone: `${ON.slice(0, 19)}Y`, name: 'Yabanci', status: 'ACTIVE' },
+  });
+
+  return { user, yabanci, marketMagaza, marketUrun, sadeUrun, carsiUrun, bekleyenUrun, sos, boy, kaplama, kapali };
 }
 
 async function temizle(f) {
   if (!f) return;
-  const urunler = [f.marketUrun?.id, f.sadeUrun?.id, f.carsiUrun?.id].filter(Boolean);
+  const urunler = [f.marketUrun?.id, f.sadeUrun?.id, f.carsiUrun?.id, f.bekleyenUrun?.id].filter(Boolean);
   await prisma.cartItem.deleteMany({ where: { cart: { userId: f.user.id } } });
   await prisma.cart.deleteMany({ where: { userId: f.user.id } });
   await prisma.productOptionGroup.deleteMany({ where: { productId: { in: urunler } } });
@@ -134,7 +154,7 @@ async function temizle(f) {
   await prisma.product.deleteMany({ where: { id: { in: urunler } } });
   await prisma.store.deleteMany({ where: { name: { startsWith: ON } } });
   await prisma.seller.deleteMany({ where: { displayName: { startsWith: ON } } });
-  await prisma.user.deleteMany({ where: { id: f.user.id } });
+  await prisma.user.deleteMany({ where: { id: { in: [f.user.id, f.yabanci?.id].filter(Boolean) } } });
 }
 
 (async () => {
@@ -201,6 +221,33 @@ async function temizle(f) {
     const sade = await katalog.getPublicProduct(f.sadeUrun.id);
     ok('secenekGruplari bos dizi', Array.isArray(sade.secenekGruplari) && sade.secenekGruplari.length === 0);
     ok('urun alanlari yerinde', sade.id === f.sadeUrun.id && sade.price === 2000n);
+
+    // ---- 8) MUHASEBE KIRILIMI musteriye GITMEZ, saticiya GIDER ----
+    console.log('\n8) Muhasebe kirilimi sizintisi');
+    const eksikOlanlar = KIRILIM.filter((a) => cUrun[a] === undefined);
+    ok('detay ucunda kirilim YOK', eksikOlanlar.length === KIRILIM.length,
+      `gizlenen: ${eksikOlanlar.join(', ') || 'HICBIRI'}`);
+    ok('vitrin fiyati yerinde', cUrun.price === f.carsiUrun.price, `${cUrun.price}`);
+    const listeCarsi = (await katalog.listProducts(f.carsiUrun.storeId)).find((p) => p.id === f.carsiUrun.id);
+    ok('liste ucunda da kirilim YOK', KIRILIM.every((a) => listeCarsi[a] === undefined));
+
+    const saticiDetay = await katalog.urunDetay(f.carsiUrun.id, f.user.id, []);
+    ok('satici detayi kirilimi GORUYOR',
+      KIRILIM.every((a) => saticiDetay[a] !== undefined) && saticiDetay.netFiyat === 20000n,
+      `netFiyat=${saticiDetay.netFiyat}`);
+
+    const bekleyenler = await katalog.listPending(f.marketMagaza.id, f.user.id, []);
+    const bekleyen = bekleyenler.find((p) => p.id === f.bekleyenUrun.id);
+    ok('listPending kirilimi GORMEYE devam ediyor',
+      bekleyen && bekleyen.netFiyat === 4000n && bekleyen.komisyonTutari === 320n);
+
+    try {
+      await katalog.urunDetay(f.carsiUrun.id, f.yabanci.id, []);
+      ok('yabanciya kapali', false, 'hata beklendi, gelmedi');
+    } catch (e) {
+      const m = e?.response?.message ?? e?.message ?? String(e);
+      ok('yabanciya kapali', String(m).includes('ait değil'), `"${m}"`);
+    }
 
     console.log(`\n=== GECTI: ${gecti} | KALDI: ${kaldi} ===`);
   } catch (e) {

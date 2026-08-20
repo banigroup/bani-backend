@@ -37,10 +37,21 @@ export class CatalogController {
     return this.catalog.listProducts(storeId, categoryId, Number(skip) || 0, Number(take) || 50);
   }
 
+  // MUSTERI DETAYI: muhasebe kirilimi (netFiyat/komisyon/kargo/KDV) DONMEZ,
+  // yalnizca vitrin fiyati. Kirilimi goren tekil-urun ucu asagidaki :id/detay.
   @Public()
   @Get('products/:id')
   product(@Param('id') id: string) {
     return this.catalog.getPublicProduct(id);
+  }
+
+  // SATICI DETAYI: tam satir (muhasebe kirilimi dahil). Duzenleme ekraninin
+  // formu net fiyati buradan doldurur.
+  @Get('products/:id/detay')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
+  urunDetay(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.catalog.urunDetay(id, user.id, user.roles);
   }
 
   // Onay bekleyen urunler (magaza sahibi / admin)
