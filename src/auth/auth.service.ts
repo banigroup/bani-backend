@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp/otp.service';
 import { TokenService } from './tokens/token.service';
 import { originDikey } from '../common/domain/dikey-domain';
+import { rolleriOku, rolleriYaz } from '../common/rbac/kullanici-rolleri';
 
 interface ReqMeta { ip?: string; userAgent?: string }
 
@@ -27,18 +28,22 @@ export class AuthService {
     const user = await this.prisma.user.upsert({
       where: { phone },
       update: { phoneVerified: true, status: UserStatus.ACTIVE },
-      create: {
-        phone, phoneVerified: true, status: UserStatus.ACTIVE,
-        roles: (() => {
-          const izinli = ['LOAD_CUSTOMER', 'CARRIER'];
-          const secilen = (roller || []).filter((r) => izinli.includes(r)) as Role[];
-          return secilen.length ? secilen : [Role.CUSTOMER];
-        })(),
-      },
+      create: { phone, phoneVerified: true, status: UserStatus.ACTIVE },
     });
-    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles: user.roles });
+    // ROL ARTIK AYRI TABLODA, upsert'in create daliyla verilemiyor. Eski
+    // davranis KORUNUYOR: roller yalnizca YENI kullaniciya atanir, mevcut
+    // kullanicininkiler ellenmez (upsert'te create.roles tam bunu yapiyordu).
+    // "Yeni" olcusu rol satirinin bulunmamasi; rolsuz kalmis eski bir kayit da
+    // boylece onarilir.
+    let roles = await rolleriOku(this.prisma, user.id);
+    if (roles.length === 0) {
+      const izinli = ['LOAD_CUSTOMER', 'CARRIER'];
+      const secilen = (roller || []).filter((r) => izinli.includes(r)) as Role[];
+      roles = await rolleriYaz(this.prisma, user.id, secilen.length ? secilen : [Role.CUSTOMER]);
+    }
+    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles });
     const refreshToken = await this.tokens.issueRefresh(user.id, meta);
-    return { accessToken, refreshToken, user: { id: user.id, phone: user.phone, roles: user.roles, status: user.status } };
+    return { accessToken, refreshToken, user: { id: user.id, phone: user.phone, roles, status: user.status } };
   }
 
   // Misafir oturumu: anonim bir kullanici acar ve token verir (login YOK).
@@ -51,16 +56,19 @@ export class AuthService {
         status: UserStatus.ACTIVE,
       },
     });
-    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles: user.roles });
+    // Kolon default'u ([CUSTOMER]) kolonla birlikte kalkti; rol ACIKCA yaziliyor.
+    const roles = await rolleriYaz(this.prisma, user.id, [Role.CUSTOMER]);
+    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles });
     const refreshToken = await this.tokens.issueRefresh(user.id, meta);
-    return { accessToken, refreshToken, guest: true, user: { id: user.id, phone: user.phone, roles: user.roles, status: user.status } };
+    return { accessToken, refreshToken, guest: true, user: { id: user.id, phone: user.phone, roles, status: user.status } };
   }
 
   async refresh(raw: string, meta: ReqMeta) {
     const rotated = await this.tokens.rotateRefresh(raw, meta);
     if (!rotated) return null;
     const { user, refreshToken } = rotated;
-    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles: user.roles });
+    const roles = await rolleriOku(this.prisma, user.id);
+    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles });
     return { accessToken, refreshToken };
   }
 
@@ -101,13 +109,14 @@ export class AuthService {
       }
     }
 
-    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles: user.roles });
+    const roles = await rolleriOku(this.prisma, user.id);
+    const accessToken = this.tokens.signAccess({ sub: user.id, phone: user.phone, roles });
     const refreshToken = await this.tokens.issueRefresh(user.id, meta);
     return {
       accessToken,
       refreshToken,
       guest: user.phone.startsWith('guest_'),
-      user: { id: user.id, phone: user.phone, roles: user.roles, status: user.status },
+      user: { id: user.id, phone: user.phone, roles, status: user.status },
     };
   }
 

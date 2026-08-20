@@ -11,6 +11,7 @@ import { MarketService } from '../market/market.service';
 import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { platformYoneticisi } from '../common/rbac/rol-kontrol';
 import { CheckoutDto } from './dto/checkout.dto';
 import { OrderStatusService } from './order-status.service';
 import { checkoutOriginUygun, dikeyCoz } from '../common/domain/dikey-domain';
@@ -55,9 +56,10 @@ export class OrdersService {
   // burasi ona hizalandi. ADMIN artik platform operatorudur: tum magazalarin
   // siparislerini gorur ve durum ilerletir. Musteri adres/telefon verisine
   // erisim bu kapsamin bilincli parcasidir.
+  // Tanim TEK KAYNAKTA: common/rbac/rol-kontrol. Yukaridaki hikayenin tekrar
+  // yasanmamasi icin kopya birakilmadi.
   private isAdmin(user: AuthUser): boolean {
-    const roles = user.roles ?? [];
-    return roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
+    return platformYoneticisi(user.roles);
   }
 
   /**

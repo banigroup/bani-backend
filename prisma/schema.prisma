@@ -39,7 +39,12 @@ model User {
   name          String?
   surname       String?
   passwordHash  String?
-  roles         Role[]     @default([CUSTOMER])
+  // roles KOLONU KALDIRILDI (Faz 1 / A1) -> user_roles tablosu.
+  // Bkz. model UserRole: rol artik satirdir, cunku C adiminda magaza kapsami
+  // (storeId) tasiyacak ve enum dizisi kolonuna kapsam konamaz.
+  // Kolon BILEREK birakilmadi: duran bir kolon sessiz ikinci kaynak olurdu
+  // (isAdmin'in iki dosyada ayrismasinin aynisi). Dusurulunce her okuma
+  // noktasi DERLEME HATASI verir - tsc kacan yolu deploydan once yakalar.
   status        UserStatus @default(PENDING)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
@@ -54,6 +59,7 @@ model User {
   ownedStores      Store[]
   saticiKayitlari  Seller[]         @relation("SellerOwner")
   magazaUyelikleri StoreUser[] // personel olarak calistigi magazalar
+  rolAtamalari     UserRole[]
   carts            Cart[] // dikey basina bir sepet
   orders           Order[]
   deliveries       Delivery[]       @relation("CourierDeliveries")
@@ -482,6 +488,7 @@ model Store {
   secenekGruplari OptionGroup[]
   orders          Order[]
   personel        StoreUser[]
+  rolAtamalari    UserRole[]
   calismaSaati    StoreHour[]
 
   @@index([ownerId])
@@ -504,6 +511,46 @@ model Store {
 //
 // UYELIK YETKI DEGIL KAPSAM verir: kullanicinin rolundeki izinleri O MAGAZADA
 // kullanilabilir kilar, yeni izin eklemez.
+// ROL ATAMASI ARTIK SATIR — Faz 1 / A1.
+//
+// Eskiden users.roles bir Postgres enum DIZISIYDI. Kapsam (hangi magazada
+// gecerli) bir dizi kolonuna yazilamaz; C adiminda gelecek "mutfak personeli
+// SADECE su subede" kurali bu tablonun storeId'sinde yasayacak.
+//
+// A1'DE DAVRANIS DEGISMIYOR: storeId HER SATIRDA NULL yaziliyor (= platform
+// geneli), yani bugunku dizi davranisinin birebir aynisi. Kolon simdiden
+// aciliyor ki C adimi sema degil yalnizca kod degisikligi olsun.
+//
+// ROL KIMLIGI HALA `Role` ENUM'I: 27 kod referansi ve @Roles(...) dekoratoru
+// derleme zamani guvenligini buradan aliyor. Serbest metne cevirmek o guvenligi
+// tumuyle yok ederdi. Yeni rol eklemek tek satirlik migration
+// (ALTER TYPE "Role" ADD VALUE ...), B adiminda oyle yapilacak.
+model UserRole {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role
+
+  // NULL = platform geneli. A1'de tum satirlar boyle.
+  // Cascade: magaza silinince o magazaya kapsanmis rol anlamsizdir (StoreUser
+  // ile ayni gerekce - turetilmis erisim kaydi, deger/delil tasimaz).
+  storeId String? @db.Uuid
+  store   Store?  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  // DIKKAT — NULLABLE UNIQUE: storeId NULL iken Postgres'te NULL != NULL, yani
+  // ayni rol teorik olarak iki kez yazilabilir. cart_items'taki ayni desen.
+  // Burada zarar YETKI DEGIL GORUNTU: okuma tarafi Set ile tekillestiriyor,
+  // izin kumesi degismiyor. Yazma zaten tek kapidan (users.assignRoles: sil+yaz,
+  // tek transaction). Kismi unique index yine tercih edilmedi - Prisma semasinda
+  // ifade edilemedigi icin her migrate diff'te drift uretirdi.
+  @@unique([userId, role, storeId])
+  @@index([userId]) // her istekte okunan yol: JwtStrategy.validate
+  @@index([storeId])
+  @@map("user_roles")
+}
+
 model StoreUser {
   id      String @id @default(uuid()) @db.Uuid
   storeId String @db.Uuid

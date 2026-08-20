@@ -14,6 +14,8 @@ import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { platformYoneticisi } from '../common/rbac/rol-kontrol';
+import { rolleriOku } from '../common/rbac/kullanici-rolleri';
 import { YukIlaniOlusturDto } from './dto/yuk-ilani-olustur.dto';
 import { AracIlaniOlusturDto } from './dto/arac-ilani-olustur.dto';
 import { TeklifVerDto } from './dto/teklif-ver.dto';
@@ -691,8 +693,8 @@ export class LoadService {
   // Firma: VERGI_LEVHASI | Nakliyeci (cift rol): VERGI_LEVHASI (firma ile ayni) | Kamyoncu: EHLIYET + ARAC_RUHSAT
   private async belgeKontrolu(userId: string, islemRol: 'FIRMA' | 'TASIYICI') {
     if (process.env.KYC_KILIT_AKTIF !== 'true') return; // anahtar kapali
-    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { roles: true } });
-    const roller: string[] = (u?.roles as any) || [];
+    // Rol artik user_roles tablosunda (Faz 1 / A1); okuma tek kapidan.
+    const roller: string[] = await rolleriOku(this.prisma, userId);
     const nakliyeciMi = roller.includes('LOAD_CUSTOMER') && roller.includes('CARRIER');
     const zorunlu = (islemRol === 'FIRMA' || nakliyeciMi)
       ? [LoadBelgeTipi.VERGI_LEVHASI]
@@ -745,8 +747,9 @@ export class LoadService {
 
   // ---- Admin ----
 
+  // Tanim TEK KAYNAKTA: common/rbac/rol-kontrol. Buradaki yerel kopya kaldirildi.
   private isAdmin(user: AuthUser): boolean {
-    return user.roles.includes(Role.ADMIN) || user.roles.includes(Role.SUPER_ADMIN);
+    return platformYoneticisi(user.roles);
   }
 
   // Admin: bekleyen tum odeme bildirimleri
@@ -824,7 +827,7 @@ export class LoadService {
   async profilKaydet(user: AuthUser, dto: any) {
     const kullanici = await this.prisma.user.findUnique({ where: { id: user.id } });
     if (!kullanici) throw new NotFoundException('Kullanıcı bulunamadı');
-    const roller = kullanici.roles || [];
+    const roller = await rolleriOku(this.prisma, user.id);
     if (roller.includes(Role.LOAD_CUSTOMER)) {
       if (!dto.firma) throw new BadRequestException('Firma bilgileri zorunludur');
       const f = dto.firma;
@@ -852,7 +855,7 @@ export class LoadService {
       include: { loadFirmaProfil: true, loadTasiyiciProfil: true },
     });
     if (!kullanici) throw new NotFoundException('Kullanıcı bulunamadı');
-    const roller = kullanici.roles || [];
+    const roller = await rolleriOku(this.prisma, user.id);
     const firmaGerekli = roller.includes(Role.LOAD_CUSTOMER);
     const tasiyiciGerekli = roller.includes(Role.CARRIER);
     const firmaTamam = !firmaGerekli || !!kullanici.loadFirmaProfil;
@@ -885,7 +888,7 @@ export class LoadService {
       include: {
         user: {
           select: {
-            id: true, phone: true, roles: true,
+            id: true, phone: true, rolAtamalari: { select: { role: true } },
             loadFirmaProfil: { select: { unvan: true, vkn: true, yetkiliAd: true, yetkiliSoyad: true } },
             loadTasiyiciProfil: { select: { ad: true, soyad: true, tcKimlik: true, plaka: true } },
           },
