@@ -38,6 +38,52 @@ const VITRIN_SECENEKLERI = Prisma.validator<Prisma.Product$secenekGruplariArgs>(
   },
 });
 
+// MUSTERIYE ACIK URUN ALANLARI — IZIN LISTESI (denylist DEGIL).
+//
+// Bu ucler ham Prisma satirini donduruyordu; projede yanit DTO'su yok
+// (ClassSerializerInterceptor / @Exclude hicbir yerde kullanilmiyor), yani
+// "yanit sekli" = tablo semasi. Sonuc: products'a bir muhasebe kolonu eklendigi
+// anda public uc onu KENDILIGINDEN yayinliyordu - netFiyat, komisyonTutari,
+// kargoTutari, malKdvTutari, hizmetKdvTutari boyle disari cikti.
+//
+// Cozum izin listesi: varsayilan GIZLI. Yeni kolon buraya acikca yazilmadikca
+// musteriye gitmez. Bedeli: vitrinde gorunmesi gereken yeni bir alan eklenince
+// bu liste de guncellenmeli.
+//
+// Kirilimi GOREN yollar bilerek ayri metotlarda: listPending / createProduct /
+// updateProduct / approve / reject - hepsi assertOwner ya da PermissionsGuard
+// arkasinda. Onaylanmis urunun tam satiri icin urunDetay ucu var.
+const VITRIN_URUN_ALANLARI = Prisma.validator<Prisma.ProductSelect>()({
+  id: true,
+  storeId: true,
+  categoryId: true,
+  name: true,
+  slug: true,
+  description: true,
+  sku: true,
+  imageUrl: true,
+  price: true, // musteriye giden TEK fiyat: vitrin fiyati (kirilim gomulu)
+  currency: true,
+  stock: true,
+  unit: true,
+  desi: true,
+  weightKg: true,
+  kdvOrani: true,
+  satisModeli: true,
+  barcode: true,
+  shortDescription: true,
+  productType: true,
+  unitType: true,
+  minimumQuantity: true,
+  quantityStep: true,
+  preparationTimeMinutes: true,
+  masterProductId: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
 type VitrinSecenekBagi = {
   sortOrder: number;
   group: {
@@ -200,7 +246,8 @@ export class CatalogService {
       orderBy: { createdAt: 'desc' },
       skip,
       take: Math.min(take, 100),
-      include: {
+      select: {
+        ...VITRIN_URUN_ALANLARI,
         // Menu ekrani: restoran vitrininde secenekler urunle birlikte gorunur,
         // istemci her urun icin ayri detay cagrisi yapmak zorunda kalmasin.
         store: { select: { businessUnit: true, commissionRate: true } },
@@ -233,13 +280,29 @@ export class CatalogService {
   async getPublicProduct(id: string) {
     const product = await this.prisma.product.findFirst({
       where: { id, isActive: true, deletedAt: null, store: { seller: { status: SellerStatus.ACTIVE } } },
-      include: {
+      select: {
+        ...VITRIN_URUN_ALANLARI,
         store: { select: { businessUnit: true, commissionRate: true } },
         secenekGruplari: VITRIN_SECENEKLERI,
       },
     });
     if (!product) throw new NotFoundException('Urun bulunamadi');
     return this.vitrinUrun(product);
+  }
+
+  /**
+   * SATICI URUN DETAYI — kirilimi goren tek tekil-urun ucu.
+   *
+   * getPublicProduct artik muhasebe alanlarini dondurmuyor; onaylanmis bir
+   * urunun net fiyatini/komisyonunu okumanin baska yolu kalmamisti (listPending
+   * yalnizca isActive:false olanlari veriyor). Duzenleme ekraninin formu net
+   * fiyati bos doldurmasin diye bu uc acildi. Yetki her yerdeki ayni kapidan:
+   * market.assertOwner (sahip | aktif personel | platform yoneticisi).
+   */
+  async urunDetay(id: string, userId: string, roles: Role[]) {
+    const urun = await this.getProduct(id); // yayinda olmayani da bulur
+    await this.market.assertOwner(urun.storeId, userId, roles);
+    return urun;
   }
 
   // Kategori adini cekip urun adi ile birlikte KDV oranini otomatik tanir.
