@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import {
-  Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException,
+  Injectable, Logger, NotFoundException, ForbiddenException, ConflictException, BadRequestException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
@@ -26,6 +26,8 @@ const KOMISYON_BORC_ESIGI_KURUS = 1n; // sifir tolerans: odenmemis komisyon vars
 
 @Injectable()
 export class LoadService {
+  private readonly logger = new Logger(LoadService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: LedgerService,
@@ -56,8 +58,18 @@ export class LoadService {
 
   // Acik yuk ilanlari (tasiyici bunlari gorur, teklif verir)
   // Her saat basi calisir: suresi dolmus + eslesmemis ilanlari siler (finans girmeyenler)
+  // Kuyruk cron'uyla ayni gerekce: cron'dan disariya hata tasmasin (deploy
+  // penceresinde DB erisilemez olabilir). Temizlik bir sonraki saatte tekrarlanir.
   @Cron(CronExpression.EVERY_HOUR)
   async otomatikTemizlik() {
+    try {
+      await this.otomatikTemizlikIc();
+    } catch (e: any) {
+      this.logger.warn(`Otomatik temizlik atlandi: ${e?.message ?? e}`);
+    }
+  }
+
+  private async otomatikTemizlikIc() {
     const now = new Date();
     const yirmiDortSaatOnce = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     // SILME YOK (is delili + FK guvenligi): suresi dolan eslesmemis ilan IPTAL/PASIF'e cekilir

@@ -46,8 +46,29 @@ export class KuyrukService {
     }
   }
 
+  // DIS SARMAL: cron'dan disariya hata TASMAZ.
+  //
+  // Icerideki try/catch yalnizca TEK BIR ISIN calistirilmasini sariyordu;
+  // kilitleriKurtar() ve sahiplen() disarida kaliyordu. Deploy penceresinde
+  // (eski konteyner baglantiyi kaybederken ya da yenisi Postgres'e erisemeden)
+  // dakikalik cron tetiklendiginde Prisma hatasi hicbir yerde yakalanmiyor,
+  // Nest scheduler altinda UNHANDLED REJECTION olarak Sentry'ye dusuyordu.
+  // Kuyrugun kendini onarmasi bundan etkilenmez: yarida kalan is ISLENIYOR'da
+  // kalir, 10 dk sonra kilitleriKurtar onu BEKLIYOR'a geri alir.
+  //
+  // NOT: burasi DB hatasi disindaki hatalari da yutar. Yutmak "gizlemek" degil -
+  // warn olarak log'a dusuyor; amac cron'un surec seviyesinde patlamasini
+  // onlemek, cunku is bir sonraki dakikada zaten yeniden denenir.
   @Cron(CronExpression.EVERY_MINUTE)
   async isle(): Promise<void> {
+    try {
+      await this.isleIc();
+    } catch (e: any) {
+      this.logger.warn(`Kuyruk turu atlandi: ${e?.message ?? e}`);
+    }
+  }
+
+  private async isleIc(): Promise<void> {
     await this.kilitleriKurtar();
     for (let i = 0; i < 10; i++) {
       const is = await this.sahiplen();
