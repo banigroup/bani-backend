@@ -11,11 +11,28 @@ async function main() {
     }
     if (!owner) throw new Error('Mağaza sahibi bulunamadı.');
 
+    // Faz 2: magaza bir saticiya bagli olmali. Ayni sahibin mevcut saticisi
+    // kullanilir; yoksa (ana seed calismamissa) yenisi acilir.
+    let seller = await prisma.seller.findFirst({ where: { ownerUserId: owner.id, deletedAt: null } });
+    if (!seller) {
+        seller = await prisma.seller.create({
+            data: {
+                ownerUserId: owner.id,
+                sellerType: 'RESTORAN',
+                legalName: 'Demo Restoran Ltd. Şti.',
+                displayName: 'Bani Yemek — Demo Restoran',
+                status: 'ACTIVE',
+                verification: 'ONAYLANDI',
+            },
+        });
+    }
+
     const store = await prisma.store.upsert({
         where: { slug: 'demo-yemek' },
         update: {},
         create: {
             ownerId: owner.id,
+            sellerId: seller.id,
             name: 'Bani Yemek — Demo Restoran',
             slug: 'demo-yemek',
             type: StoreType.RESTAURANT,

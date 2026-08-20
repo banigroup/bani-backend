@@ -51,12 +51,27 @@ async function main() {
     },
   });
 
+  // --- Satıcı (Faz 2): mağaza artık bir satıcıya bağlı ---
+  const seller =
+    (await prisma.seller.findFirst({ where: { ownerUserId: merchant.id, deletedAt: null } })) ??
+    (await prisma.seller.create({
+      data: {
+        ownerUserId: merchant.id,
+        sellerType: 'MARKET',
+        legalName: 'Demo Ticaret Ltd. Şti.',
+        displayName: 'Demo Market',
+        status: 'ACTIVE',
+        verification: 'ONAYLANDI',
+      },
+    }));
+
   // --- Örnek mağaza ---
   const store = await prisma.store.upsert({
     where: { slug: 'demo-market' },
     update: {},
     create: {
       ownerId: merchant.id,
+      sellerId: seller.id,
       name: 'Demo Market',
       slug: 'demo-market',
       type: StoreType.MARKET,

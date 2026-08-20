@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { BusinessUnit } from '@prisma/client';
+import { BusinessUnit, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddItemDto } from './dto/add-item.dto';
 
@@ -105,7 +105,8 @@ export class CartService {
     // DIKEY URUNDEN TURETILIR, istemciden gelen basliktan DEGIL: boylece baslikla
     // oynayarak bir urunu baska dikeyin sepetine yazmak mumkun olmaz.
     const product = await this.prisma.product.findFirst({
-      where: { id: dto.productId, deletedAt: null, isActive: true },
+      // Satici ACTIVE degilse urun sepete de eklenemez (vitrin suzmesiyle ayni kural).
+      where: { id: dto.productId, deletedAt: null, isActive: true, store: { seller: { status: SellerStatus.ACTIVE } } },
       include: { store: { select: { businessUnit: true } } },
     });
     if (!product) throw new NotFoundException('Ürün bulunamadı veya pasif');
