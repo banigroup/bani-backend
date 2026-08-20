@@ -60,6 +60,24 @@ export class OrdersService {
     return roles.includes(Role.ADMIN) || roles.includes(Role.SUPER_ADMIN);
   }
 
+  /**
+   * Secim satirlarindaki bir kirilim kaleminin toplami (Carsi muhasebesi).
+   * NULL = kirilim yok (Carsi disi kalem) -> 0 sayilir. Bir CARSI kaleminde
+   * NULL cikarsa toplam eksik kalir ve asagidaki "dagitim == subtotal"
+   * guvencesi bunu yakalar: siparis yazilmadan durur, sessizce kaymaz.
+   */
+  private secimToplam(
+    secimler: {
+      netFiyat: bigint | null;
+      komisyonTutari: bigint | null;
+      malKdvTutari: bigint | null;
+      hizmetKdvTutari: bigint | null;
+    }[],
+    alan: 'netFiyat' | 'komisyonTutari' | 'malKdvTutari' | 'hizmetKdvTutari',
+  ): bigint {
+    return secimler.reduce((t, s) => t + (s[alan] ?? 0n), 0n);
+  }
+
   private orderNo(): string {
     const d = new Date();
     const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -76,7 +94,9 @@ export class OrdersService {
     // Varyant da yukleniyor: fiyat/stok/kirilim varyantta tanimliysa oradan
     // okunacak (bkz. common/domain/varyant). Varyantsiz kalemde variant null
     // doner ve tum degerler urunden gelir - Faz 3 oncesiyle ayni sonuc.
-    const sepetIcerik = { items: { include: { product: true, variant: true } } } as const;
+    // secimler de yukleniyor: ek ucret ve Carsi kirilimi sepetteki SNAPSHOT'tan
+    // okunur (bkz. schema CartItemOption "secim anindaki ek ucret ANLIK KOPYA").
+    const sepetIcerik = { items: { include: { product: true, variant: true, secimler: true } } } as const;
     const cart = dikey
       ? await this.prisma.cart.findUnique({
           where: { userId_businessUnit: { userId, businessUnit: dikey } },
@@ -181,6 +201,9 @@ export class OrdersService {
         throw new BadRequestException(`Yetersiz stok: ${ad} (kalan ${stok})`);
       }
       const q = BigInt(it.quantity);
+      // SECIM EK UCRETI: sepetteki anlik kopya. Carsi'da urun fiyatinin GUNCEL
+      // degerden kurulmasindan bilincli olarak ayrisir - secim satiri snapshot'tir.
+      const ekToplam = it.secimler.reduce((t, s) => t + s.ekUcret, 0n);
       if (isCarsi) {
         // Çarşı: kargo + komisyon + KDV ürün fiyatına GÖMÜLÜ.
         // subtotal'ı güncel fiyattan kur (kırılımla birebir uyuşsun).
@@ -188,14 +211,19 @@ export class OrdersService {
         // kırılım boş bırakılabilir; o durumda kırılım üründen gelir ve
         // aşağıdaki "dağıtım == subtotal" güvencesi bozulmaz.
         const k = etkinKirilim(it.product, it.variant);
-        subtotal += k.price * q;
+        subtotal += (k.price + ekToplam) * q;
+        // Ek ucretin kirilimi de ayni kovalara akar. KARGOYA EKLEME YOK: kargo
+        // gonderi basinadir ve urun fiyatinin icinde zaten var (bkz.
+        // pricing.ekUcretHesapla). Ek ucret kargosuz-yuvarlamasiz uretildigi
+        // icin net+komisyon+malKdv+hizmetKdv == ekUcret birebir tutar ve
+        // asagidaki "dagitim == subtotal" guvencesi bozulmaz.
         carsiKargo += k.kargoTutari * q;
-        carsiKom += k.komisyonTutari * q;
-        carsiHizmetKdv += k.hizmetKdvTutari * q;
-        carsiMalKdv += k.malKdvTutari * q;
-        carsiNet += k.netFiyat * q;
+        carsiKom += (k.komisyonTutari + this.secimToplam(it.secimler, 'komisyonTutari')) * q;
+        carsiHizmetKdv += (k.hizmetKdvTutari + this.secimToplam(it.secimler, 'hizmetKdvTutari')) * q;
+        carsiMalKdv += (k.malKdvTutari + this.secimToplam(it.secimler, 'malKdvTutari')) * q;
+        carsiNet += (k.netFiyat + this.secimToplam(it.secimler, 'netFiyat')) * q;
       } else {
-        subtotal += it.unitPrice * q;
+        subtotal += (it.unitPrice + ekToplam) * q;
       }
     }
 
@@ -288,7 +316,12 @@ export class OrdersService {
             create: cart.items.map((it) => {
               // Çarşı'da OrderItem fiyatı güncel fiyat (kırılımla uyumlu);
               // varyant varsa onun fiyatı geçerli.
-              const up = isCarsi ? etkinKirilim(it.product, it.variant).price : it.unitPrice;
+              const taban = isCarsi ? etkinKirilim(it.product, it.variant).price : it.unitPrice;
+              // OrderItem.unitPrice EK UCRETI ICERIR (CartItem.unitPrice'tan
+              // farkli olarak). Sart: semadaki "lineTotal = unitPrice * quantity"
+              // ve "subtotal = Σ lineTotal" invariantlari ancak boyle korunur.
+              // Ek ucretin ad/tutar dokumu secimler'de duruyor.
+              const up = taban + it.secimler.reduce((t, s) => t + s.ekUcret, 0n);
               return {
                 productId: it.productId,
                 name: it.product.name,
@@ -300,11 +333,24 @@ export class OrdersService {
                 unitPrice: up,
                 quantity: it.quantity,
                 lineTotal: up * BigInt(it.quantity),
+                // SECIM SNAPSHOT'i — ayni gerekce: optionId'ye FK yok, secenek
+                // silinse de gecmis siparis satiri kendi basina okunabilir kalir.
+                ...(it.secimler.length > 0
+                  ? {
+                      secimler: {
+                        create: it.secimler.map((s) => ({
+                          optionId: s.optionId,
+                          optionAdi: s.optionAdi,
+                          ekUcret: s.ekUcret,
+                        })),
+                      },
+                    }
+                  : {}),
               };
             }),
           },
         },
-        include: { items: true },
+        include: { items: { include: { secimler: true } } },
       });
 
       // Escrow'a al: müşteri -total, escrow +total
@@ -362,7 +408,9 @@ export class OrdersService {
       // yalnızca siparişin sahibi kendi kodunu görür. Müşteri ekranının kodu
       // gösterebildiği birincil kanal burasıdır.
       include: {
-        items: true,
+        // SECIMLER DE DONER: "ekstra peynir" siparisin ne oldugunun parcasidir;
+        // musteri de satici da satirin kendisinde gorur.
+        items: { include: { secimler: true } },
         store: { select: { name: true } },
         delivery: { select: { status: true, teslimKod: true, teslimKodDogrulandiAt: true } },
       },
@@ -373,7 +421,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
-        items: true,
+        items: { include: { secimler: true } },
         store: true,
         delivery: { select: { status: true, teslimKod: true, teslimKodDogrulandiAt: true } },
       },
@@ -408,7 +456,8 @@ export class OrdersService {
       where,
       orderBy: { createdAt: 'desc' },
       take: 100,
-      include: { items: true },
+      // Satici ekrani: hazirlanacak secimler satirda gorunmeli.
+      include: { items: { include: { secimler: true } } },
     });
   }
 
@@ -456,7 +505,7 @@ export class OrdersService {
         );
       }
 
-      return tx.order.findUnique({ where: { id }, include: { items: true } });
+      return tx.order.findUnique({ where: { id }, include: { items: { include: { secimler: true } } } });
     });
   }
 
@@ -558,7 +607,7 @@ export class OrdersService {
         ],
       });
 
-      return tx.order.findUnique({ where: { id }, include: { items: true } });
+      return tx.order.findUnique({ where: { id }, include: { items: { include: { secimler: true } } } });
     });
   }
 }
