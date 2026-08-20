@@ -11,6 +11,7 @@ import {
 } from './dto/varyant.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { vitrinFiyatHesapla, kdvOraniBul, ekUcretHesapla } from '../delivery/pricing';
+import { etkinFiyat, etkinStok } from '../common/domain/varyant';
 
 // VITRINDE GORUNEN SECENEK YAPISI — okuma uclarinin ortak include'u.
 // Yalnizca AKTIF grup ve AKTIF secenek doner: sepet dogrulamasi da tam olarak
@@ -83,6 +84,28 @@ const VITRIN_URUN_ALANLARI = Prisma.validator<Prisma.ProductSelect>()({
   updatedAt: true,
   deletedAt: true,
 });
+
+// VITRINDE GORUNEN VARYANTLAR — burada da IZIN LISTESI.
+// ProductVariant'ta da muhasebe kolonlari var (netFiyat / komisyonTutari /
+// kargoTutari / malKdvTutari / hizmetKdvTutari); include ile eklemek, urun
+// tarafinda kapatilan sizintiyi varyant tarafindan geri acardi.
+// Suzme sepet dogrulamasiyla AYNI (isActive + deletedAt): vitrinde gorunen her
+// varyant sepete eklenebilir.
+const VITRIN_VARYANTLAR = Prisma.validator<Prisma.Product$varyantlarArgs>()({
+  where: { isActive: true, deletedAt: null },
+  orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  select: { id: true, name: true, sku: true, barcode: true, sortOrder: true, price: true, stock: true },
+});
+
+type VitrinVaryant = {
+  id: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  sortOrder: number;
+  price: bigint | null;
+  stock: number | null;
+};
 
 type VitrinSecenekBagi = {
   sortOrder: number;
@@ -218,18 +241,55 @@ export class CatalogService {
   }
 
   /**
+   * VARYANTLARI ETKIN FIYAT/STOKLA DONDURUR.
+   *
+   * Varyantta price/stock NULL olabilir - "urunun degeri gecerli" demektir.
+   * Ikinci bir cozum yazilmadi: sepet ve checkout ile AYNI kaynak
+   * (common/domain/varyant.etkinFiyat / etkinStok) cagriliyor, dolayisiyla
+   * vitrinde gorulen fiyat ile sepete yazilan fiyat ayrisamaz.
+   *
+   * STOGU 0 OLAN VARYANT GIZLENMEZ, stok:0 ile doner. Gizlenseydi tum
+   * varyantlari tukenmis bir urun "varyantsiz" gibi gorunur ve istemci
+   * varyantsiz kalem eklerdi.
+   */
+  private varyantlariVitrine(urun: { price: bigint; stock: number }, varyantlar: VitrinVaryant[]) {
+    return varyantlar.map((v) => {
+      const fiyat = etkinFiyat(urun, v);
+      return {
+        id: v.id,
+        name: v.name,
+        sku: v.sku,
+        barcode: v.barcode,
+        sortOrder: v.sortOrder,
+        fiyat, // musterinin bu varyant icin odeyecegi tutar (kurus)
+        // Istemci "+15 TL" gosterebilsin diye hazir fark. Negatif olabilir:
+        // kucuk boy urunun kendi fiyatinin altinda olabilir.
+        fiyatFarki: fiyat - urun.price,
+        stok: etkinStok(urun, v),
+      };
+    });
+  }
+
+  /**
    * Ham urun kaydini vitrin gorunumune cevirir. store BILEREK cikariliyor:
    * yalnizca secenek fiyatlandirmasi icin okundu, yanitin sekli degismesin.
    */
   private vitrinUrun<
     T extends {
+      price: bigint;
+      stock: number;
       kdvOrani: number;
       store: { businessUnit: BusinessUnit; commissionRate: number };
       secenekGruplari: VitrinSecenekBagi[];
+      varyantlar: VitrinVaryant[];
     },
   >(kayit: T) {
-    const { store, secenekGruplari, ...urun } = kayit;
-    return { ...urun, secenekGruplari: this.secenekleriVitrine(urun, store, secenekGruplari) };
+    const { store, secenekGruplari, varyantlar, ...urun } = kayit;
+    return {
+      ...urun,
+      varyantlar: this.varyantlariVitrine(urun, varyantlar),
+      secenekGruplari: this.secenekleriVitrine(urun, store, secenekGruplari),
+    };
   }
 
   async listProducts(storeId: string, categoryId?: string, skip = 0, take = 50) {
@@ -248,9 +308,10 @@ export class CatalogService {
       take: Math.min(take, 100),
       select: {
         ...VITRIN_URUN_ALANLARI,
-        // Menu ekrani: restoran vitrininde secenekler urunle birlikte gorunur,
-        // istemci her urun icin ayri detay cagrisi yapmak zorunda kalmasin.
+        // Menu ekrani: restoran vitrininde varyant ve secenekler urunle birlikte
+        // gorunur, istemci her urun icin ayri detay cagrisi yapmak zorunda kalmasin.
         store: { select: { businessUnit: true, commissionRate: true } },
+        varyantlar: VITRIN_VARYANTLAR,
         secenekGruplari: VITRIN_SECENEKLERI,
       },
     });
@@ -283,6 +344,7 @@ export class CatalogService {
       select: {
         ...VITRIN_URUN_ALANLARI,
         store: { select: { businessUnit: true, commissionRate: true } },
+        varyantlar: VITRIN_VARYANTLAR,
         secenekGruplari: VITRIN_SECENEKLERI,
       },
     });
