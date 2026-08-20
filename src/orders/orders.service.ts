@@ -2,7 +2,7 @@ import {
   Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException,
 } from '@nestjs/common';
 import {
-  Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit,
+  Prisma, Role, WalletType, TransactionType, EntryDirection, OrderStatus, PaymentStatus, DeliveryStatus, BusinessUnit, SellerStatus,
 } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -92,8 +92,34 @@ export class OrdersService {
 
     const store = await this.prisma.store.findFirst({
       where: { id: cart.storeId, isActive: true, deletedAt: null },
+      include: { seller: { select: { status: true } } },
     });
     if (!store) throw new BadRequestException('Mağaza aktif değil');
+
+    // SATICI DURUMU: askiya alinan/kapatilan saticinin magazasindan siparis
+    // alinmaz. Vitrin suzmesi urunu zaten gizliyor; bu, sepette kalmis eski
+    // urunle odemeye gidilmesini kapatan ikinci kapi.
+    if (store.seller.status !== SellerStatus.ACTIVE) {
+      throw new ConflictException({
+        statusCode: 409,
+        kod: 'SATICI_AKTIF_DEGIL',
+        message: 'Bu mağazanın satıcısı şu anda satışa kapalı.',
+        error: 'Conflict',
+      });
+    }
+
+    // BR-014 — magaza kapaliyken yeni siparis kabul edilmez.
+    // store_hours kaydi YOKSA magaza ACIK sayilir (bkz. market.acikMi);
+    // aksi halde bu kural devreye girdigi an saat tanimlamamis her magaza
+    // kapanirdi.
+    if (!(await this.market.acikMi(store.id))) {
+      throw new ConflictException({
+        statusCode: 409,
+        kod: 'MAGAZA_KAPALI',
+        message: 'Mağaza şu anda kapalı. Çalışma saatleri içinde tekrar deneyin.',
+        error: 'Conflict',
+      });
+    }
 
     // Sepetin dikeyi ile magazanin dikeyi ayrisamaz: sepete urun eklerken dikey
     // urunun magazasindan turetiliyor (cart.service). Ayrisiyorsa veri bozuktur,

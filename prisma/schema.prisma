@@ -52,6 +52,7 @@ model User {
   wallets          Wallet[]
   socialIdentities SocialIdentity[]
   ownedStores      Store[]
+  saticiKayitlari  Seller[]         @relation("SellerOwner")
   magazaUyelikleri StoreUser[] // personel olarak calistigi magazalar
   carts            Cart[] // dikey basina bir sepet
   orders           Order[]
@@ -322,10 +323,141 @@ enum StoreType {
   SHOP
 }
 
+// ===================== FAZ 2 — SATICI (SELLER) =====================
+enum SellerType {
+  RESTORAN
+  MARKET
+  URETICI
+  LOJISTIK
+  HIZMET
+}
+
+// DRAFT -> UNDER_REVIEW -> ACTIVE            (askiya alinip geri acilabilir)
+//            |                \
+//            v                 v
+//         NEEDS_FIX          SUSPENDED
+// Hepsinden CLOSED'a gidilir; CLOSED'dan donus YOKTUR.
+enum SellerStatus {
+  DRAFT
+  UNDER_REVIEW
+  ACTIVE
+  NEEDS_FIX
+  SUSPENDED
+  CLOSED
+}
+
+enum SellerVerification {
+  EKSIK
+  BEKLIYOR
+  ONAYLANDI
+  REDDEDILDI
+  SURESI_DOLDU
+}
+
+// SATICI: magazanin arkasindaki ticari kimlik.
+//
+// SAHIPLIK TASINMADI: stores.ownerId yerinde kalir. Satici hakedisi bugun
+// delivery.service icinde order.store.ownerId cuzdanina yaziliyor; sahipligi
+// buraya tasimak canlida para dagitan tek transaction'a dokunmak demekti.
+// Seller EK bir katmandir: ticari kimlik, dogrulama ve durum burada yasar.
+model Seller {
+  id          String @id @default(uuid()) @db.Uuid
+  ownerUserId String @db.Uuid // hukuki sahip; backfill'de Store.ownerId ile ayni kisi
+  owner       User   @relation("SellerOwner", fields: [ownerUserId], references: [id])
+
+  sellerType  SellerType
+  legalName   String // ticari unvan
+  displayName String // platformda gorunen ad
+
+  // VERGI KIMLIGI SIFRELI SAKLANIR (AES-256-GCM, uygulama katmani).
+  // Kolonda duz metin DEGIL, "v1:iv:tag:ciphertext" bicimli sifreli blob durur;
+  // anahtar yalnizca ortam degiskeninde (bkz. common/crypto/gizli-alan.ts).
+  // pgcrypto yerine uygulama katmani secildi: anahtar SQL metnine gomulmez,
+  // dolayisiyla sorgu logu / query cache uzerinden sizamaz.
+  taxIdentifier String? // sifreli blob
+  taxLast4      String? // ekranda gosterim icin maskesiz son 4 hane
+
+  status                SellerStatus       @default(DRAFT)
+  verification          SellerVerification @default(EKSIK)
+  // "Suresi Doldu" bir DURUM degil SONUCTUR: belge onaylanir + bitis tarihi
+  // yazilir, tarih gecince kayit gecersizlesir. Enum'a tek basina yazilsaydi
+  // tarihi gecmis oldugu halde ONAYLANDI kalan kayitlar olurdu.
+  verificationExpiresAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  stores Store[]
+
+  @@index([ownerUserId])
+  @@index([status])
+  @@map("sellers")
+}
+
+// BOLGE: Merkez -> Bolge -> Alt bolge (kendine referansli).
+//
+// Bolge neden Store DEGIL: market.service.listActive musteriye donuk vitrin
+// listesidir ve tum aktif magazalari dondurur; bolgeyi Store satiri yapmak
+// bolgeleri musteri vitrininde magaza gibi listelerdi. Bolgenin katalogu,
+// siparisi, personeli de yoktur.
+model Region {
+  id       String   @id @default(uuid()) @db.Uuid
+  parentId String?  @db.Uuid
+  parent   Region?  @relation("RegionTree", fields: [parentId], references: [id])
+  children Region[] @relation("RegionTree")
+  name     String
+  code     String   @unique
+  isActive Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stores Store[]
+
+  @@index([parentId])
+  @@map("regions")
+}
+
+// MAGAZA CALISMA SAATLERI. BR-014'un veri kaynagi.
+// KAYIT YOKSA MAGAZA ACIK SAYILIR - aksi halde bu tablo eklendigi an canli
+// 5 magazanin hepsi kapanirdi (hicbirinde saat kaydi yok).
+model StoreHour {
+  id      String @id @default(uuid()) @db.Uuid
+  storeId String @db.Uuid
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  weekday   Int      @db.SmallInt // 0=Pazar ... 6=Cumartesi (JS getDay ile ayni)
+  openTime  DateTime @db.Time(0) // string degil TIME: karsilastirma ve saat dogrulugu
+  closeTime DateTime @db.Time(0)
+  isClosed  Boolean  @default(false) // o gun tamamen kapali
+
+  effectiveFrom  DateTime  @db.Date
+  effectiveUntil DateTime? @db.Date
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, weekday, effectiveFrom])
+  @@index([storeId])
+  @@map("store_hours")
+}
+
 model Store {
   id             String       @id @default(uuid()) @db.Uuid
   ownerId        String       @db.Uuid
   owner          User         @relation(fields: [ownerId], references: [id])
+  // Ticari kimlik. Backfill sonrasi ZORUNLU; her magaza bir saticiya aittir.
+  sellerId       String       @db.Uuid
+  seller         Seller       @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  // SUBE: sube ayri bir tablo DEGIL, parentId ile isaretlenen bir Store'dur.
+  // Ayri Branch tablosu StoreUser/Category/Product/Cart/Order'a ikinci bir
+  // boyut (branchId) sokardi; parentId ile mevcut her sorgu degismeden calisir.
+  parentId       String?      @db.Uuid
+  parent         Store?       @relation("StoreTree", fields: [parentId], references: [id], onDelete: Restrict)
+  subeler        Store[]      @relation("StoreTree")
+  regionId       String?      @db.Uuid
+  region         Region?      @relation(fields: [regionId], references: [id], onDelete: SetNull)
   name           String
   slug           String       @unique
   type           StoreType    @default(MARKET)
@@ -345,12 +477,15 @@ model Store {
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
 
-  categories Category[]
-  products   Product[]
-  orders     Order[]
-  personel   StoreUser[]
+  categories   Category[]
+  products     Product[]
+  orders       Order[]
+  personel     StoreUser[]
+  calismaSaati StoreHour[]
 
   @@index([ownerId])
+  @@index([sellerId])
+  @@index([parentId])
   @@index([type, isActive])
   @@map("stores")
 }

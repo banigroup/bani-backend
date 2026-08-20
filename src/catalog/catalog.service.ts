@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Role, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MarketService } from '../market/market.service';
 import { slugify, randomSuffix } from '../common/util/slug';
@@ -85,6 +85,10 @@ export class CatalogService {
       // Ust baslik secilirse alt basliklarin urunleri de gelir (iki seviyeli agac).
       where: {
         storeId, isActive: true, deletedAt: null,
+        // Askiya alinan saticinin YAYINDAKI urunleri de gizlenir. Suzme okuma
+        // aninda: urun kayitlarina dokunulmuyor, askidan cikinca vitrin
+        // kendiliginden geri geliyor.
+        store: { seller: { status: SellerStatus.ACTIVE } },
         ...(categoryId ? { OR: [{ categoryId }, { category: { parentId: categoryId } }] } : {}),
       },
       orderBy: { createdAt: 'desc' },
@@ -114,7 +118,9 @@ export class CatalogService {
   // kirilimi disariya sizmasin diye ayri metot; getProduct'a filtre eklenemez
   // cunku approve/reject onun uzerinden yurur.
   async getPublicProduct(id: string) {
-    const product = await this.prisma.product.findFirst({ where: { id, isActive: true, deletedAt: null } });
+    const product = await this.prisma.product.findFirst({
+      where: { id, isActive: true, deletedAt: null, store: { seller: { status: SellerStatus.ACTIVE } } },
+    });
     if (!product) throw new NotFoundException('Urun bulunamadi');
     return product;
   }
@@ -248,9 +254,26 @@ export class CatalogService {
     return this.market.uyeMi(storeId, userId);
   }
 
+  /**
+   * BR-001 — aktif olmayan satici urununu yayina alamaz.
+   * Yayina alma yolu TEK: approveProduct. Kontrol burada.
+   */
+  private async assertSaticiAktif(storeId: string) {
+    const store = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      select: { seller: { select: { status: true, displayName: true } } },
+    });
+    if (store?.seller?.status !== SellerStatus.ACTIVE) {
+      throw new ForbiddenException(
+        `Satıcı aktif değil (${store?.seller?.status ?? 'bulunamadı'}); ürün yayına alınamaz`,
+      );
+    }
+  }
+
   // Admin: onayla -> yayinla
   async approveProduct(id: string, userId: string, roles: Role[]) {
     const product = await this.getProduct(id);
+    await this.assertSaticiAktif(product.storeId);
     if (await this.magazayaBagliMi(product.storeId, userId)) {
       throw new ForbiddenException('Kendi magazanizin urununu onaylayamazsiniz');
     }

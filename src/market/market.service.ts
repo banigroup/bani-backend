@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Role, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
+import { SellerStatusService } from './seller-status.service';
+import { sifrele, son4 } from '../common/crypto/gizli-alan';
 import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
@@ -11,11 +13,16 @@ export class MarketService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly saticiDurum: SellerStatusService,
   ) {}
 
+  // SATICI DURUMU VITRINI ETKILER: satici ACTIVE degilse magazalari musteriye
+  // gorunmez. Askiya alma "yeni urun yayinlayamaz" ile sinirli degil, mevcut
+  // vitrin de kapanir (okuma aninda suzuluyor; urun/magaza kayitlarina
+  // DOKUNULMUYOR ki askidan cikinca eski hal kendiliginden geri gelsin).
   listActive(skip = 0, take = 50) {
     return this.prisma.store.findMany({
-      where: { isActive: true, deletedAt: null },
+      where: { isActive: true, deletedAt: null, seller: { status: SellerStatus.ACTIVE } },
       orderBy: { createdAt: 'desc' },
       skip,
       take: Math.min(take, 100),
@@ -50,7 +57,25 @@ export class MarketService {
     });
   }
 
+  /**
+   * Magaza yaratirken satici kaydi ZORUNLU (stores.sellerId NOT NULL).
+   * Kullanicinin saticisi yoksa DRAFT bir kayit acilir - boylece mevcut
+   * "magaza olustur" akisi kirilmaz. DRAFT satici ACTIVE olmadigi icin magaza
+   * vitrinde gorunmez ve urun yayina alinamaz (BR-001); satici once profilini
+   * doldurup onaya gonderir.
+   */
+  private async saticiSaglaVeGetir(ownerId: string) {
+    const mevcut = await this.prisma.seller.findFirst({ where: { ownerUserId: ownerId, deletedAt: null } });
+    if (mevcut) return mevcut;
+    const u = await this.prisma.user.findUnique({ where: { id: ownerId }, select: { name: true, surname: true } });
+    const ad = [u?.name, u?.surname].filter(Boolean).join(' ').trim() || `Satici ${ownerId.slice(0, 8)}`;
+    return this.prisma.seller.create({
+      data: { ownerUserId: ownerId, sellerType: 'MARKET', legalName: ad, displayName: ad },
+    });
+  }
+
   async create(ownerId: string, dto: CreateStoreDto, ip?: string) {
+    const satici = await this.saticiSaglaVeGetir(ownerId);
     const baseSlug = slugify(dto.name) || 'magaza';
     const exists = await this.prisma.store.findUnique({ where: { slug: baseSlug } });
     const slug = exists ? `${baseSlug}-${randomSuffix()}` : baseSlug;
@@ -58,6 +83,7 @@ export class MarketService {
     const store = await this.prisma.store.create({
       data: {
         ownerId,
+        sellerId: satici.id,
         name: dto.name,
         slug,
         type: dto.type,
@@ -176,6 +202,129 @@ export class MarketService {
     const store = await this.prisma.store.update({ where: { id: storeId }, data });
     await this.audit.record({ actorId: userId, action: 'store.update', entity: 'Store', entityId: storeId, ip });
     return store;
+  }
+
+  // ---------------- SATICI (SELLER) ----------------
+
+  /** Kullanicinin satici kaydi. taxIdentifier COZULMEZ - yalnizca son 4 hane doner. */
+  async saticim(userId: string) {
+    const s = await this.prisma.seller.findFirst({
+      where: { ownerUserId: userId, deletedAt: null },
+      select: {
+        id: true, sellerType: true, legalName: true, displayName: true, taxLast4: true,
+        status: true, verification: true, verificationExpiresAt: true, createdAt: true,
+        stores: { select: { id: true, name: true, slug: true, businessUnit: true, parentId: true } },
+      },
+    });
+    if (!s) throw new NotFoundException('Satıcı kaydı bulunamadı');
+    return s;
+  }
+
+  private async saticimHam(userId: string) {
+    const s = await this.prisma.seller.findFirst({ where: { ownerUserId: userId, deletedAt: null } });
+    if (!s) throw new NotFoundException('Satıcı kaydı bulunamadı');
+    return s;
+  }
+
+  /**
+   * Satici profili guncelleme. Vergi kimligi VERILIRSE sifrelenerek yazilir ve
+   * son 4 hane ayrica saklanir (listelerde blogu cozmeye gerek kalmasin).
+   * ACTIVE bir saticinin vergi kimligini degistirmek dogrulamayi dusurur:
+   * onaylanmis kimlik degistiyse eski onay artik o kimligin onayi degildir.
+   */
+  async saticiGuncelle(
+    userId: string,
+    dto: { sellerType?: any; legalName?: string; displayName?: string; taxIdentifier?: string },
+  ) {
+    const mevcut = await this.saticimHam(userId);
+    const data: any = {};
+    if (dto.sellerType !== undefined) data.sellerType = dto.sellerType;
+    if (dto.legalName !== undefined) data.legalName = dto.legalName;
+    if (dto.displayName !== undefined) data.displayName = dto.displayName;
+    if (dto.taxIdentifier !== undefined) {
+      data.taxIdentifier = sifrele(dto.taxIdentifier);
+      data.taxLast4 = son4(dto.taxIdentifier);
+      data.verification = 'BEKLIYOR';
+      data.verificationExpiresAt = null;
+    }
+    await this.prisma.seller.update({ where: { id: mevcut.id }, data });
+    return this.saticim(userId);
+  }
+
+  /** DRAFT | NEEDS_FIX -> UNDER_REVIEW. Zorunlu alanlar dolu degilse reddedilir. */
+  async saticiOnayaGonder(userId: string) {
+    const s = await this.saticimHam(userId);
+    if (!s.taxIdentifier) throw new ConflictException('Vergi kimliği olmadan onaya gönderilemez');
+    if (!s.legalName?.trim()) throw new ConflictException('Ticari unvan zorunlu');
+    await this.prisma.$transaction((tx) =>
+      this.saticiDurum.gecis(tx, s.id, [SellerStatus.DRAFT, SellerStatus.NEEDS_FIX], {
+        status: SellerStatus.UNDER_REVIEW,
+      }),
+    );
+    return this.saticim(userId);
+  }
+
+  /** Platform yoneticisi durum gecisi. Harita disi gecis 409 doner. */
+  async saticiDurumDegistir(roles: Role[], sellerId: string, hedef: SellerStatus) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Satıcı durumu için admin yetkisi gerekli');
+    }
+    const s = await this.prisma.seller.findUnique({ where: { id: sellerId } });
+    if (!s) throw new NotFoundException('Satıcı bulunamadı');
+    if (!this.saticiDurum.gecerliMi(s.status, hedef)) {
+      throw new ConflictException(`Geçersiz satıcı durum geçişi: ${s.status} -> ${hedef}`);
+    }
+    // ACTIVE'e gecis dogrulama onayi ister; askiya alma/kapatma istemez.
+    if (hedef === SellerStatus.ACTIVE && s.verification !== 'ONAYLANDI') {
+      throw new ConflictException('Doğrulaması onaylanmamış satıcı aktifleştirilemez');
+    }
+    await this.prisma.$transaction((tx) => this.saticiDurum.gecis(tx, sellerId, [s.status], { status: hedef }));
+    return this.prisma.seller.findUnique({
+      where: { id: sellerId },
+      select: { id: true, status: true, verification: true, displayName: true },
+    });
+  }
+
+  /** Dogrulama sonucu (admin): onay + bitis tarihi ya da red. */
+  async saticiDogrulama(roles: Role[], sellerId: string, sonuc: 'ONAYLANDI' | 'REDDEDILDI', bitis?: Date) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Doğrulama için admin yetkisi gerekli');
+    }
+    return this.prisma.seller.update({
+      where: { id: sellerId },
+      data: { verification: sonuc, verificationExpiresAt: sonuc === 'ONAYLANDI' ? (bitis ?? null) : null },
+      select: { id: true, verification: true, verificationExpiresAt: true },
+    });
+  }
+
+  /**
+   * BR-014 — magaza su an acik mi.
+   *
+   * KAYIT YOKSA ACIK SAYILIR: aksi halde store_hours tablosu eklendigi an canli
+   * 5 magazanin hepsi kapanirdi (hicbirinde saat kaydi yok).
+   * Ayni gun icin birden fazla gecerli kayit varsa EN YENI effectiveFrom kazanir
+   * (sezonluk saat eskisinin uzerine yazmadan tanimlanabilsin).
+   */
+  async acikMi(storeId: string, an: Date = new Date()): Promise<boolean> {
+    const gun = an.getDay();
+    const bugun = new Date(Date.UTC(an.getFullYear(), an.getMonth(), an.getDate()));
+    const kayit = await this.prisma.storeHour.findFirst({
+      where: {
+        storeId,
+        weekday: gun,
+        effectiveFrom: { lte: bugun },
+        OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: bugun } }],
+      },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    if (!kayit) return true;
+    if (kayit.isClosed) return false;
+    const dk = (d: Date) => d.getUTCHours() * 60 + d.getUTCMinutes();
+    const simdi = an.getHours() * 60 + an.getMinutes();
+    const acilis = dk(kayit.openTime);
+    const kapanis = dk(kayit.closeTime);
+    // Gece yarisini asan mesai (or. 20:00 - 02:00) tek araliga sigmaz.
+    return acilis <= kapanis ? simdi >= acilis && simdi < kapanis : simdi >= acilis || simdi < kapanis;
   }
 
   async assertOwner(storeId: string, userId: string, roles: Role[]) {

@@ -5,6 +5,7 @@ import { MarketService } from './market.service';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PersonelEkleDto, PersonelDurumDto } from './dto/store-user.dto';
+import { SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto } from './dto/seller.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
@@ -57,6 +58,52 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_WRITE)
   update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateStoreDto, @Req() req: Request) {
     return this.market.update(id, user.id, user.roles, dto, req.ip);
+  }
+
+  // ---------------- SATICI (SELLER) ----------------
+
+  @Get('seller')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_READ)
+  saticim(@CurrentUser() user: AuthUser) {
+    return this.market.saticim(user.id);
+  }
+
+  @Patch('seller')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  async saticiGuncelle(@CurrentUser() user: AuthUser, @Body() dto: SaticiGuncelleDto, @Req() req: Request) {
+    const r = await this.market.saticiGuncelle(user.id, dto);
+    // metadata'ya vergi kimligi YAZILMAZ; yalnizca hangi alanlarin degistigi.
+    await this.audit.record({ actorId: user.id, action: 'seller.update', entity: 'Seller', entityId: r.id, ip: req.ip, metadata: { alanlar: Object.keys(dto) } });
+    return r;
+  }
+
+  @Post('seller/submit')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  async saticiOnayaGonder(@CurrentUser() user: AuthUser, @Req() req: Request) {
+    const r = await this.market.saticiOnayaGonder(user.id);
+    await this.audit.record({ actorId: user.id, action: 'seller.submit', entity: 'Seller', entityId: r.id, ip: req.ip });
+    return r;
+  }
+
+  @Patch('sellers/:id/status')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_MANAGE_ALL)
+  async saticiDurum(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: SaticiDurumDto, @Req() req: Request) {
+    const r = await this.market.saticiDurumDegistir(user.roles, id, dto.status);
+    await this.audit.record({ actorId: user.id, action: 'seller.status', entity: 'Seller', entityId: id, ip: req.ip, metadata: { to: dto.status } });
+    return r;
+  }
+
+  @Patch('sellers/:id/verification')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_MANAGE_ALL)
+  async saticiDogrulama(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: SaticiDogrulamaDto, @Req() req: Request) {
+    const r = await this.market.saticiDogrulama(user.roles, id, dto.sonuc, dto.verificationExpiresAt ? new Date(dto.verificationExpiresAt) : undefined);
+    await this.audit.record({ actorId: user.id, action: 'seller.verification', entity: 'Seller', entityId: id, ip: req.ip, metadata: { sonuc: dto.sonuc } });
+    return r;
   }
 
   // ---------------- MAGAZA PERSONELI ----------------
