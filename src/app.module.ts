@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
@@ -27,7 +26,11 @@ import { NewsletterModule } from './newsletter/newsletter.module';
   imports: [
     SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
-    ScheduleModule.forRoot(),
+    // ScheduleModule BILEREK YOK — cron'lar WORKER surecinde calisiyor
+    // (src/worker.module.ts). @Cron dekoratoru tek basina bir sey yapmaz;
+    // metadatayi zamanlayiciya baglayan ScheduleModule'dur. Burada
+    // olmadigi icin API surecinde HICBIR cron tetiklenmez - kapatma
+    // yapisal, unutulabilecek bir ortam degiskenine bagli degil.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PrismaModule,
     RbacModule,

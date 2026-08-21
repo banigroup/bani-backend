@@ -8,6 +8,7 @@
   "scripts": {
     "build": "nest build",
     "start": "prisma migrate deploy && node dist/src/main.js",
+    "start:worker": "node dist/src/main-worker.js",
     "start:dev": "nest start --watch",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
