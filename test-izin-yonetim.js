@@ -62,6 +62,9 @@ async function hataAdi(fn) {
 
 (async () => {
   try {
+    // Test kendi yazdiklarini geri aliyor mu: baslangic sayisi referans.
+    const baslangicCift = await prisma.rolePermission.count();
+
     // ---- 1) Okuma uclari ----
     console.log('1) Listeleme');
     const izinler = await servis.izinler();
@@ -155,8 +158,12 @@ async function hataAdi(fn) {
     console.log('\n8) Son durum');
     const sonSayi = await prisma.rolePermission.count();
     const sonIzin = await prisma.permission.count();
-    ok('izin sayisi 29', sonIzin === 29, `${sonIzin}`);
-    ok('cift sayisi 114 (test oncesiyle ayni)', sonSayi === 114, `${sonSayi}`);
+    // Sabit sayi YAZILMIYOR: rol eklendikce (B1'de uc magaza rolu) cift sayisi
+    // artar. Testin iddiasi "sayi su" degil, "test kendi degisikliklerini geri
+    // aldi" - o yuzden BASLANGICTAKI sayiyla karsilastiriliyor.
+    ok(`izin sayisi enum ile ayni (${Object.values(Permission).length})`,
+      sonIzin === Object.values(Permission).length, `${sonIzin}`);
+    ok('cift sayisi test oncesiyle AYNI', sonSayi === baslangicCift, `${baslangicCift} -> ${sonSayi}`);
 
     console.log(`\n=== GECTI: ${gecti} | KALDI: ${kaldi} ===`);
   } catch (e) {
