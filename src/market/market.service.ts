@@ -108,13 +108,29 @@ export class MarketService {
     return platformYoneticisiKurali(roles);
   }
 
-  /** Kullanici bu magazada AKTIF personel mi. */
+  /**
+   * Kullanicinin BU MAGAZADA yetkisi var mi.
+   *
+   * FAZ 1 / C4 — KAYNAK DEGISTI: eskiden store_users.isActive okunuyordu, artik
+   * user_roles'ta o magazaya kapsanmis rol satiri araniyor. Sebep: ayni soruyu
+   * ("bu kisi bu magazada calisiyor mu") iki tablo birden cevapliyordu; yetki
+   * kararinin tek kaynagi olmaliydi. store_users UYELIK KAYDI olarak duruyor
+   * (davet/pasiflestirme yasam dongusu), ama YETKI icin ARTIK OKUNMUYOR.
+   *
+   * Ikisinin ayrismamasi personelEkle/personelDurum'da tek transaction ile
+   * garanti ediliyor: uyelik yazilinca rol satiri da yazilir, uyelik
+   * pasiflestirilince o magazanin rol satirlari ayni islemde silinir. Yani
+   * "uye pasif ama rol satiri duruyor" hali hic olusmaz.
+   *
+   * Ad KORUNDU: erisebilir'in okunusunu bozmamak icin. Anlami "uyelik satiri
+   * var mi" degil, "bu magazada rolu var mi".
+   */
   async uyeMi(storeId: string, userId: string): Promise<boolean> {
-    const uyelik = await this.prisma.storeUser.findUnique({
-      where: { storeId_userId: { storeId, userId } },
-      select: { isActive: true },
+    const rol = await this.prisma.userRole.findFirst({
+      where: { userId, storeId },
+      select: { id: true },
     });
-    return uyelik?.isActive === true;
+    return rol !== null;
   }
 
   /**
@@ -142,6 +158,11 @@ export class MarketService {
    * UYELIK YONETIMI erisimden DAHA DAR: yalnizca magaza sahibi ve platform
    * yoneticisi. Personelin personel eklemesi kapali - aksi halde bir uye
    * kendini cogaltip magazayi ele gecirebilirdi.
+   *
+   * C4'TE BILEREK DEGISTIRILMEDI: STORE_STAFF buradan GECMEZ. erisebilir'in
+   * kaynagi user_roles'a tasindi ama bu kapi hala yalnizca sahiplik + platform
+   * yoneticiligi soruyor. Eksiklik degil, karar: magaza kapsamli rolun kendi
+   * kadrosunu genisletebilmesi yetki yukseltme yolu acardi.
    */
   private async sahipVeyaYonetici(storeId: string, userId: string, roles: Role[]) {
     const store = await this.getById(storeId);
@@ -162,10 +183,14 @@ export class MarketService {
         id: true, userId: true, isActive: true, createdAt: true,
         // Rol artik ayri tabloda (Faz 1 / A1). Personel ekraninin gordugu sey
         // degismesin diye ayni yerden, ayni ad altinda donuluyor.
+        //
+        // C4 — BU MAGAZAYLA SINIRLI: filtre olmasaydi A magazasinin sahibi,
+        // personelinin B magazasindaki rolunu ve platform rollerini gorurdu.
+        // Kapsam geldigi anda dogan sizinti; filtre kapsamla ayni pakette.
         user: {
           select: {
             phone: true, name: true, surname: true,
-            rolAtamalari: { select: { role: true } },
+            rolAtamalari: { where: { storeId }, select: { role: true } },
           },
         },
       },
@@ -179,14 +204,25 @@ export class MarketService {
     if (kisi.id === store.ownerId) {
       throw new ForbiddenException('Mağaza sahibi zaten tam yetkili; personel olarak eklenmez');
     }
-    // upsert: daha once kapatilmis bir uyelik varsa yeniden ACILIR, ikinci satir
-    // yaratilmaz (bilesik unique zaten engellerdi, burada net hata yerine niyet).
-    return this.prisma.storeUser.upsert({
-      where: { storeId_userId: { storeId, userId: eklenecekUserId } },
-      create: { storeId, userId: eklenecekUserId },
-      update: { isActive: true },
-      select: { id: true, userId: true, isActive: true, createdAt: true },
-    });
+    // C4 — UYELIK VE ROL AYNI TRANSACTION'DA. Ikisi ayri islemde yazilsaydi
+    // arada kalan istek "uye ama rolsuz" bir kisi gorurdu; erisim kaynagi artik
+    // rol satiri oldugu icin bu, uyeligi yazilmis personelin erisememesi
+    // demekti. Iki upsert de IDEMPOTENT: ikinci cagri mukerrer satir uretmez.
+    const [uyelik] = await this.prisma.$transaction([
+      this.prisma.storeUser.upsert({
+        where: { storeId_userId: { storeId, userId: eklenecekUserId } },
+        create: { storeId, userId: eklenecekUserId },
+        update: { isActive: true }, // kapatilmis uyelik yeniden ACILIR
+        select: { id: true, userId: true, isActive: true, createdAt: true },
+      }),
+      this.prisma.userRole.upsert({
+        where: { userId_role_storeId: { userId: eklenecekUserId, role: Role.STORE_STAFF, storeId } },
+        create: { userId: eklenecekUserId, role: Role.STORE_STAFF, storeId },
+        update: {}, // varsa dokunma
+        select: { id: true },
+      }),
+    ]);
+    return uyelik;
   }
 
   async personelDurum(storeId: string, userId: string, roles: Role[], hedefUserId: string, isActive: boolean) {
@@ -195,11 +231,39 @@ export class MarketService {
       where: { storeId_userId: { storeId, userId: hedefUserId } },
     });
     if (!uyelik) throw new NotFoundException('Personel kaydı bulunamadı');
-    return this.prisma.storeUser.update({
-      where: { id: uyelik.id },
-      data: { isActive },
-      select: { id: true, userId: true, isActive: true },
-    });
+
+    // C4 — DURUM VE ROL AYNI TRANSACTION'DA:
+    //   pasiflestirme -> o magazaya ait ROL SATIRLARI SILINIR (yalnizca
+    //     STORE_STAFF degil, hepsi: B adiminda gelecek mutfak/kasa rolleri de
+    //     ayni kadroya bagli olacak, uyelik kapaninca hicbiri kalmamali).
+    //   yeniden acma  -> STORE_STAFF satiri geri yazilir.
+    // Ayri islemler olsaydi "uyelik pasif ama rol satiri duruyor" hali dogar,
+    // guard'in iki yere birden bakmasi gerekirdi - C'nin kapattigi ikilik
+    // baska bicimde geri gelirdi.
+    //
+    // ASIMETRI, B ICIN UYARI: pasiflestirme o magazanin TUM rol satirlarini
+    // siler, yeniden aktiflestirme ise yalnizca STORE_STAFF yazar. Bugun tek
+    // magaza rolu STORE_STAFF oldugu icin geri donus kayipsiz. Faz 1/B ile
+    // mutfak/kasa/depo geldiginde bu ASIMETRIK olur: pasiflestirilip yeniden
+    // acilan personel diger rollerini sessizce kaybeder. B'de ya rol satirlari
+    // yumusak silinmeli (isActive) ya da geri yazma onceki rolleri geri
+    // getirmeli.
+    const [guncel] = await this.prisma.$transaction([
+      this.prisma.storeUser.update({
+        where: { id: uyelik.id },
+        data: { isActive },
+        select: { id: true, userId: true, isActive: true },
+      }),
+      isActive
+        ? this.prisma.userRole.upsert({
+            where: { userId_role_storeId: { userId: hedefUserId, role: Role.STORE_STAFF, storeId } },
+            create: { userId: hedefUserId, role: Role.STORE_STAFF, storeId },
+            update: {},
+            select: { id: true },
+          })
+        : this.prisma.userRole.deleteMany({ where: { userId: hedefUserId, storeId } }),
+    ]);
+    return guncel;
   }
 
   async update(storeId: string, userId: string, roles: Role[], dto: UpdateStoreDto, ip?: string) {
