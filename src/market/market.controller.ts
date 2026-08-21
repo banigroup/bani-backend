@@ -123,7 +123,9 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_WRITE)
   async personelEkle(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: PersonelEkleDto, @Req() req: Request) {
     const r = await this.market.personelEkle(id, user.id, user.roles, dto.userId);
-    await this.audit.record({ actorId: user.id, action: 'store.user.add', entity: 'Store', entityId: id, ip: req.ip, metadata: { userId: dto.userId } });
+    // C4: metadata'ya kapsam ve rol eklendi — "kime, HANGI MAGAZADA, HANGI ROL
+    // verildi" sorusu audit'ten cevaplanabilmeli.
+    await this.audit.record({ actorId: user.id, action: 'store.user.add', entity: 'Store', entityId: id, ip: req.ip, metadata: { userId: dto.userId, storeId: id, role: 'STORE_STAFF' } });
     return r;
   }
 
@@ -138,7 +140,9 @@ export class MarketController {
     @Req() req: Request,
   ) {
     const r = await this.market.personelDurum(id, user.id, user.roles, userId, dto.isActive);
-    await this.audit.record({ actorId: user.id, action: 'store.user.status', entity: 'Store', entityId: id, ip: req.ip, metadata: { userId, isActive: dto.isActive } });
+    // C4: pasiflestirme o magazanin ROL SATIRLARINI da siliyor; kayit bunu
+    // yansitsin diye storeId ve etkilenen rol metadata'ya eklendi.
+    await this.audit.record({ actorId: user.id, action: 'store.user.status', entity: 'Store', entityId: id, ip: req.ip, metadata: { userId, isActive: dto.isActive, storeId: id, role: 'STORE_STAFF' } });
     return r;
   }
 }

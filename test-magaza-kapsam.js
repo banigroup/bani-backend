@@ -4,9 +4,11 @@
 // GERCEK KODU calistirir (dist/): MarketService.erisebilir / assertOwner /
 // sahipVeyaYonetici, JwtStrategy.validate, rolleriAyir. Mantik KOPYALANMADI.
 //
-// BLOK A bugunku davranisi dogrular ve GECMELIDIR.
-// BLOK B, C4'un uretecegi davranis farkini BUGUNDEN sabitler; bugun kirmizi
-// olmasi BEKLENIR ve cikis kodunu ETKILEMEZ.
+// BLOK A: temel erisim davranisi.
+// BLOK B: C4'un cevirdigi anahtar. C4 ONCESI bu blok KIRMIZIYDI (olcum olarak
+//   tutuluyordu); C4 ile yesillendi ve artik BAGLAYICI.
+// BLOK C: C4'un getirdigi uyelik<->rol senkronu (idempotans, pasiflestirme,
+//   personel listesinde kapsam suzgeci).
 //
 // YALNIZCA YEREL DOCKER DB. Fixture'lar benzersiz onekle yaratilir, sonunda
 // tamamen silinir.
@@ -46,15 +48,6 @@ let kaldi = 0;
 function ok(ad, sonuc, detay = '') {
   if (sonuc) { gecti++; console.log(`  GECTI  ${ad}${detay ? ' — ' + detay : ''}`); }
   else { kaldi++; console.log(`  KALDI  ${ad}${detay ? ' — ' + detay : ''}`); }
-}
-// BLOK B: olcum kaydi, gecti/kaldi sayaclarina KARISMAZ.
-const blokB = [];
-function olc(ad, bugun, c4Sonrasi, aciklama) {
-  const uyumlu = bugun === c4Sonrasi;
-  blokB.push({ ad, bugun, c4Sonrasi, aciklama });
-  console.log(`  ${uyumlu ? 'ZATEN AYNI' : 'BEKLENEN: C4 ONCESI KIRMIZI'}  ${ad}`);
-  console.log(`     bugun olculen: ${bugun}   |   C4 sonrasi olmasi gereken: ${c4Sonrasi}`);
-  console.log(`     ${aciklama}`);
 }
 const sirala = (a) => [...(a || [])].sort().join(',');
 
@@ -173,14 +166,14 @@ const auth = async (user) => jwt.validate({ sub: user.id, phone: user.phone, rol
     ok('magaza silinince rol satiri DUSTU', sonrasi === 0, `${oncesi} -> ${sonrasi}`);
 
     // ---------------- BLOK B ----------------
-    console.log('\n\nBLOK B — C4 HEDEFI (bugun kirmizi olmasi BEKLENIR, cikis kodunu etkilemez)');
+    console.log('\n\nBLOK B — C4 ANAHTARI (C4 ONCESI KIRMIZIYDI, ARTIK BAGLAYICI)');
 
     console.log('\n B1) Yalniz user_roles: store_users satiri silindi, STORE_STAFF@A duruyor');
     await prisma.storeUser.deleteMany({ where: { userId: personel.id, storeId: A.id } });
     const b1Auth = await auth(personel);
     const b1 = await market.erisebilir(A, personel.id, b1Auth.roles);
-    olc('erisebilir(Personel, A) — yalniz rol satiri var', b1, true,
-      'Bugun erisim karari store_users.uyeMi() ile veriliyor; rol satiri hic okunmuyor. C4 kaynagi user_roles yapacak.');
+    ok('erisebilir(Personel, A) — yalniz rol satiri var -> TRUE', b1 === true,
+      `olculen ${b1}; C4 oncesi false idi (karar store_users'tan geliyordu)`);
     ok('B1 kurulumu dogru: STORE_STAFF@A hala duruyor',
       (await prisma.userRole.count({ where: { userId: personel.id, storeId: A.id } })) === 1);
     ok('B1 kurulumu dogru: store_users@A silindi',
@@ -191,19 +184,69 @@ const auth = async (user) => jwt.validate({ sub: user.id, phone: user.phone, rol
     await prisma.storeUser.create({ data: { storeId: A.id, userId: personel.id, isActive: true } });
     const b2Auth = await auth(personel);
     const b2 = await market.erisebilir(A, personel.id, b2Auth.roles);
-    olc('erisebilir(Personel, A) — yalniz uyelik satiri var', b2, false,
-      'Bugun uyelik tek basina erisim veriyor. C4 sonrasi yetki yalniz user_roles"tan okunacak; rol satiri olmayan uye erisemeyecek.');
+    ok('erisebilir(Personel, A) — yalniz uyelik satiri var -> FALSE', b2 === false,
+      `olculen ${b2}; C4 oncesi true idi (uyelik tek basina erisim veriyordu)`);
     ok('B2 kurulumu dogru: STORE_STAFF@A silindi',
       (await prisma.userRole.count({ where: { userId: personel.id, storeId: A.id } })) === 0);
     ok('B2 kurulumu dogru: store_users@A duruyor',
       (await prisma.storeUser.count({ where: { userId: personel.id, storeId: A.id } })) === 1);
     ok('B2 de magazaRolleri BOS (rol satiri yok)', Object.keys(b2Auth.magazaRolleri).length === 0, JSON.stringify(b2Auth.magazaRolleri));
 
-    console.log(`\n=== BLOK A — GECTI: ${gecti} | KALDI: ${kaldi} ===`);
-    console.log('=== BLOK B — olcum ozeti ===');
-    for (const b of blokB) {
-      console.log(`  ${b.ad}: bugun=${b.bugun} -> C4 sonrasi=${b.c4Sonrasi} ${b.bugun === b.c4Sonrasi ? '(fark yok)' : '(C4 BUNU TERSINE CEVIRECEK)'}`);
-    }
+    // ---------------- BLOK C ----------------
+    console.log('\n\nBLOK C — UYELIK <-> ROL SENKRONU (C4 ile geldi)');
+
+    // Kurulum: yabanci'yi A magazasina personel olarak ekleyecegiz (sahipA ile).
+    const sahipAuth = await auth(sahipA);
+
+    console.log('\n C1) personelEkle idempotan');
+    await market.personelEkle(A.id, sahipA.id, sahipAuth.roles, yabanci.id);
+    const ilkUyelik = await prisma.storeUser.count({ where: { userId: yabanci.id, storeId: A.id } });
+    const ilkRol = await prisma.userRole.count({ where: { userId: yabanci.id, storeId: A.id } });
+    ok('uyelik satiri yazildi', ilkUyelik === 1, `${ilkUyelik}`);
+    ok('rol satiri AYNI islemde yazildi', ilkRol === 1, `${ilkRol}`);
+    await market.personelEkle(A.id, sahipA.id, sahipAuth.roles, yabanci.id);
+    ok('ikinci cagri mukerrer UYELIK uretmedi',
+      (await prisma.storeUser.count({ where: { userId: yabanci.id, storeId: A.id } })) === 1);
+    ok('ikinci cagri mukerrer ROL uretmedi',
+      (await prisma.userRole.count({ where: { userId: yabanci.id, storeId: A.id } })) === 1);
+    const yeniAuth = await auth(yabanci);
+    ok('eklenen kisi artik erisebiliyor', (await market.erisebilir(A, yabanci.id, yeniAuth.roles)) === true);
+    ok('platform rolleri degismedi', sirala(yeniAuth.roles) === 'CUSTOMER', sirala(yeniAuth.roles));
+
+    console.log('\n C2) personelDurum(false) rol satirini da siliyor');
+    await market.personelDurum(A.id, sahipA.id, sahipAuth.roles, yabanci.id, false);
+    ok('rol satiri SILINDI', (await prisma.userRole.count({ where: { userId: yabanci.id, storeId: A.id } })) === 0);
+    ok('uyelik satiri DURUYOR (pasif)',
+      (await prisma.storeUser.count({ where: { userId: yabanci.id, storeId: A.id, isActive: false } })) === 1);
+    const pasifAuth = await auth(yabanci);
+    ok('pasiflesen kisi erisemiyor', (await market.erisebilir(A, yabanci.id, pasifAuth.roles)) === false);
+    ok('"uye pasif ama rol duruyor" hali OLUSMADI',
+      (await prisma.userRole.count({ where: { userId: yabanci.id, storeId: A.id } })) === 0);
+
+    console.log('\n C3) yeniden aktiflestirme rol satirini geri yaziyor');
+    await market.personelDurum(A.id, sahipA.id, sahipAuth.roles, yabanci.id, true);
+    ok('rol satiri GERI GELDI', (await prisma.userRole.count({ where: { userId: yabanci.id, storeId: A.id } })) === 1);
+    ok('uyelik yeniden AKTIF',
+      (await prisma.storeUser.count({ where: { userId: yabanci.id, storeId: A.id, isActive: true } })) === 1);
+    const geriAktif = await auth(yabanci);
+    ok('erisim geri geldi', (await market.erisebilir(A, yabanci.id, geriAktif.roles)) === true);
+
+    console.log('\n C4) personelListesi baska magazanin rolunu SIZDIRMIYOR');
+    // Ayni kisiye B magazasinda da rol ver: A'nin listesinde GORUNMEMELI.
+    await prisma.userRole.create({ data: { userId: yabanci.id, role: 'STORE_STAFF', storeId: B.id } });
+    const liste = await market.personelListesi(A.id, sahipA.id, sahipAuth.roles);
+    const kayit = liste.find((x) => x.userId === yabanci.id);
+    ok('kisi listede', !!kayit);
+    ok('yalnizca BU magazanin rolu goruluyor',
+      kayit && kayit.user.rolAtamalari.length === 1 && kayit.user.rolAtamalari[0].role === 'STORE_STAFF',
+      JSON.stringify(kayit && kayit.user.rolAtamalari));
+    ok('B magazasinin rolu listeye SIZMADI',
+      kayit && (await prisma.userRole.count({ where: { userId: yabanci.id, storeId: B.id } })) === 1
+      && kayit.user.rolAtamalari.length === 1);
+    ok('PLATFORM rolu (CUSTOMER) da listeye sizmiyor',
+      kayit && !kayit.user.rolAtamalari.some((r) => r.role === 'CUSTOMER'));
+
+    console.log(`\n=== GECTI: ${gecti} | KALDI: ${kaldi} ===`);
   } catch (e) {
     console.error('\nBETIK HATASI:', e?.message ?? e);
     kaldi++;
@@ -221,7 +264,6 @@ const auth = async (user) => jwt.validate({ sub: user.id, phone: user.phone, rol
     };
     console.log('\ntemizlik — kalan test satiri:', JSON.stringify(kalan), Object.values(kalan).every((v) => v === 0) ? 'TEMIZ' : 'ARTIK VAR (!)');
     await prisma.$disconnect();
-    // BLOK B'nin kirmizisi cikis kodunu DUSURMEZ: yalnizca BLOK A baglayici.
     process.exit(kaldi > 0 ? 1 : 0);
   }
 })();
