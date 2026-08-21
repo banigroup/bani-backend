@@ -94,6 +94,7 @@ model User {
   loadPuan                LoadPuan?
   verdigiDegerlendirmeler LoadDegerlendirme[] @relation("VerdigiDegerlendirmeler")
   aldigiDegerlendirmeler  LoadDegerlendirme[] @relation("AldigiDegerlendirmeler")
+  stokHareketleri         InventoryMovement[]
 
   // @@index([phone]) KALDIRILDI: phone zaten @unique - users_phone_key ayni isi goruyor
   @@map("users")
@@ -508,6 +509,7 @@ model Store {
   personel        StoreUser[]
   rolAtamalari    UserRole[]
   calismaSaati    StoreHour[]
+  stokHareketleri InventoryMovement[]
 
   @@index([ownerId])
   @@index([sellerId])
@@ -677,7 +679,9 @@ model ProductVariant {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  cartItems CartItem[]
+  envanter        InventoryBalance[]
+  stokHareketleri InventoryMovement[]
+  cartItems       CartItem[]
 
   @@unique([productId, name])
   @@index([productId, isActive])
@@ -897,6 +901,8 @@ model Product {
   varyantlar      ProductVariant[]
   medya           ProductMedia[]
   secenekGruplari ProductOptionGroup[]
+  envanter        InventoryBalance[]
+  stokHareketleri InventoryMovement[]
   muadilleri      ProductSubstitution[] @relation("MuadilKaynak")
   muadiliOldugu   ProductSubstitution[] @relation("MuadilHedef")
 
@@ -1761,4 +1767,115 @@ model NewsletterSubscriber {
   @@unique([eposta, businessUnit])
   @@index([businessUnit])
   @@map("newsletter_subscribers")
+}
+
+// ===================== FAZ 4 — ENVANTER =====================
+//
+// STOK ARTIK SATIR: Product.stock / ProductVariant.stock kolonlari F4'te
+// DUSURULECEK (A1'deki users.roles deseni - duran kolon sessiz ikinci kaynak
+// olurdu). F1'de tablolar ADDITIVE geliyor, okuma yolu HALA eski kolonlar;
+// davranis F2'de degisecek.
+//
+// MIKTARLAR Int (kaynak belgedeki decimal'den BILINCLI SAPMA): sistemin kendi
+// kurali "stok EN KUCUK BIRIMDE TAM SAYIDIR" (bkz. Product.unitType yorumu) ve
+// siparis hattindaki BigInt(quantity) carpimlarinin tamami buna dayaniyor.
+// Decimal'e gecmek tek tabloyla sinirli kalmaz, siparis hattinin tamamini kapsar.
+
+enum MovementType {
+  SATIS
+  IADE
+  GIRIS
+  TRANSFER
+  SAYIM
+  FIRE
+  DUZELTME
+}
+
+/// Urun/varyant basina STOK BAKIYESI. Kaynak tablo (F2'den itibaren).
+model InventoryBalance {
+  id String @id @default(uuid()) @db.Uuid
+
+  // store_id BILEREK YOK: Product zaten storeId tasiyor (@@unique([storeId, slug])).
+  // Ikinci kopya "urun A magazasinda ama bakiyesi B magazasinda" gibi imkansiz bir
+  // durumu yazilabilir kilardi - C'de kapatilan "ayni soruya iki cevap" kalibi.
+  // Magaza bazli sorgu JOIN products ile cozulur; hareket tablosunda ise store_id
+  // DURUYOR cunku orasi snapshot/denetim kaydi.
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // NULL = urun duzeyi stok. Bugunku ProductVariant.stock = NULL semantiginin
+  // aynisi; boylece etkinStok'un iki dali da tek tabloya iner ve F4'te
+  // ProductVariant.stock da dusurulebilir.
+  variantId String?         @db.Uuid
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  availableQuantity Int @default(0) // satilabilir
+  reservedQuantity  Int @default(0) // FAZ 4'TE HEP 0: gercek rezervasyon akisi (BR-004/005) Faz 5'e ertelendi
+  damagedQuantity   Int @default(0) // fire
+
+  reorderLevel      Int @default(0) // siparis verme esigi
+  lowStockThreshold Int @default(0) // dusuk stok esigi (yalniz GORUNURLUK ucu; bildirim Faz 8)
+
+  // OPTIMISTIC LOCK — YALNIZ MIKTAR DISI ALANLAR ICIN (reorderLevel,
+  // lowStockThreshold, damagedQuantity duzenlemeleri). Miktar dususu kosullu
+  // yazimla korunur (WHERE availableQuantity >= q); version'i oraya da kosul
+  // koymak iki esszamanli satisi birbirini gereksiz yere reddettirirdi.
+  version Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  // NULLABLE UNIQUE UYARISI: variantId NULL iken Postgres'te NULL != NULL, yani
+  // ayni urune teorik olarak iki "urun duzeyi" satiri yazilabilir. user_roles'ta
+  // kabul edilen ayni bilincli borc: yazma TEK KAPIDAN gececek (F2), kismi
+  // unique indeks Prisma semasinda ifade edilemedigi icin her migrate diff'te
+  // drift uretirdi.
+  @@unique([productId, variantId])
+  @@index([productId])
+  @@map("inventory_balances")
+}
+
+/// STOK HAREKETI — denetim kaydi. Bakiye uzerine yazilir, hareket ASLA silinmez.
+model InventoryMovement {
+  id String @id @default(uuid()) @db.Uuid
+
+  // SNAPSHOT: hareketin o anda HANGI magazada oldugu. Urun ileride devredilse
+  // bile gecmis hareket degismemeli - OrderItem.name/unitPrice ile ayni gerekce.
+  // Bu yuzden bakiye tablosunun aksine burada store_id DURUYOR.
+  storeId String @db.Uuid
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  variantId String?         @db.Uuid
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  type MovementType
+
+  // ISARETLI: satis -5, giris +5. Ayri bir "yon" kolonu tip<->yon tutarsizligi
+  // riski dogururdu (SATIS + pozitif gibi); SUM(quantity) = net degisim.
+  quantity  Int
+  beforeQty Int // hareket oncesi availableQuantity
+  afterQty  Int // hareket sonrasi availableQuantity
+
+  reason String? // fire nedeni, duzeltme gerekcesi
+
+  // Hangi kayittan dogdu: 'ORDER' | 'ORDER_CANCEL' | 'COUNT' | ...
+  // FK YOK (OrderItem.variantId ile ayni gerekce): kaynak kayit silinse de
+  // hareket okunabilir kalmali.
+  referenceType String?
+  referenceId   String? @db.Uuid
+
+  actorId String? @db.Uuid
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  // RESTRICT (Cascade DEGIL): hareket DELILDIR, deger tasir. Turetilmis erisim
+  // kayitlarinda (store_users, user_roles) Cascade tercih edilmisti; burasi
+  // wallets/deliveries.courierId sinifinda.
+  @@index([productId, createdAt])
+  @@index([storeId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("inventory_movements")
 }
