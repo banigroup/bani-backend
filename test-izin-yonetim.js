@@ -21,7 +21,7 @@ if (!['localhost', '127.0.0.1'].includes(u.hostname)) {
 }
 console.log(`DB: ${u.hostname}:${u.port}${u.pathname}\n`);
 
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient, Role } = require('@prisma/client');
 const { IzinMatrisi } = require('./dist/src/common/rbac/izin-matrisi.service');
 const { PermissionsGuard } = require('./dist/src/common/rbac/permissions.guard');
 const { Permission } = require('./dist/src/common/rbac/permissions.enum');
@@ -70,7 +70,11 @@ async function hataAdi(fn) {
     ok('aciklama alani tasiniyor', izinler.find((i) => i.key === 'permission:manage')?.description?.length > 0);
 
     const tamMatris = await servis.matrisOku();
-    ok('matriste 12 rol var', Object.keys(tamMatris).length === 12, `${Object.keys(tamMatris).length} rol`);
+    // Beklenti ENUM'A BAGLI, sabit degil: matrisOku Role enum'unu taban aliyor,
+    // yeni rol eklenince (C2'de STORE_STAFF) anahtar sayisi da artar. Sabit sayi
+    // yazilirsa her rol eklemesinde bu test yanlislikla kirmizi yanar.
+    ok(`matriste ${Object.values(Role).length} rol var`,
+      Object.keys(tamMatris).length === Object.values(Role).length, `${Object.keys(tamMatris).length} rol`);
     ok('izni olmayan rol de bos dizi ile geliyor', Object.values(tamMatris).every(Array.isArray));
     ok('SUPER_ADMIN matriste dolu', tamMatris.SUPER_ADMIN.includes('permission:manage'));
 
