@@ -21,6 +21,15 @@ enum Role {
   CARRIER
   ADMIN
   SUPER_ADMIN
+
+  // Faz 1 / C2 — ILK VE SIMDILIK TEK MAGAZA KAPSAMLI ROL.
+  // Yalnizca user_roles.storeId DOLU iken yazilir; kapsam kurali icin bkz.
+  // model UserRole -> storeId yorumu. C2'de hicbir izne baglanmadi
+  // (role_permissions'a satir eklenmedi): C1'den sonra magaza kapsamli roller
+  // AuthUser.roles'a girmiyor, dolayisiyla PermissionsGuard onlarin iznini
+  // zaten cozemez - izin vermek bugun anlamsiz olurdu. Magaza kapsamli izin
+  // cozumlemesi Faz 1/B'nin isi.
+  STORE_STAFF
 }
 
 enum UserStatus {
@@ -534,6 +543,12 @@ model UserRole {
   // NULL = platform geneli. A1'de tum satirlar boyle.
   // Cascade: magaza silinince o magazaya kapsanmis rol anlamsizdir (StoreUser
   // ile ayni gerekce - turetilmis erisim kaydi, deger/delil tasimaz).
+  //
+  // KAPSAM KURALI (Faz 1 / C2): STORE_STAFF yalniz storeId DOLU yazilir; diger
+  // 12 rol yalniz NULL. Bu kural DB'de degil, tek yazma kapisinda zorlanir -
+  // Prisma CHECK ve kismi unique indeksi semada ifade edemedigi icin DB kisiti
+  // kalici drift uretirdi (ayni gerekceyle kismi unique indeks de reddedilmisti,
+  // bkz. asagidaki nullable-unique notu). Bilincli kabul edilmis borctur.
   storeId String? @db.Uuid
   store   Store?  @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
