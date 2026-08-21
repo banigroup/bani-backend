@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Public } from '../common/decorators/public.decorator';
 import type { Request } from 'express';
 import { MarketService } from './market.service';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PersonelEkleDto, PersonelDurumDto } from './dto/store-user.dto';
+import { RolAtaDto } from './dto/rol-ata.dto';
 import { SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto } from './dto/seller.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
@@ -143,6 +144,48 @@ export class MarketController {
     // C4: pasiflestirme o magazanin ROL SATIRLARINI da siliyor; kayit bunu
     // yansitsin diye storeId ve etkilenen rol metadata'ya eklendi.
     await this.audit.record({ actorId: user.id, action: 'store.user.status', entity: 'Store', entityId: id, ip: req.ip, metadata: { userId, isActive: dto.isActive, storeId: id, role: 'STORE_STAFF' } });
+    return r;
+  }
+
+  // ---- MAGAZA ROL ATAMA (Faz 1 / B2) ----
+  // Ayni kapi: sahipVeyaYonetici (serviste). Karar 4 geregi STORE_STAFF bu
+  // uclari cagiramaz - kapinin arkasinda olduklari icin kendiliginden oyle.
+  // Atanabilir roller serviste KODDA SABIT listeyle sinirli; STORE_STAFF ve
+  // platform rolleri (ADMIN/SUPER_ADMIN...) 400 ile reddedilir.
+
+  @Post('stores/:id/users/:userId/roles')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  async rolVer(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @Body() dto: RolAtaDto,
+    @Req() req: Request,
+  ) {
+    const r = await this.market.rolVer(id, user.id, user.roles, userId, dto.role);
+    await this.audit.record({
+      actorId: user.id, action: 'store.user.role.grant', entity: 'Store', entityId: id, ip: req.ip,
+      metadata: { storeId: id, targetUserId: userId, role: dto.role, degisti: r.degisti },
+    });
+    return r;
+  }
+
+  @Delete('stores/:id/users/:userId/roles/:role')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  async rolAl(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @Param('role') role: string,
+    @Req() req: Request,
+  ) {
+    const r = await this.market.rolAl(id, user.id, user.roles, userId, role);
+    await this.audit.record({
+      actorId: user.id, action: 'store.user.role.revoke', entity: 'Store', entityId: id, ip: req.ip,
+      metadata: { storeId: id, targetUserId: userId, role, degisti: r.degisti },
+    });
     return r;
   }
 }

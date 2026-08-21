@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Role, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -8,6 +8,20 @@ import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/rol-kontrol';
+
+/**
+ * FAZ 1 / B2 — B2 UCLARINDAN ATANABILEN ROLLER. Kodda sabit, veride degil:
+ * korundugumuz sey magaza yoneticisinin yanlis/kotu niyetli girdisi. Guard'daki
+ * MAGAZA_ROLU_IZIN_BEYAZ_LISTESI ile ayni gerekce, ayni desen.
+ *
+ * STORE_STAFF LISTEDE YOK: uyelik kaydinin turevi, yalnizca personelEkle /
+ * personelDurum yonetir.
+ */
+export const ATANABILIR_MAGAZA_ROLLERI: ReadonlySet<Role> = new Set([
+  Role.STORE_KITCHEN,
+  Role.STORE_CASHIER,
+  Role.STORE_STOCK,
+]);
 
 @Injectable()
 export class MarketService {
@@ -241,13 +255,16 @@ export class MarketService {
     // guard'in iki yere birden bakmasi gerekirdi - C'nin kapattigi ikilik
     // baska bicimde geri gelirdi.
     //
-    // ASIMETRI, B ICIN UYARI: pasiflestirme o magazanin TUM rol satirlarini
-    // siler, yeniden aktiflestirme ise yalnizca STORE_STAFF yazar. Bugun tek
-    // magaza rolu STORE_STAFF oldugu icin geri donus kayipsiz. Faz 1/B ile
-    // mutfak/kasa/depo geldiginde bu ASIMETRIK olur: pasiflestirilip yeniden
-    // acilan personel diger rollerini sessizce kaybeder. B'de ya rol satirlari
-    // yumusak silinmeli (isActive) ya da geri yazma onceki rolleri geri
-    // getirmeli.
+    // ASIMETRI COZULDU (Faz 1 / B2) — KASITLI, BUG DEGIL: hesap yeniden
+    // acilinca yetki-yogun roller (STORE_KITCHEN / STORE_CASHIER / STORE_STOCK)
+    // OTOMATIK geri gelmez; sahip/yonetici B2 uclariyla acikca yeniden atar
+    // (POST .../users/:userId/roles). Savunma derinligi: yeniden aktiflestirme
+    // onceki yetkileri sessizce restore etmemeli - isten ayrilip donen ya da
+    // hatayla kapatilip acilan bir hesap, kapatildigi andaki yetkileriyle
+    // canlanmamali.
+    //
+    // Bu yuzden asagidaki dal DEGISTIRILMEDI: pasiflestirme o magazanin TUM
+    // rol satirlarini siler, yeniden acma yalnizca STORE_STAFF yazar.
     const [guncel] = await this.prisma.$transaction([
       this.prisma.storeUser.update({
         where: { id: uyelik.id },
@@ -264,6 +281,90 @@ export class MarketService {
         : this.prisma.userRole.deleteMany({ where: { userId: hedefUserId, storeId } }),
     ]);
     return guncel;
+  }
+
+  // ---------------- MAGAZA ROL ATAMA (Faz 1 / B2) ----------------
+
+  /** Kisinin BU magazadaki rolleri (STORE_STAFF dahil), okunabilir sirada. */
+  private async magazaRolleri(storeId: string, hedefUserId: string): Promise<Role[]> {
+    const satirlar = await this.prisma.userRole.findMany({
+      where: { userId: hedefUserId, storeId },
+      select: { role: true },
+      orderBy: { role: 'asc' },
+    });
+    return [...new Set(satirlar.map((s) => s.role))];
+  }
+
+  /**
+   * ATANABILIR ROL DOGRULAMASI — kodda sabit, veride degil.
+   *
+   * Bu kontrol olmasaydi bir magaza yoneticisi (kotu niyetle ya da yanlislikla)
+   * ADMIN veya SUPER_ADMIN'i MAGAZA KAPSAMLI yazabilirdi. Boyle bir satir
+   * guard'da bugun gorunmez (storeId dolu roller beyaz listeden geciyor) ama
+   * user_roles'ta duran bir "ADMIN" satiri veri butunlugu acisindan zehirlidir:
+   * ileride kapsamı gozetmeyen tek bir okuma yolu onu platform rolu sanabilir.
+   *
+   * STORE_STAFF de BILEREK disarida: uyelik kaydinin turevi, yalnizca
+   * personelEkle/personelDurum yonetir. Iki kapidan yonetilen bir satir,
+   * C'de kapatilan "ayni soruya iki cevap" ikiligini geri getirirdi.
+   */
+  private atanabilirRolDogrula(rol: string): Role {
+    if (!(ATANABILIR_MAGAZA_ROLLERI as ReadonlySet<string>).has(rol)) {
+      throw new BadRequestException(
+        `Bu uctan yalnizca su roller atanabilir: ${[...ATANABILIR_MAGAZA_ROLLERI].join(', ')}`,
+      );
+    }
+    return rol as Role;
+  }
+
+  /**
+   * Rol atamak icin kisi o magazanin AKTIF kadrosunda olmali.
+   *
+   * Uyelik kaydi store_users'ta yasiyor (C4: yetki icin okunmuyor ama yasam
+   * dongusu orada). Pasif uyeye rol yazilabilseydi, personelDurum'un
+   * "pasiflestirince tum rolleri sil" garantisi delinirdi.
+   */
+  private async aktifUyelikDogrula(storeId: string, hedefUserId: string) {
+    const uyelik = await this.prisma.storeUser.findUnique({
+      where: { storeId_userId: { storeId, userId: hedefUserId } },
+      select: { isActive: true },
+    });
+    if (!uyelik) throw new NotFoundException('Personel kaydı bulunamadı');
+    if (!uyelik.isActive) {
+      throw new BadRequestException('Pasif personele rol atanamaz; önce üyeliği yeniden açın');
+    }
+  }
+
+  /** Idempotent: ayni rol ikinci kez verilirse mukerrer satir olusmaz. */
+  async rolVer(storeId: string, userId: string, roles: Role[], hedefUserId: string, rol: string) {
+    await this.sahipVeyaYonetici(storeId, userId, roles);
+    const secilen = this.atanabilirRolDogrula(rol);
+    await this.aktifUyelikDogrula(storeId, hedefUserId);
+
+    const mevcut = await this.prisma.userRole.findUnique({
+      where: { userId_role_storeId: { userId: hedefUserId, role: secilen, storeId } },
+      select: { id: true },
+    });
+    if (!mevcut) {
+      await this.prisma.userRole.create({ data: { userId: hedefUserId, role: secilen, storeId } });
+    }
+    return { degisti: !mevcut, roller: await this.magazaRolleri(storeId, hedefUserId) };
+  }
+
+  /**
+   * Idempotent: atama yoksa hata DEGIL, degisti=false.
+   * personelDurum'un pasiflestirme dali da ayni mantikta (deleteMany, yoksa
+   * sessiz gecer) - iki yol tutarli olsun diye 404 tercih edilmedi.
+   */
+  async rolAl(storeId: string, userId: string, roles: Role[], hedefUserId: string, rol: string) {
+    await this.sahipVeyaYonetici(storeId, userId, roles);
+    const secilen = this.atanabilirRolDogrula(rol);
+    // Uyelik AKTIFLIGI aranmaz: yetki GERI ALMAK her zaman guvenli yonde bir
+    // islem, pasif uyenin artik satiri da kalmamis olabilir.
+    const silinen = await this.prisma.userRole.deleteMany({
+      where: { userId: hedefUserId, storeId, role: secilen },
+    });
+    return { degisti: silinen.count > 0, roller: await this.magazaRolleri(storeId, hedefUserId) };
   }
 
   async update(storeId: string, userId: string, roles: Role[], dto: UpdateStoreDto, ip?: string) {
