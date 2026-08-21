@@ -47,8 +47,17 @@ const ALTIN = {
 // dokunulmadan duruyor; beklenen matris = altin kopya + bu fark. Boylece
 // "davranis degismedi" iddiasi ile "bilerek eklenen" ayri ayri gorunur kaliyor.
 const ADIM2_EKLENEN = { SUPER_ADMIN: ['permission:manage'] };
+// Faz 1/B1'de eklenen MAGAZA KADROSU rolleri. Bunlar altin kopyada YOK cunku
+// A2 oncesinde var olmayan rollerdi; beklenen matris = altin kopya + A2 farki
+// + B1 farki. STORE_STAFF bilerek listede degil: izinsiz kalan tek magaza rolu.
+const B1_EKLENEN = {
+  STORE_KITCHEN: ['order:manage'],
+  STORE_CASHIER: ['order:manage'],
+  STORE_STOCK: ['product:write'],
+};
 const BEKLENEN = {};
 for (const rol of Object.keys(ALTIN)) BEKLENEN[rol] = [...ALTIN[rol], ...(ADIM2_EKLENEN[rol] || [])].sort();
+for (const rol of Object.keys(B1_EKLENEN)) BEKLENEN[rol] = [...(BEKLENEN[rol] || []), ...B1_EKLENEN[rol]].sort();
 
 const prisma = new PrismaClient();
 let gecti = 0;
@@ -95,6 +104,13 @@ const TEST_IZIN = '__test:a2:izin';
     ok('tabloda fazladan rol yok', Object.keys(dbMatris).every((r) => BEKLENEN[r]),
       Object.keys(dbMatris).filter((r) => !BEKLENEN[r]).join(', '));
     ok('toplam cift sayisi', satirlar.length === Object.values(BEKLENEN).reduce((a, b) => a + b.length, 0), `${satirlar.length} satir`);
+    const BEYAZ = ['product:write', 'category:write', 'order:manage'];
+    const magazaRolleri = ['STORE_STAFF', 'STORE_KITCHEN', 'STORE_CASHIER', 'STORE_STOCK'];
+    ok('B1: magaza rollerine beyaz liste DISI izin verilmemis',
+      satirlar.filter((s) => magazaRolleri.includes(s.role)).every((s) => BEYAZ.includes(s.permissionKey)),
+      satirlar.filter((s) => magazaRolleri.includes(s.role) && !BEYAZ.includes(s.permissionKey)).map((s) => `${s.role}:${s.permissionKey}`).join(', '));
+    ok('B1: STORE_STAFF hicbir izin tasimiyor',
+      satirlar.filter((s) => s.role === 'STORE_STAFF').length === 0);
     ok('adim 2: permission:manage YALNIZCA SUPER_ADMIN de',
       satirlar.filter((s) => s.permissionKey === 'permission:manage').map((s) => s.role).join(',') === 'SUPER_ADMIN');
 

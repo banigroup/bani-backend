@@ -30,6 +30,15 @@ enum Role {
   // zaten cozemez - izin vermek bugun anlamsiz olurdu. Magaza kapsamli izin
   // cozumlemesi Faz 1/B'nin isi.
   STORE_STAFF
+
+  // Faz 1 / B1 — MAGAZA KADROSU. Uceu de yalnizca storeId DOLU yazilir.
+  // STORE_STAFF genel personel rolu olarak IZINSIZ kalir; asagidaki uc rol
+  // kendi izinleriyle gelir. Izinleri role_permissions'ta yasar ama guard'da
+  // KODDAKI beyaz listeyle kesisime girer (bkz. permissions.guard.ts) - panelden
+  // yanlislikla verilen bir platform izni magaza rolunden gecemesin diye.
+  STORE_KITCHEN // mutfak: siparis hazirlama
+  STORE_CASHIER // kasa: siparis/odeme
+  STORE_STOCK // depo: stok ve urun yazma
 }
 
 enum UserStatus {
