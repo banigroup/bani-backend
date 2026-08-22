@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { EvIlaniDurum, EvTeklifDurum, Role, SozlesmeTipi } from '@prisma/client';
+import { BusinessUnit, EvIlaniDurum, EvTeklifDurum, Role, SozlesmeTipi } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { KuyrukService } from '../kuyruk/kuyruk.service';
@@ -97,7 +97,7 @@ export class EvdenEveService {
     // birakilir, tuketen taraf SigortaService.leadOlustur'dur. Lead artik anlik
     // degil, kuyrugun dakikalik turunda olusur (tipik 0-60 sn).
     if (ilan?.sigortaTalebi) {
-      await this.kuyruk.ekle('SIGORTA_LEAD_OLUSTUR', { tasitanId: ilan.tasitanId, ilanId });
+      await this.kuyruk.ekle('SIGORTA_LEAD_OLUSTUR', { tasitanId: ilan.tasitanId, ilanId }, BusinessUnit.SIGORTA);
     }
     return ilan;
   }
@@ -200,7 +200,7 @@ export class EvdenEveService {
     // Tasiyana haber (kuyruktan)
     const tasiyan = await this.prisma.user.findUnique({ where: { id: teklif.tasiyanId }, select: { phone: true } });
     if (tasiyan?.phone) {
-      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: `${ilan.neredenIl} - ${ilan.nereyeIl} (evden eve)` } });
+      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: `${ilan.neredenIl} - ${ilan.nereyeIl} (evden eve)` } }, BusinessUnit.PLATFORM);
     }
     return sonuc;
   }
@@ -233,7 +233,7 @@ export class EvdenEveService {
     const komisyon = teklif.kesinFiyatKurus ? (teklif.kesinFiyatKurus * 500n) / 10000n : 0n;
     const tasiyan = await this.prisma.user.findUnique({ where: { id: teklif.tasiyanId }, select: { phone: true } });
     if (tasiyan?.phone) {
-      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TESLIM_ONAY', degiskenler: { ilan: `${ilan.neredenIl} - ${ilan.nereyeIl} (evden eve)` } });
+      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TESLIM_ONAY', degiskenler: { ilan: `${ilan.neredenIl} - ${ilan.nereyeIl} (evden eve)` } }, BusinessUnit.PLATFORM);
     }
     const guncel = await this.prisma.evIlani.findUnique({ where: { id: ilan.id } });
     return { ilan: guncel, komisyonKurus: komisyon.toString() };
@@ -266,7 +266,7 @@ export class EvdenEveService {
     if (ev.durum !== EvIlaniDurum.ACIK) throw new ConflictException('Ev ilaniniz teklif almaya acik degil');
     const tasiyan = await this.prisma.user.findUnique({ where: { id: donus.tasiyanId }, select: { phone: true } });
     if (tasiyan?.phone) {
-      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TEKLIF_GELDI', degiskenler: { ilan: `${ev.neredenIl} - ${ev.nereyeIl} evden eve talebi (donus yolunuza uygun)` } });
+      await this.kuyruk.ekle('BILDIRIM_SMS', { alici: tasiyan.phone, sablonKodu: 'TEKLIF_GELDI', degiskenler: { ilan: `${ev.neredenIl} - ${ev.nereyeIl} evden eve talebi (donus yolunuza uygun)` } }, BusinessUnit.PLATFORM);
     }
     return { ok: true, mesaj: 'Davet gonderildi - tasiyan ilaniniza teklif verebilir', evIlaniId: ev.id };
   }

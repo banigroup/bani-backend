@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { KuyrukDurum, Prisma } from '@prisma/client';
+import { BusinessUnit, KuyrukDurum, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BildirimService } from '../bildirim/bildirim.service';
 import { SigortaService } from '../sigorta/sigorta.service';
@@ -16,15 +16,70 @@ const KILIT_ZAMAN_ASIMI_DK = 10;
 @Injectable()
 export class KuyrukService {
   private readonly logger = new Logger(KuyrukService.name);
+
+  // BU SUREC HANGI DIKEYLERIN ISINI ALIR.
+  //
+  // undefined = HEPSI (bugunku davranis). BANI_KUYRUK_DIKEYLER ortam degiskeni
+  // ayarlanmadigi surece filtre HIC UYGULANMAZ; bu paket canli davranisi
+  // degistirmez. Ileride worker'i dikey basina cogaltmak gerektiginde
+  // (or. BANI_KUYRUK_DIKEYLER=LOAD,SIGORTA) yalnizca env verilir - Railway'de
+  // bunun CLI'dan yapilabildigi BANI_PROCESS ile kanitlandi.
+  private readonly dikeyler?: BusinessUnit[];
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly bildirim: BildirimService,
     private readonly sigorta: SigortaService,
-  ) {}
+  ) {
+    this.dikeyler = this.dikeyleriCoz(process.env.BANI_KUYRUK_DIKEYLER);
+  }
 
-  async ekle(tip: string, payload: Prisma.InputJsonValue): Promise<void> {
+  /**
+   * BANI_KUYRUK_DIKEYLER cozumu. Bos/tanimsiz -> undefined (hepsi islenir).
+   *
+   * GECERSIZ DEGERDE SESSIZ GECILMEZ: degisken verilmis ama hicbir gecerli
+   * dikey cikmiyorsa surec BASLATILMAZ. Sessiz gecilseydi filtre uygulanmaz,
+   * "yalniz su dikeyi isle" beklenirken worker HEPSINI islerdi - izolasyon
+   * yaniltici bicimde kaybolurdu. Kismen gecersizde (bir degeri yanlis
+   * yazilmis) gecerliler kullanilir ama hata loglanir.
+   */
+  private dikeyleriCoz(ham?: string): BusinessUnit[] | undefined {
+    const metin = (ham ?? '').trim();
+    if (!metin) return undefined;
+
+    const parcalar = metin.split(',').map((p) => p.trim().toUpperCase()).filter(Boolean);
+    const gecerli = parcalar.filter((p): p is BusinessUnit =>
+      (Object.values(BusinessUnit) as string[]).includes(p),
+    );
+    const gecersiz = parcalar.filter((p) => !(Object.values(BusinessUnit) as string[]).includes(p));
+
+    if (gecersiz.length) {
+      this.logger.error(`BANI_KUYRUK_DIKEYLER icinde gecersiz deger: ${gecersiz.join(', ')}`);
+    }
+    if (!gecerli.length) {
+      throw new Error(
+        `BANI_KUYRUK_DIKEYLER cozulemedi ("${metin}"). Gecerli degerler: ${Object.values(BusinessUnit).join(', ')}`,
+      );
+    }
+    this.logger.log(`Kuyruk dikey filtresi etkin: ${gecerli.join(', ')}`);
+    return gecerli;
+  }
+
+  /**
+   * Kuyruga is birakir.
+   *
+   * dikey ZORUNLU ve varsayilani YOK: is_kuyrugu.businessUnit NULL kalirsa,
+   * dikey filtreli bir isleyici o isi ASLA almaz (SQL'de NULL IN (...) false)
+   * ve is sonsuza kadar BEKLIYOR'da kalir. Zorunlu parametre, yeni bir cagri
+   * yerinin dikeyi atlamasini DERLEME HATASINA cevirir.
+   *
+   * ILKE: dikey = isi ISLERKEN hangi dikeyin servis/DB yukune dokunuluyor
+   * (TUKETEN taraf, ureten taraf DEGIL). SIGORTA_LEAD_OLUSTUR'u LOAD dogurur
+   * ama isi SigortaService yapar -> SIGORTA.
+   */
+  async ekle(tip: string, payload: Prisma.InputJsonValue, dikey: BusinessUnit): Promise<void> {
     try {
-      await this.prisma.isKuyrugu.create({ data: { tip, payload } });
+      await this.prisma.isKuyrugu.create({ data: { tip, payload, businessUnit: dikey } });
     } catch (e) {
       this.logger.error(`Kuyruga eklenemedi: ${tip}`, e as Error);
     }
@@ -36,7 +91,14 @@ export class KuyrukService {
   private async kilitleriKurtar(): Promise<void> {
     const esik = new Date(Date.now() - KILIT_ZAMAN_ASIMI_DK * 60 * 1000);
     const kurtarilan = await this.prisma.isKuyrugu.updateMany({
-      where: { durum: KuyrukDurum.ISLENIYOR, updatedAt: { lt: esik } },
+      where: {
+        durum: KuyrukDurum.ISLENIYOR,
+        updatedAt: { lt: esik },
+        // Kurtarma da sahiplenme ile AYNI KAPSAMDA: filtreli bir isleyici,
+        // baska bir dikeyin isini kurtarmaya kalkmamali - o isin sahibi baska
+        // bir surec olabilir ve hala calisiyor olabilir.
+        ...(this.dikeyler ? { businessUnit: { in: this.dikeyler } } : {}),
+      },
       data: {
         durum: KuyrukDurum.BEKLIYOR,
         denemeSayisi: { increment: 1 },
@@ -97,9 +159,19 @@ export class KuyrukService {
   }
 
   // Atomik sahiplenme: BEKLIYOR + zamani gelmis bir isi ISLENIYOR'a ceker; count 1 degilse baskasi almistir.
+  // DIKEY FILTRESI BURADA, calistir()'in switch'inde DEGIL. Switch'e konsaydi
+  // is once SAHIPLENILIR (ISLENIYOR'a cekilir) sonra reddedilirdi; satir orada
+  // asili kalir ve ancak 10 dk sonra kilitleriKurtar onu geri alirdi - her
+  // turda ayni is yeniden alinip birakildigi icin kuyruk kendini tikardi.
+  // Sahiplenme sorgusunda filtrelemek, isi hic almamayi saglar.
   private async sahiplen() {
     const aday = await this.prisma.isKuyrugu.findFirst({
-      where: { durum: KuyrukDurum.BEKLIYOR, calistirZamani: { lte: new Date() } },
+      where: {
+        durum: KuyrukDurum.BEKLIYOR,
+        calistirZamani: { lte: new Date() },
+        // dikeyler undefined ise kosul HIC EKLENMEZ -> bugunku davranis birebir.
+        ...(this.dikeyler ? { businessUnit: { in: this.dikeyler } } : {}),
+      },
       orderBy: { createdAt: 'asc' },
     });
     if (!aday) return null;

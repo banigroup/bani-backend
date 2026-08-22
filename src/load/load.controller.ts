@@ -2,7 +2,7 @@ import {
   Controller, Get, Post, Patch, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
 import { Request } from 'express';
-import { SozlesmeTipi, Role } from '@prisma/client';
+import { BusinessUnit, SozlesmeTipi, Role } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/rbac/roles.guard';
 import { Roles } from '../common/rbac/roles.decorator';
@@ -103,7 +103,7 @@ export class LoadController {
     await this.audit.record({ actorId: user.id, action: 'load.arac.kabul', entity: 'AracTeklif', entityId: id, ip });
     const aVeren = (r as any)?.seciliTeklif?.veren; const aTas = (r as any)?.tasiyici;
     const aTel = aVeren?.id !== user.id ? aVeren?.phone : aTas?.phone;
-    if (aTel) await this.kuyruk.ekle('BILDIRIM_SMS', { alici: aTel, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') } });
+    if (aTel) await this.kuyruk.ekle('BILDIRIM_SMS', { alici: aTel, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') } }, BusinessUnit.PLATFORM);
     return r;
   }
 
@@ -152,7 +152,7 @@ export class LoadController {
     const r = await this.load.teklifKabul(user, id, ip, cihaz);
     await this.audit.record({ actorId: user.id, action: 'load.yuk.kabul', entity: 'YukTeklif', entityId: id, ip });
     const yTel = (r as any)?.seciliTeklif?.tasiyici?.phone;
-    if (yTel) await this.kuyruk.ekle('BILDIRIM_SMS', { alici: yTel, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') } });
+    if (yTel) await this.kuyruk.ekle('BILDIRIM_SMS', { alici: yTel, sablonKodu: 'TEKLIF_KABUL', degiskenler: { ilan: ((r as any)?.nereden ?? '') + ' - ' + ((r as any)?.nereye ?? '') } }, BusinessUnit.PLATFORM);
     return r;
   }
 
