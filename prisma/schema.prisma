@@ -272,6 +272,12 @@ enum BusinessUnit {
   DICLEFUL
   COURIER
   PLATFORM // cekirdek/holding defteri (cuzdan ops: topup/withdrawal/transfer)
+
+  // BaniSigorta. Sistemde dikey olarak zaten vardi (sigorta_talepleri,
+  // sigorta_sube_basvurulari, SigortaModule) ama BusinessUnit onu tanimiyordu.
+  // is_kuyrugu.businessUnit ile birlikte eklendi: SIGORTA_LEAD_OLUSTUR isinin
+  // TUKETEN tarafi Sigorta'dir, PLATFORM degil.
+  SIGORTA
 }
 
 model Transaction {
@@ -1637,11 +1643,28 @@ model IsKuyrugu {
   maxDeneme      Int         @default(3)
   sonHata        String?
   calistirZamani DateTime    @default(now()) // bu zamandan once islenmez (retry gecikmesi)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+
+  // ISI ISLERKEN HANGI DIKEYIN YUKUNE DOKUNULUYOR — tuketen taraf, ureten
+  // taraf DEGIL. SIGORTA_LEAD_OLUSTUR'u LOAD dogurur ama isi yapan
+  // SigortaService'tir ve yazma sigorta_talepleri'ne gider; o yuzden SIGORTA.
+  // BILDIRIM_SMS'in tuketeni dikey-ustu altyapidir: PLATFORM.
+  //
+  // NULLABLE ve @default YOK — Cart.businessUnit'teki bilincli desen: dikey her
+  // yaratmada acikca verilsin, unutulan yer derlenmesin. Zorunlu hale getirmek
+  // ekle()'nin imzasini degistirmeyi gerektiriyor; o ayri pakette yapilacak.
+  //
+  // DIKKAT: bu kolon NULL kalan bir satiri, dikey filtreli bir worker ASLA
+  // almaz (SQL'de NULL IN (...) false) - is sonsuza kadar BEKLIYOR'da kalir.
+  // Bu yuzden backfill migration'i NULL kalan satir birakmiyor.
+  businessUnit BusinessUnit?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([durum, calistirZamani])
   @@index([tip])
+  // Dikey filtreli isleyicinin tarayacagi yol (KuyrukService.sahiplen).
+  @@index([businessUnit, durum, calistirZamani])
   @@map("is_kuyrugu")
 }
 
