@@ -6,6 +6,21 @@ COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma
 RUN pnpm install
 COPY . .
+
+# BIRIM SINIRI VE GUARD KAPISI — build zamaninda, CMD'de DEGIL.
+# CI'da da var (.github/workflows/ci.yml) ama Railway CI'i BEKLEMIYOR: push
+# eder etmez build basliyor, dolayisiyla CI kirmizi olsa bile kod canliya
+# gidebiliyordu. Burasi o boslugu kapatir - ihlal varsa IMAJ URETILMEZ,
+# deploy hic gerceklesmez, eski surum ayakta kalir.
+#
+# NEDEN BUILD'DEN ONCE: iki script ~350 ms suruyor; ihlal varsa pnpm run
+# build'in dakikalari hic harcanmaz.
+# NEDEN RUN, CMD DEGIL: kontrol imaj basina BIR KEZ calisir ve tek imaj hem
+# API hem worker'a gittigi icin BANI_PROCESS switch'ine dokunmaz. CMD'ye
+# konsaydi her restart'a maliyet binerdi ve calisma zamaninda src/ klasorune
+# bagimli hale gelirdik (imaj ileride dist-only'ye kucultulurse canlida coker).
+RUN node scripts/check-boundaries.js && node scripts/check-guards.js
+
 RUN pnpm run build
 ENV NODE_ENV=production
 EXPOSE 4000
