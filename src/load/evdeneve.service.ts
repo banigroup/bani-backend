@@ -1,9 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EvIlaniDurum, EvTeklifDurum, Role, SigortaDurum, SigortaKaynak, SigortaTuru, SozlesmeTipi } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { EvIlaniDurum, EvTeklifDurum, Role, SozlesmeTipi } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { KuyrukService } from '../kuyruk/kuyruk.service';
-import { SigortaService } from '../sigorta/sigorta.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { platformYoneticisi } from '../common/rbac/rol-kontrol';
 import { EvIlaniOlusturDto } from './dto/ev-ilani-olustur.dto';
@@ -13,8 +12,7 @@ import { EvTeklifVerDto } from './dto/ev-teklif-ver.dto';
 // Kural 4 geregi bu katta hicbir sey baglayici degildir; kesif/kabul sonraki halka.
 @Injectable()
 export class EvdenEveService {
-  private readonly logger = new Logger(EvdenEveService.name);
-  constructor(private readonly prisma: PrismaService, private readonly sozlesme: SozlesmeService, private readonly kuyruk: KuyrukService, private readonly sigorta: SigortaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly sozlesme: SozlesmeService, private readonly kuyruk: KuyrukService) {}
 
   // Tanim TEK KAYNAKTA: common/rbac/rol-kontrol. Buradaki yerel kopya kaldirildi.
   private isAdmin(user: AuthUser): boolean {
@@ -94,28 +92,14 @@ export class EvdenEveService {
     });
     if (kilit.count !== 1) throw new ConflictException('Ilan onaylanamadi (bulunamadi ya da zaten islenmis)');
     const ilan = await this.prisma.evIlani.findUnique({ where: { id: ilanId } });
-    // Kural 6 - BaniSigorta lead: ilan gercekten ACIK oldugu anda, ilan sahibi adina
-    if (ilan?.sigortaTalebi) await this.sigortaLeadYaz(ilan.tasitanId);
-    return ilan;
-  }
-
-  // BaniSigorta lead yazimi - IKINCIL is: hatasi ilan onayini DUSURMEZ (best-effort).
-  // Ayni numaradan son 24 saatte acik (YENI) bir BANILOAD talebi varsa tekrar yazilmaz.
-  private async sigortaLeadYaz(tasitanId: string) {
-    try {
-      const sahip = await this.prisma.user.findUnique({ where: { id: tasitanId }, select: { name: true, surname: true, phone: true } });
-      if (!sahip?.phone) return;
-      const yirmiDortSaatOnce = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const mevcut = await this.prisma.sigortaTalep.findFirst({
-        where: { telefon: sahip.phone, kaynak: SigortaKaynak.BANILOAD, durum: SigortaDurum.YENI, deletedAt: null, olusturmaTarihi: { gte: yirmiDortSaatOnce } },
-      });
-      if (mevcut) return;
-      // name/surname NULLABLE - bos kalirsa sigorta ekibi kimi arayacagini bilsin diye telefon yaziyoruz
-      const adSoyad = `${sahip.name ?? ''} ${sahip.surname ?? ''}`.trim() || sahip.phone;
-      await this.sigorta.talepOlustur({ adSoyad, telefon: sahip.phone, sigortaTuru: SigortaTuru.NAKLIYAT, kaynak: SigortaKaynak.BANILOAD });
-    } catch (e) {
-      this.logger.error(`BaniSigorta lead yazilamadi (ilan sahibi: ${tasitanId})`, e as Error);
+    // Kural 6 - BaniSigorta lead: ilan gercekten ACIK oldugu anda, ilan sahibi adina.
+    // HOLDING ILKESI: sigorta baska bir dikey, dogrudan cagrilmaz - is kuyruguna
+    // birakilir, tuketen taraf SigortaService.leadOlustur'dur. Lead artik anlik
+    // degil, kuyrugun dakikalik turunda olusur (tipik 0-60 sn).
+    if (ilan?.sigortaTalebi) {
+      await this.kuyruk.ekle('SIGORTA_LEAD_OLUSTUR', { tasitanId: ilan.tasitanId, ilanId });
     }
+    return ilan;
   }
 
   // TASIYAN: on teklif ver (baglayici degil - Kural 4)

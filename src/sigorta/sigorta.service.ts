@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { SigortaDurum, SubeBasvuruDurum } from '@prisma/client';
+import { SigortaDurum, SigortaKaynak, SigortaTuru, SubeBasvuruDurum } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigortaTalepDto } from './dto/sigorta-talep.dto';
 import { SigortaSubeBasvuruDto } from './dto/sigorta-sube-basvuru.dto';
@@ -17,6 +17,43 @@ export class SigortaService {
     });
     return { ok: true, id: talep.id };
   }
+  // BANILOAD LEAD'I — is kuyrugu ('SIGORTA_LEAD_OLUSTUR') uzerinden cagrilir.
+  // Dikeyler arasi dogrudan cagri YOK: load bu metodu tanimaz, yalnizca kuyruga
+  // is birakir; tuketen taraf burasidir (holding ilkesi).
+  //
+  // HATA YUTULMAZ (eski load/evdeneve.sigortaLeadYaz'dan farki): hata kuyruga
+  // firlar, KuyrukService 2/4/8 dk gecikmeyle 3 kez dener ve basaramazsa isi
+  // HATA durumunda defterde birakir. Yutulsaydi kuyruk isi TAMAM sanardi.
+  //
+  // 24 SAAT DEDUPE burada, cagiranda degil: talepOlustur idempotent degil ve
+  // is artik tekrar denenebiliyor - kontrol yazma anina en yakin yerde durmali.
+  async leadOlustur(tasitanId: string) {
+    const sahip = await this.prisma.user.findUnique({
+      where: { id: tasitanId },
+      select: { name: true, surname: true, phone: true },
+    });
+    if (!sahip?.phone) return;
+    const yirmiDortSaatOnce = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const mevcut = await this.prisma.sigortaTalep.findFirst({
+      where: {
+        telefon: sahip.phone,
+        kaynak: SigortaKaynak.BANILOAD,
+        durum: SigortaDurum.YENI,
+        deletedAt: null,
+        olusturmaTarihi: { gte: yirmiDortSaatOnce },
+      },
+    });
+    if (mevcut) return;
+    // name/surname NULLABLE - bos kalirsa sigorta ekibi kimi arayacagini bilsin diye telefon yaziyoruz
+    const adSoyad = `${sahip.name ?? ''} ${sahip.surname ?? ''}`.trim() || sahip.phone;
+    await this.talepOlustur({
+      adSoyad,
+      telefon: sahip.phone,
+      sigortaTuru: SigortaTuru.NAKLIYAT,
+      kaynak: SigortaKaynak.BANILOAD,
+    });
+  }
+
   async talepleriListele() {
     return this.prisma.sigortaTalep.findMany({ orderBy: { olusturmaTarihi: 'desc' } });
   }

@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { KuyrukDurum, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BildirimService } from '../bildirim/bildirim.service';
+import { SigortaService } from '../sigorta/sigorta.service';
 
 // CEKIRDEK IS KUYRUGU (Faz 1): DB tabanli hafif kuyruk.
 // ekle() ile is birakilir; dakikalik worker atomik sahiplenir (cift isleme imkansiz),
@@ -18,6 +19,7 @@ export class KuyrukService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bildirim: BildirimService,
+    private readonly sigorta: SigortaService,
   ) {}
 
   async ekle(tip: string, payload: Prisma.InputJsonValue): Promise<void> {
@@ -113,6 +115,12 @@ export class KuyrukService {
     switch (tip) {
       case 'BILDIRIM_SMS':
         await this.bildirim.gonderSms(payload.alici, payload.sablonKodu, payload.degiskenler ?? {});
+        return;
+      // BaniLoad -> BaniSigorta lead'i. Payload REFERANS tasir (tasitanId), PII degil:
+      // kullanici kuyruk bekleyisi boyunca telefonunu degistirebilir, isleyici
+      // calistigi an guncel kaydi okur. ilanId yalnizca izlenebilirlik icin.
+      case 'SIGORTA_LEAD_OLUSTUR':
+        await this.sigorta.leadOlustur(payload.tasitanId);
         return;
       default:
         throw new Error(`Bilinmeyen kuyruk is tipi: ${tip}`);

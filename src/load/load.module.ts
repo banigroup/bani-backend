@@ -6,12 +6,13 @@ import { FinanceModule } from '../finance/finance.module';
 import { SozlesmeModule } from '../sozlesme/sozlesme.module';
 import { BildirimModule } from '../bildirim/bildirim.module';
 import { KuyrukModule } from '../kuyruk/kuyruk.module';
-import { SigortaModule } from '../sigorta/sigorta.module';
 import { EvdenEveService } from './evdeneve.service';
 import { EvdenEveController } from './evdeneve.controller';
 
 @Module({
-  imports: [FinanceModule, SozlesmeModule, BildirimModule, KuyrukModule, SigortaModule],
+  // SigortaModule BILEREK YOK: sigorta baska bir dikey (holding ilkesi).
+  // BaniSigorta lead'i is kuyruguna birakilir; tuketen taraf KuyrukService'tir.
+  imports: [FinanceModule, SozlesmeModule, BildirimModule, KuyrukModule],
   controllers: [LoadController, LoadVitrinController, EvdenEveController],
   providers: [LoadService, EvdenEveService],
   exports: [LoadService],
