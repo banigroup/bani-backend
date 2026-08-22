@@ -40,17 +40,35 @@ export class OtpService {
     return code;
   }
 
+  // ============================================================
+  // TEK TIP HATA MESAJI — sebep disariya sizmaz.
+  // ------------------------------------------------------------
+  // Onceden uc ayri mesaj donuyordu: 'Kod bulunamadı veya süresi doldu.',
+  // 'Çok fazla deneme.', 'Kod hatalı.'. Ucu de ayni biti ele veriyordu:
+  // bir telefon numarasi icin O AN BEKLEYEN bir OTP var mi? Saldirgan
+  // uydurma bir kodla verify cagirip yanita bakarak numara tarayabiliyordu
+  // ('Kod hatalı.' = kod var, 'Kod bulunamadı...' = kod yok).
+  //
+  // 'Çok fazla deneme.' de dahil edildi: disarida biraksaydik, alti kez
+  // deneyen saldirgan yine "bu numarada bekleyen kod vardi" bilgisini
+  // alirdi — tek istekte degil ama yine de.
+  //
+  // Ayni disiplin transfer-code/consume ucunda zaten uygulaniyor
+  // ('Devir kodu gecersiz' — yanlis/kullanilmis/yok icin tek mesaj).
+  // ============================================================
+  private static readonly GECERSIZ = 'Kod geçersiz veya süresi dolmuş.';
+
   async verify(phone: string, code: string): Promise<boolean> {
     const maxAttempts = this.config.get<number>('otp.maxAttempts', 5);
     const otp = await this.prisma.otpRequest.findFirst({
       where: { phone, consumedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
     });
-    if (!otp) throw new BadRequestException('Kod bulunamadı veya süresi doldu.');
-    if (otp.attempts >= maxAttempts) throw new BadRequestException('Çok fazla deneme.');
+    if (!otp) throw new BadRequestException(OtpService.GECERSIZ);
+    if (otp.attempts >= maxAttempts) throw new BadRequestException(OtpService.GECERSIZ);
     if (otp.codeHash !== this.hash(code)) {
       await this.prisma.otpRequest.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
-      throw new BadRequestException('Kod hatalı.');
+      throw new BadRequestException(OtpService.GECERSIZ);
     }
     await this.prisma.otpRequest.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
     return true;
