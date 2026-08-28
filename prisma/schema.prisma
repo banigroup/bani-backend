@@ -513,7 +513,6 @@ model Store {
   secenekGruplari OptionGroup[]
   orders          Order[]
   personel        StoreUser[]
-  rolAtamalari    UserRole[]
   calismaSaati    StoreHour[]
   stokHareketleri InventoryMovement[]
 
@@ -558,8 +557,24 @@ model UserRole {
   role   Role
 
   // NULL = platform geneli. A1'de tum satirlar boyle.
-  // Cascade: magaza silinince o magazaya kapsanmis rol anlamsizdir (StoreUser
-  // ile ayni gerekce - turetilmis erisim kaydi, deger/delil tasimaz).
+  //
+  // DUZ ID — FK YOK (Faz 0 / borc paketi 1). user_roles CEKIRDEK tablodur,
+  // stores TICARET dikeyinin tablosudur; aradaki FK holding ilkesinin ihlaliydi
+  // (bkz. Evden Eve: tasitanId/tasiyanId de duz ID). FK Faz 1/C2'de fark
+  // edilmeden girmisti; sokuldugunde canlida storeId DOLU satir YOKTU (102
+  // satirin hepsi NULL) ve yetim satir da yoktu - migration satir tasimadi.
+  //
+  // CASCADE'IN YERINI NE ALDI? Hicbir sey, cunku cascade zaten hic
+  // atesleniyordu: uygulama magazayi HARD DELETE etmiyor (deletedAt ile
+  // yumusak siliniyor). Bir gun hard delete gelirse o magazanin rol
+  // satirlarini silmek SILEN KODUN isidir. Yetim satir kalsa bile yetki
+  // SIZMAZ: erisebilir() var olan bir Store NESNESIYLE cagriliyor, ortada
+  // magaza yoksa yetkilendirilecek nesne de yok.
+  //
+  // REFERANS DOGRULAMASI YAZMA KAPISINDA: storeId dolu satir yazan uc yol da
+  // (personelEkle / personelDurum / rolVer) once sahipVeyaYonetici ->
+  // getById(storeId) cagirir; magaza yoksa ya da silinmisse 404. FK'nin ilk
+  // kez yakalayacagi bir durum uygulamaya kadar hic gelmiyordu.
   //
   // KAPSAM KURALI (Faz 1 / C2): STORE_STAFF yalniz storeId DOLU yazilir; diger
   // 12 rol yalniz NULL. Bu kural DB'de degil, tek yazma kapisinda zorlanir -
@@ -567,7 +582,6 @@ model UserRole {
   // kalici drift uretirdi (ayni gerekceyle kismi unique indeks de reddedilmisti,
   // bkz. asagidaki nullable-unique notu). Bilincli kabul edilmis borctur.
   storeId String? @db.Uuid
-  store   Store?  @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 

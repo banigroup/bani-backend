@@ -1,0 +1,37 @@
+-- FAZ 0 / BORC PAKETI 1 — user_roles.storeId artik DUZ ID (FK sokuldu)
+--
+-- NEDEN: user_roles CEKIRDEK tablodur (kimlik/yetki; jwt.strategy ve
+-- common/rbac okur), stores TICARET dikeyinin tablosudur. Aradaki FK,
+-- schema.prisma'nin kendi yazili holding ilkesini ihlal ediyordu:
+--   "DIS baglar duz ID (holding ilkesi: baska dikeyin tablosuna FK/join yok)"
+-- Evden Eve ayni durumda FK kullanmiyor (tasitanId / tasiyanId duz ID).
+-- Bu FK, Faz 1/C2'de magaza kapsamli roller eklenirken fark edilmeden girdi.
+-- Kaldirilmasi, ileride stores'un ayri bir veritabanina tasinabilmesinin on
+-- sartidir - FK iki tablonun ayni veritabaninda olmasini zorunlu kilar.
+--
+-- KOLON DUSMUYOR: "storeId" UUID olarak, "user_roles_storeId_idx" indeksi
+-- olarak ve "user_roles_userId_role_storeId_key" bilesik tekil indeksin
+-- parcasi olarak AYNEN kalir. Yalnizca referans kisiti kalkar.
+--
+-- VERI KAYBI RISKI YOK: DROP CONSTRAINT satir silmez, kolon dusurmez, tip
+-- degistirmez. Uygulama oncesi canli olcum (28 Agu 2026):
+--   user_roles toplam 102 satir, "storeId" DOLU olan 0, yetim satir 0.
+-- Yani magaza kapsamli rol ozelligi canlida henuz hic kullanilmamisti.
+--
+-- KAYBEDILEN DAVRANIS: ON DELETE CASCADE. Pratikte kaybi yok, cunku uygulama
+-- magazayi HARD DELETE etmiyor - stores yumusak silme kullaniyor (deletedAt),
+-- src/ altinda tek bir store.delete/deleteMany cagrisi yok. Cascade bu yuzden
+-- hic ateslenmiyordu. Hard delete bir gun gelirse o magazanin rol satirlarini
+-- silmek SILEN KODUN sorumlulugudur.
+--
+-- YETKI SIZINTISI YOK: yetim bir rol satiri kalsa bile MarketService.erisebilir
+-- var olan bir Store NESNESIYLE cagriliyor; magaza yoksa yetkilendirilecek
+-- nesne de yok. JwtStrategy tarafinda yetim storeId yalnizca magazaRolleri
+-- haritasinda olu bir anahtar olur, izin kumesini degistirmez.
+--
+-- GERI ALMA (gerekirse):
+--   ALTER TABLE "user_roles" ADD CONSTRAINT "user_roles_storeId_fkey"
+--     FOREIGN KEY ("storeId") REFERENCES "stores"("id")
+--     ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "user_roles" DROP CONSTRAINT "user_roles_storeId_fkey";
