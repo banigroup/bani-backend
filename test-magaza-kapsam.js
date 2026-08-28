@@ -150,7 +150,21 @@ const auth = async (user) => jwt.validate({ sub: user.id, phone: user.phone, rol
     const geriAuth = await auth(personel);
     ok('A4 geri alindi (tek magaza kaldi)', Object.keys(geriAuth.magazaRolleri).length === 1);
 
-    console.log('\n A5) CASCADE — magaza silinince rol satiri da duser');
+    // FK SOKULDU (Faz 0 / borc paketi 1) — BEKLENTI TERSINE CEVRILDI.
+    // Eski hali "magaza silinince rol satiri da duser" idi; bunu user_roles ->
+    // stores FK'sinin ON DELETE CASCADE'i sagliyordu. O FK kaldirildi: cekirdek
+    // tablodan (user_roles) ticaret dikeyinin tablosuna (stores) FK, semanin
+    // kendi holding ilkesini ihlal ediyordu ve stores'un ileride ayri bir
+    // veritabanina tasinmasini imkansiz kiliyordu.
+    //
+    // YENI SOZLESME: satir DUSMEZ; yetim satiri temizlemek SILEN KODUN isidir.
+    // Bu blok artik uc seyi birden olcuyor:
+    //   1) magaza hard delete edilse de rol satiri KALIR,
+    //   2) kalan yetim satir YETKI SIZDIRMAZ (platform izin kumesi degismez;
+    //      erisebilir() zaten var olan bir Store NESNESI ister, olmayan bir
+    //      magazaya erisim uretemez),
+    //   3) temizligi uygulama yapar - test de ayni sozlesmeye uyar.
+    console.log('\n A5) FK YOK — magaza silinse de rol satiri KALIR (temizlik uygulamanin isi)');
     const gSeller = await prisma.seller.create({
       data: { ownerUserId: sahipA.id, sellerType: 'MARKET', legalName: `${ON} G`, displayName: `${ON} G`, status: 'ACTIVE' },
     });
@@ -161,9 +175,20 @@ const auth = async (user) => jwt.validate({ sub: user.id, phone: user.phone, rol
     const oncesi = await prisma.userRole.count({ where: { storeId: gecici.id } });
     await prisma.store.delete({ where: { id: gecici.id } });
     const sonrasi = await prisma.userRole.count({ where: { storeId: gecici.id } });
-    await prisma.seller.delete({ where: { id: gSeller.id } }).catch(() => {});
     ok('rol satiri yazildi', oncesi === 1, `${oncesi}`);
-    ok('magaza silinince rol satiri DUSTU', sonrasi === 0, `${oncesi} -> ${sonrasi}`);
+    ok('magaza silindi ama rol satiri KALDI (FK yok)', sonrasi === 1, `${oncesi} -> ${sonrasi}`);
+
+    // Yetim satir token'da OLU BIR ANAHTAR: platform izin kumesine dokunmaz.
+    const yetimAuth = await auth(personel);
+    ok('yetim satir platform rollerini DEGISTIRMEDI', sirala(yetimAuth.roles) === 'CUSTOMER', sirala(yetimAuth.roles));
+    ok('yetim storeId magazaRolleri haritasinda olu anahtar olarak duruyor',
+      Object.keys(yetimAuth.magazaRolleri).includes(gecici.id),
+      Object.keys(yetimAuth.magazaRolleri).map((k) => k.slice(0, 8)).join(','));
+
+    // TEMIZLIK UYGULAMANIN ISI — cascade'in yerini alan sey tam olarak bu.
+    const temizlenen = await prisma.userRole.deleteMany({ where: { storeId: gecici.id } });
+    ok('yetim satir uygulama tarafindan temizlendi', temizlenen.count === 1, `${temizlenen.count}`);
+    await prisma.seller.delete({ where: { id: gSeller.id } }).catch(() => {});
 
     // ---------------- BLOK B ----------------
     console.log('\n\nBLOK B — C4 ANAHTARI (C4 ONCESI KIRMIZIYDI, ARTIK BAGLAYICI)');
