@@ -1,5 +1,5 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
-import { SuperadminService } from './superadmin.service';
+import { HoldingService } from '../holding/holding.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
@@ -9,10 +9,13 @@ import { Permission } from '../common/rbac/permissions.enum';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @RequirePermissions(Permission.FINANCE_READ)
 export class SuperadminController {
-  constructor(private readonly superadmin: SuperadminService) { }
+  // SuperadminService BOSALDI ve SILINDI: tek metodu (overview) capraz-dikey
+  // bir okumaydi ve HoldingService.ticaretOzeti olarak oraya tasindi.
+  // Rota (/superadmin/overview), izin (FINANCE_READ) ve yanit govdesi AYNI.
+  constructor(private readonly holding: HoldingService) { }
 
   @Get('overview')
   overview() {
-    return this.superadmin.overview();
+    return this.holding.ticaretOzeti();
   }
 }
