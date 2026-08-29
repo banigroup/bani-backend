@@ -4,6 +4,7 @@ import { AddItemDto } from './dto/add-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { dikeyCoz } from '../common/domain/dikey-domain';
 
 // SEPET DIKEYE KILITLI (bkz. schema.prisma Cart @@unique([userId, businessUnit])).
@@ -33,12 +34,12 @@ export class CartController {
   }
 
   @Patch('items/:id')
-  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateItemDto) {
+  update(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateItemDto) {
     return this.cart.updateItem(user.id, id, dto.quantity);
   }
 
   @Delete('items/:id')
-  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  remove(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
     return this.cart.removeItem(user.id, id);
   }
 
