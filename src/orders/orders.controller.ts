@@ -5,6 +5,7 @@ import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
 import { OrdersService } from './orders.service';
 import { CheckoutDto } from './dto/checkout.dto';
@@ -35,12 +36,12 @@ export class OrdersController {
   // Not: 'store/:storeId' rotası ':id'den ÖNCE tanımlı olmalı
   @RequirePermissions(Permission.ORDER_MANAGE)
   @Get('store/:storeId')
-  storeOrders(@CurrentUser() user: AuthUser, @Param('storeId') storeId: string, @Query('status') status?: string) {
+  storeOrders(@CurrentUser() user: AuthUser, @Param('storeId', UuidParam) storeId: string, @Query('status') status?: string) {
     return this.orders.storeOrders(user, storeId, status);
   }
 
   @Get(':id')
-  getOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  getOne(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
     return this.orders.getOne(user, id);
   }
 
@@ -49,14 +50,14 @@ export class OrdersController {
   // geçişler audit'e girmez.
   @RequirePermissions(Permission.ORDER_MANAGE)
   @Patch(':id/status')
-  async updateStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateOrderStatusDto, @Req() req: Request) {
+  async updateStatus(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateOrderStatusDto, @Req() req: Request) {
     const r = await this.orders.updateStatus(user, id, dto.status);
     await this.audit.record({ actorId: user.id, action: 'order.status.update', entity: 'Order', entityId: id, ip: req.ip, metadata: { to: dto.status } });
     return r;
   }
 
   @Post(':id/cancel')
-  async cancel(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async cancel(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
     const r = await this.orders.cancel(user, id);
     await this.audit.record({ actorId: user.id, action: 'order.cancel', entity: 'Order', entityId: id, ip: req.ip });
     return r;
