@@ -24,6 +24,28 @@ export class VaryantOlusturDto {
   @IsOptional() @IsIn(['A', 'B']) satisModeli?: string;
 }
 
+// BACKLOG — VARYANT/SECENEK ONAY KAPISI YOK (acik, mudahale bekliyor).
+//
+// Asagidaki uc DTO'daki isActive (VaryantGuncelleDto, SecenekGrubuDto,
+// SecenekDto) saticinin yazabildigi alanlardir: updateVaryant /
+// updateSecenekGrubu / updateSecenek yalnizca market.assertOwner'dan gecirip
+// degeri dogrudan prisma update'e yazar. Urun tarafindaki approve/reject
+// kapisinin (PRODUCT_APPROVE + assertPlatformYoneticisi + magazayaBagliMi +
+// BR-001) varyant/secenek karsiligi YOKTUR.
+//
+// Bu bir bypass DEGIL, kapsanmamis alandir: urun onaylanmadan varyanti da
+// gorunmez, cunku vitrin sorgusu urunun kendi isActive'ine bakar. Acik olan
+// senaryo su: ZATEN ONAYLANMIS bir urune satici sonradan aktif varyant/secenek
+// ekleyebilir ve bu icerik admin onayindan gecmeden vitrine cikar. Bu,
+// "hepsi admin onayindan gececek" karariyla celisir.
+//
+// Bugun aciliyeti yok: canlida 0 varyant var. Varyant kullanilmaya
+// BASLANMADAN once karar verilmeli — ya varyant/secenek icin de approve
+// kapisi acilir, ya da isActive bu DTO'lardan cikarilip yayina alma
+// urun onayina baglanir (urun tarafinda b67ab58'de yapilanin aynisi).
+//
+// Ilgili: b67ab58 (urun isActive'i UpdateProductDto'dan cikarildi),
+// catalog.service.ts updateVaryant / updateSecenekGrubu / updateSecenek.
 export class VaryantGuncelleDto extends VaryantOlusturDto {
   @IsOptional() @IsString() @MaxLength(120) declare name: string;
   @IsOptional() @IsBoolean() isActive?: boolean;

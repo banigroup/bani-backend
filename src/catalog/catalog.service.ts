@@ -621,6 +621,8 @@ export class CatalogService {
         ...(dto.barcode !== undefined ? { barcode: dto.barcode } : {}),
         ...(dto.stock !== undefined ? { stock: dto.stock } : {}),
         ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        // BACKLOG: isActive'i satici assertOwner ile yaziyor, onay kapisi yok.
+        // Gerekce ve karar secenekleri: dto/varyant.dto.ts, VaryantGuncelleDto ustu.
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
         ...(fiyatGirdisiVar
           ? this.varyantFiyatAlanlari(varyant.product.store, varyant.product, dto)
