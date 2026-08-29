@@ -89,6 +89,23 @@ export class MarketController {
     return r;
   }
 
+  // B1 — admin inceleme kuyrugu. Varsayilan UNDER_REVIEW.
+  // Asagidaki iki uc sellerId ISTIYOR ama admin o id'yi hicbir yerden
+  // ogrenemiyordu; bu uc o boslugu kapatir. Yetki asagidakilerle AYNI:
+  // STORE_MANAGE_ALL + serviste platform yoneticisi kontrolu.
+  // Salt okuma oldugu icin audit YOK (mevcut GET uclariyla ayni).
+  @Get('sellers')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_MANAGE_ALL)
+  saticiListesi(
+    @CurrentUser() user: AuthUser,
+    @Query('status') status?: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+  ) {
+    return this.market.saticiListele(user.roles, status, Number(skip) || 0, Number(take) || 50);
+  }
+
   @Patch('sellers/:id/status')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)

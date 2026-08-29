@@ -471,6 +471,50 @@ export class MarketService {
   }
 
   /**
+   * B1 — ONAY BEKLEYEN SATICILAR (admin inceleme kuyrugu).
+   *
+   * Bugune kadar UNDER_REVIEW'daki saticilari listeleyen hicbir uc yoktu:
+   * saticiDurumDegistir ve saticiDogrulama sellerId ISTIYOR ama admin o id'yi
+   * hicbir yerden ogrenemiyordu. Bu uc o boslugu kapatir.
+   *
+   * Varsayilan UNDER_REVIEW - ekranin asil isi bu. status verilirse diger
+   * durumlar da listelenir (NEEDS_FIX takibi, SUSPENDED denetimi).
+   *
+   * VERGI KIMLIGI DONMEZ: taxIdentifier sifreli bloktur ve listede isi yoktur;
+   * saticim() ile ayni secim kullanilir, ekranda taxLast4 yeter.
+   *
+   * Siralama updatedAt ARTAN: en uzun bekleyen basta. Kuyruk mantigi budur;
+   * createdAt olsaydi NEEDS_FIX'ten donen satici sirasini kaybederdi.
+   */
+  async saticiListele(roles: Role[], status?: string, skip = 0, take = 50) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Satıcı listesi için admin yetkisi gerekli');
+    }
+    if (status !== undefined && !(status in SellerStatus)) {
+      throw new BadRequestException(`Geçersiz satıcı durumu: ${status}`);
+    }
+    const durum = (status as SellerStatus) ?? SellerStatus.UNDER_REVIEW;
+    const where = { status: durum, deletedAt: null };
+
+    const [toplam, kayitlar] = await this.prisma.$transaction([
+      this.prisma.seller.count({ where }),
+      this.prisma.seller.findMany({
+        where,
+        select: {
+          id: true, sellerType: true, legalName: true, displayName: true, taxLast4: true,
+          status: true, verification: true, verificationExpiresAt: true,
+          createdAt: true, updatedAt: true,
+          stores: { select: { id: true, name: true, slug: true, businessUnit: true } },
+        },
+        orderBy: { updatedAt: 'asc' },
+        skip: Math.max(0, skip),
+        take: Math.min(Math.max(1, take), 100),
+      }),
+    ]);
+    return { durum, toplam, kayitlar };
+  }
+
+  /**
    * BR-014 — magaza su an acik mi.
    *
    * KAYIT YOKSA ACIK SAYILIR: aksi halde store_hours tablosu eklendigi an canli
