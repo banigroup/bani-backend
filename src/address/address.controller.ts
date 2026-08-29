@@ -4,6 +4,7 @@ import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam } from '../common/pipes/uuid-param.pipe';
 
 @Controller('addresses')
 @UseGuards(JwtAuthGuard)
@@ -21,17 +22,17 @@ export class AddressController {
   }
 
   @Patch(':id')
-  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateAddressDto) {
+  update(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateAddressDto) {
     return this.address.update(user.id, id, dto);
   }
 
   @Patch(':id/default')
-  setDefault(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  setDefault(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
     return this.address.setDefault(user.id, id);
   }
 
   @Delete(':id')
-  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  remove(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
     return this.address.remove(user.id, id);
   }
 }

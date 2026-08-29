@@ -5,6 +5,7 @@ import { PartnerService } from "./partner.service";
 import { CreateBasvuruDto } from "./dto/create-basvuru.dto";
 import { PartnerBasvuruTip, PartnerBasvuruDurum } from "@prisma/client";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
+import { UuidParam } from "../common/pipes/uuid-param.pipe";
 import { PermissionsGuard } from "../common/rbac/permissions.guard";
 import { RequirePermissions } from "../common/rbac/permissions.decorator";
 import { Permission } from "../common/rbac/permissions.enum";
@@ -59,7 +60,7 @@ export class PartnerController {
   @Patch(":id/durum")
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)
-  durumGuncelle(@Param("id") id: string, @Body() body: { durum: PartnerBasvuruDurum; not?: string }) {
+  durumGuncelle(@Param("id", UuidParam) id: string, @Body() body: { durum: PartnerBasvuruDurum; not?: string }) {
     return this.partner.durumGuncelle(id, body.durum, body.not);
   }
 }
