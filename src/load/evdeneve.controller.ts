@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/rbac/roles.guard';
 import { Roles } from '../common/rbac/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
 import { EvdenEveService } from './evdeneve.service';
 import { EvIlaniOlusturDto } from './dto/ev-ilani-olustur.dto';
@@ -40,7 +41,7 @@ export class EvdenEveController {
   }
 
   @Patch('ilan/:id/ucret-bildir')
-  async ucretBildir(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: EvUcretBildirDto, @Req() req: Request) {
+  async ucretBildir(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: EvUcretBildirDto, @Req() req: Request) {
     const r = await this.ev.ucretBildir(user, id, dto.dekont);
     await this.audit.record({ actorId: user.id, action: 'load.ev.ucretBildir', entity: 'EvIlani', entityId: id, ip: req.ip });
     return r;
@@ -52,7 +53,7 @@ export class EvdenEveController {
   }
 
   @Patch('ilan/:id/ucret-onay')
-  async ucretOnay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  async ucretOnay(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
     const r = await this.ev.ucretOnayla(user, id);
     await this.audit.record({ actorId: user.id, action: 'load.ev.ucretOnay', entity: 'EvIlani', entityId: id, metadata: { sigortaTalebi: !!(r as any)?.sigortaTalebi } });
     return r;
@@ -80,21 +81,21 @@ export class EvdenEveController {
   }
 
   @Patch('teklif/:id/kabul')
-  async kesinFiyatKabul(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async kesinFiyatKabul(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
     const r = await this.ev.kesinFiyatKabul(user, id, req.ip);
     await this.audit.record({ actorId: user.id, action: 'load.ev.kabul', entity: 'EvTeklif', entityId: id, ip: req.ip });
     return r;
   }
 
   @Patch('ilan/:id/teslim-beyan')
-  async teslimBeyan(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async teslimBeyan(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
     const r = await this.ev.teslimBeyan(user, id);
     await this.audit.record({ actorId: user.id, action: 'load.ev.teslimBeyan', entity: 'EvIlani', entityId: id, ip: req.ip });
     return r;
   }
 
   @Patch('ilan/:id/teslim-onay')
-  async teslimOnay(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async teslimOnay(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
     const r = await this.ev.teslimOnay(user, id);
     await this.audit.record({ actorId: user.id, action: 'load.ev.teslimOnay', entity: 'EvIlani', entityId: id, ip: req.ip });
     return r;
@@ -113,7 +114,7 @@ export class EvdenEveController {
   }
 
   @Post('donus/:id/davet')
-  async donusDavet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DonusDavetDto, @Req() req: Request) {
+  async donusDavet(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: DonusDavetDto, @Req() req: Request) {
     const r = await this.ev.donusDavet(user, id, dto.evIlaniId);
     await this.audit.record({ actorId: user.id, action: 'load.ev.donusDavet', entity: 'DonusYukuIlani', entityId: id, ip: req.ip });
     return r;
@@ -140,14 +141,14 @@ export class EvdenEveController {
   }
 
   @Patch('ilan/:id/degerlendir')
-  async degerlendir(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body('puan') puan: number, @Req() req: Request) {
+  async degerlendir(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body('puan') puan: number, @Req() req: Request) {
     const r = await this.ev.degerlendir(user, id, puan);
     await this.audit.record({ actorId: user.id, action: 'load.ev.degerlendir', entity: 'EvIlani', entityId: id, ip: req.ip });
     return r;
   }
 
   @Get('ilan/:id')
-  ilanDetay(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  ilanDetay(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
     return this.ev.ilanDetay(user, id);
   }
 }
