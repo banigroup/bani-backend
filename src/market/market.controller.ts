@@ -12,6 +12,8 @@ import { UpdateStoreDto } from './dto/update-store.dto';
 import { PersonelEkleDto, PersonelDurumDto } from './dto/store-user.dto';
 import { RolAtaDto } from './dto/rol-ata.dto';
 import { SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
+import { SaticiSozlesmeOnaylaDto } from './dto/sozlesme.dto';
+import type { SozlesmeTipi } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
@@ -188,6 +190,32 @@ export class MarketController {
   async belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: BelgeReddetDto, @Req() req: Request) {
     const r = await this.market.belgeReddet(user.roles, id, dto.gerekce);
     await this.audit.record({ actorId: user.id, action: 'seller.belge.red', entity: 'SaticiBelge', entityId: id, ip: req.ip, metadata: { gerekce: dto.gerekce ?? null, verification: r.satici.verification } });
+    return r;
+  }
+
+  // ---------------- SATICI SOZLESMELERI ----------------
+  // Cekirdek SozlesmeService zaten geneldi; eksik olan ERISIMDI. Mevcut uclar
+  // LoadController icinde ve o sinif @Roles(CARRIER, LOAD_CUSTOMER) ile kilitli.
+  // O kilide DOKUNULMADI - satici icin burada kendi uclari aciliyor.
+  // Onaylanabilir tipler serviste beyaz listeyle sinirli (SATICI_SOZLESMELERI).
+
+  @Get('seller/sozlesme/:tip')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_READ)
+  saticiSozlesmeDurum(@CurrentUser() user: AuthUser, @Param('tip') tip: SozlesmeTipi) {
+    return this.market.saticiSozlesmeDurumu(user.id, tip);
+  }
+
+  @Post('seller/sozlesme/onayla')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  async saticiSozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SaticiSozlesmeOnaylaDto, @Req() req: Request) {
+    // IP ve cihaz KANITTIR: istemciden degil sunucudan alinir
+    // (load.controller'daki sozlesme onayiyla ayni desen).
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip;
+    const cihaz = req.headers['user-agent'];
+    const r = await this.market.saticiSozlesmeOnayla(user.id, dto.sozlesmeTipi, ip, cihaz);
+    await this.audit.record({ actorId: user.id, action: 'seller.sozlesme.onay', entity: 'SozlesmeOnay', entityId: r.id, ip, metadata: { tip: dto.sozlesmeTipi, surum: r.surum } });
     return r;
   }
 

@@ -1382,6 +1382,13 @@ enum SozlesmeTipi {
   YUK_VEREN // yuk veren (LOAD_CUSTOMER) uyelik sozlesmesi
   EVDEN_EVE_TASIYAN // evden eve: tasiyan sozlesmesi (kesif sonrasi kabul aninda)
   EVDEN_EVE_TASITAN // evden eve: tasitan sozlesmesi (kesif sonrasi kabul aninda)
+
+  // SATICI TARAFI — ikiye AYRILDI, tek tip yapilmadi:
+  // uyelik metni nadiren, komisyon sartlari sik degisir. Tek tip olsaydi her
+  // komisyon orani degisikligi uyelik sozlesmesinin de yeniden onaylanmasini
+  // gerektirirdi (SozlesmeVersiyon tip basina tek aktif surum tutar).
+  SATICI // satici uyelik sozlesmesi
+  SATICI_KOMISYON // satici komisyon sartlari (oran degisince yeni surum)
 }
 
 model SozlesmeOnay {

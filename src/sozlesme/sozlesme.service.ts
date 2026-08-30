@@ -13,6 +13,11 @@ export class SozlesmeService {
     [SozlesmeTipi.YUK_VEREN]: 'Yük Veren',
     [SozlesmeTipi.EVDEN_EVE_TASIYAN]: 'Evden Eve Taşıyan',
     [SozlesmeTipi.EVDEN_EVE_TASITAN]: 'Evden Eve Taşıtan',
+    // Record<SozlesmeTipi, string> TAM KAPSAMA zorluyor: enum'a deger eklenince
+    // bu dosya derlenmiyor. Kasitli bir ag - eksik ad, kullaniciya ham enum
+    // adiyla hata gosterilmesi demek olurdu (kontrol() bu adi mesajda kullaniyor).
+    [SozlesmeTipi.SATICI]: 'Satıcı Üyelik',
+    [SozlesmeTipi.SATICI_KOMISYON]: 'Satıcı Komisyon Şartları',
   };
 
   private async aktifVersiyon(tip: SozlesmeTipi) {

@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
-import { Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum } from '@prisma/client';
+import { Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
+import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { SellerStatusService } from './seller-status.service';
 import { sifrele, son4 } from '../common/crypto/gizli-alan';
 import { slugify, randomSuffix } from '../common/util/slug';
@@ -29,6 +30,7 @@ export class MarketService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly saticiDurum: SellerStatusService,
+    private readonly sozlesme: SozlesmeService,
   ) {}
 
   // SATICI DURUMU VITRINI ETKILER: satici ACTIVE degilse magazalari musteriye
@@ -649,6 +651,56 @@ export class MarketService {
     });
     const satici = await this.dogrulamaVerisiniTazele(belge.sellerId);
     return { belge: guncel, satici };
+  }
+
+  // ---------------- SATICI SOZLESMELERI ----------------
+  //
+  // Cekirdek SozlesmeService yeniden yazilmadi: zaten geneldi (userId + tip
+  // aliyor, Load'a hicbir bagi yok). Eksik olan tek sey ERISIMDI - uclar
+  // LoadController icindeydi ve o sinif @Roles(CARRIER, LOAD_CUSTOMER) ile
+  // kilitli. O kilide DOKUNULMADI; satici icin market tarafinda kendi uclari
+  // acildi (mevcut market deseni: izin tabanli).
+
+  /**
+   * SATICININ ONAYLAYABILECEGI TIPLER — beyaz liste.
+   * Uc, SozlesmeTipi'nin tamamini kabul etseydi satici TASIYICI ya da
+   * YUK_VEREN sozlesmesini onaylayabilirdi; onay kaydi hukuki kanit oldugu
+   * icin bu ciddi bir kirlilik olurdu. Ayni beyaz liste deseni
+   * MAGAZA_ROLU_IZIN_BEYAZ_LISTESI'nde de kullaniliyor.
+   */
+  private readonly SATICI_SOZLESMELERI: SozlesmeTipi[] = [
+    SozlesmeTipi.SATICI,
+    SozlesmeTipi.SATICI_KOMISYON,
+  ];
+
+  private saticiSozlesmesiMi(tip: SozlesmeTipi) {
+    if (!this.SATICI_SOZLESMELERI.includes(tip)) {
+      throw new BadRequestException(`Bu sözleşme tipi satıcı tarafına ait değil: ${tip}`);
+    }
+  }
+
+  /**
+   * Satici sozlesme durumu. Satici kaydi ARANIR: sozlesme satici sifatiyla
+   * onaylanir, magaza personeli kendi adina onaylayamaz.
+   *
+   * Ilgili tip icin sozlesme_versiyonlari'nda aktif surum yoksa cekirdek
+   * servis 503 doner - metin girisi ayri bir is (bkz. migration notu).
+   */
+  async saticiSozlesmeDurumu(userId: string, tip: SozlesmeTipi) {
+    this.saticiSozlesmesiMi(tip);
+    await this.saticimHam(userId);
+    return this.sozlesme.durum(userId, tip);
+  }
+
+  /**
+   * Satici sozlesme onayi. IP ve cihaz KANITTIR, istemciden degil sunucudan
+   * alinir (load.controller'daki ayni desen). Cekirdek servis idempotent:
+   * ayni surum ikinci kez onaylanirsa mevcut kayit doner.
+   */
+  async saticiSozlesmeOnayla(userId: string, tip: SozlesmeTipi, ip?: string, cihaz?: string) {
+    this.saticiSozlesmesiMi(tip);
+    await this.saticimHam(userId);
+    return this.sozlesme.onayla(userId, tip, ip, cihaz);
   }
 
   /**
