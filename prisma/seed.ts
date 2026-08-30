@@ -180,6 +180,12 @@ async function main() {
           slug: p.slug,
           price: p.price,
           stock: 100,
+          // API'de yeni urun onay bekler (catalog.service createProduct ->
+          // isActive: false). Burada alan verilmezse sema varsayilani
+          // @default(true) devreye girer ve seed urunu onay kapisini
+          // atlayarak dogrudan vitrine cikar. update'e EKLENMEZ: tekrar
+          // seed atmak onaylanmis urunu yayindan indirmemeli.
+          isActive: false,
         },
       });
       productCount++;
