@@ -419,11 +419,57 @@ model Seller {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  stores Store[]
+  stores   Store[]
+  belgeler SaticiBelge[]
 
   @@index([ownerUserId])
   @@index([status])
   @@map("sellers")
+}
+
+// SATICI KYC BELGELERI — load_belgeleri (LoadBelge) deseninin satici karsiligi.
+//
+// AYRI ENUM, ORTAK DEGIL: LoadBelgeTipi tasimaciliga ozgu (EHLIYET, SRC,
+// K_BELGE, ARAC_RUHSAT) ve satici icin anlamsiz. Ortak enum, iki tarafin
+// listesini birbirine kilitler; her yeni satici belgesi Load ekranlarinda da
+// belirirdi.
+//
+// VERGI NO ICIN AYRI DOGRULAMA ALANI ACILMADI: satici tarafinda "vergi no
+// dogrulandi" durumu, VERGI_LEVHASI belgesinin admin tarafindan ONAYLANDI'ya
+// alinmasidir - canli bir GIB cagrisi degil. Kural BaniLoad'da zaten boyle
+// isliyor. Sonuc Seller.verification'a yazilir, ikinci bir alan tutulmaz.
+enum SaticiBelgeTipi {
+  VERGI_LEVHASI
+  IMZA_SIRKULERI
+  TICARET_SICIL_GAZETESI
+  FAALIYET_BELGESI
+  KIMLIK
+  IBAN_BELGESI
+  DIGER
+}
+
+enum SaticiBelgeDurum {
+  BEKLIYOR
+  ONAYLANDI
+  REDDEDILDI
+}
+
+model SaticiBelge {
+  id         String           @id @default(uuid()) @db.Uuid
+  seller     Seller           @relation(fields: [sellerId], references: [id])
+  sellerId   String           @db.Uuid
+  tip        SaticiBelgeTipi
+  dosyaUrl   String
+  durum      SaticiBelgeDurum @default(BEKLIYOR)
+  redGerekce String?
+  deletedAt  DateTime?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@index([sellerId])
+  // Admin inceleme kuyrugu BEKLIYOR uzerinden sorgulanir (B1'deki desen).
+  @@index([durum])
+  @@map("satici_belgeleri")
 }
 
 // BOLGE: Merkez -> Bolge -> Alt bolge (kendine referansli).

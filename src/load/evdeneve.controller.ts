@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { cloudinaryUpload } from './cloudinary.util';
+import { cloudinaryUpload } from '../common/upload/cloudinary.util';
 import { Request } from 'express';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';

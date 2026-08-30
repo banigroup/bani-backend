@@ -20,3 +20,9 @@ export class SaticiDogrulamaDto {
   // Onayda bitis tarihi verilir; tarih gecince kayit SURESI_DOLDU'ya duser.
   @IsOptional() @IsDateString() verificationExpiresAt?: string;
 }
+
+// Belge reddi. Gerekce ZORUNLU DEGIL ama verilirse saticiya gorunur
+// (satici_belgeleri.redGerekce) - "neden reddedildi" sorusunun tek cevabi budur.
+export class BelgeReddetDto {
+  @IsOptional() @IsString() @MaxLength(500) gerekce?: string;
+}

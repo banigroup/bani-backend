@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
-import { Role, SellerStatus } from '@prisma/client';
+import { Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { SellerStatusService } from './seller-status.service';
@@ -512,6 +512,143 @@ export class MarketService {
       }),
     ]);
     return { durum, toplam, kayitlar };
+  }
+
+  // ---------------- SATICI KYC BELGELERI ----------------
+  //
+  // load_belgeleri (LoadBelge) deseninin satici karsiligi. Vergi kimliginin
+  // "dogrulanmis" sayilmasi VERGI_LEVHASI belgesinin admin onayidir; canli bir
+  // GIB cagrisi YOK, ayri bir "vergi dogrulandi" alani da yok. Sonuc tek yere,
+  // Seller.verification'a yazilir.
+
+  /**
+   * Dogrulama icin ZORUNLU belge tipleri. Yeni zorunlu belge eklemek = bu
+   * diziye bir satir; dogrulamaVerisiniTazele kendiliginden uyar.
+   */
+  private readonly ZORUNLU_BELGELER: SaticiBelgeTipi[] = [SaticiBelgeTipi.VERGI_LEVHASI];
+
+  /**
+   * Saticinin dogrulama durumunu BELGELERDEN YENIDEN HESAPLAR.
+   *
+   * Tek tek "onayda ONAYLANDI yap / redde REDDEDILDI yap" yazilmadi: o kurgu
+   * ayni tipten ikinci bir belge reddedildiginde zaten onaylanmis saticinin
+   * durumunu haksiz yere dusururdu. Durum, belge kumesinin SAF FONKSIYONUDUR.
+   *
+   * verificationExpiresAt'a DOKUNULMAZ: bitis tarihi admin karari,
+   * saticiDogrulama ucundan yazilir (semadaki "Suresi Doldu sonuctur" notu).
+   *
+   * saticiDogrulama ile iliski: admin oradan elle durum yazabilir ve o deger
+   * BIR SONRAKI belge islemine kadar gecerlidir. Belgeler tek kaynak oldugu
+   * icin bilincli olarak boyle - iki kaynak birbiriyle celisirdi.
+   */
+  private async dogrulamaVerisiniTazele(sellerId: string) {
+    const belgeler = await this.prisma.saticiBelge.findMany({
+      where: { sellerId, deletedAt: null, tip: { in: this.ZORUNLU_BELGELER } },
+      select: { tip: true, durum: true },
+    });
+
+    const tamam = this.ZORUNLU_BELGELER.every((t) =>
+      belgeler.some((b) => b.tip === t && b.durum === SaticiBelgeDurum.ONAYLANDI),
+    );
+    const bekleyenVar = belgeler.some((b) => b.durum === SaticiBelgeDurum.BEKLIYOR);
+    const redVar = belgeler.some((b) => b.durum === SaticiBelgeDurum.REDDEDILDI);
+
+    const hedef: SellerVerification = tamam
+      ? SellerVerification.ONAYLANDI
+      : bekleyenVar
+        ? SellerVerification.BEKLIYOR
+        : redVar
+          ? SellerVerification.REDDEDILDI
+          : SellerVerification.EKSIK;
+
+    return this.prisma.seller.update({
+      where: { id: sellerId },
+      data: { verification: hedef },
+      select: { id: true, verification: true, verificationExpiresAt: true },
+    });
+  }
+
+  /** Satici kendi belgesini yukler. Dosya zaten Cloudinary'e gitmis, burada URL saklanir. */
+  async belgeEkle(userId: string, tip: string, dosyaUrl: string) {
+    const s = await this.saticimHam(userId);
+    if (!(tip in SaticiBelgeTipi)) throw new BadRequestException(`Geçersiz belge tipi: ${tip}`);
+    const belge = await this.prisma.saticiBelge.create({
+      data: { sellerId: s.id, tip: tip as SaticiBelgeTipi, dosyaUrl },
+    });
+    await this.dogrulamaVerisiniTazele(s.id);
+    return belge;
+  }
+
+  /** Saticinin kendi belgeleri. */
+  async belgelerim(userId: string) {
+    const s = await this.saticimHam(userId);
+    return this.prisma.saticiBelge.findMany({
+      where: { sellerId: s.id, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Admin: onay bekleyen belgeler. B1'deki listeleme deseniyle ayni. */
+  async bekleyenBelgeler(roles: Role[], skip = 0, take = 50) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Belge listesi için admin yetkisi gerekli');
+    }
+    const where = { durum: SaticiBelgeDurum.BEKLIYOR, deletedAt: null };
+    const [toplam, kayitlar] = await this.prisma.$transaction([
+      this.prisma.saticiBelge.count({ where }),
+      this.prisma.saticiBelge.findMany({
+        where,
+        // Satici ozeti: vergi kimligi SIFRELI blob oldugu icin donmez, taxLast4 yeter.
+        include: {
+          seller: {
+            select: {
+              id: true, sellerType: true, legalName: true, displayName: true,
+              taxLast4: true, status: true, verification: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' }, // en uzun bekleyen basta
+        skip: Math.max(0, skip),
+        take: Math.min(Math.max(1, take), 100),
+      }),
+    ]);
+    return { toplam, kayitlar };
+  }
+
+  /** Admin: belge onayi. Sonrasinda saticinin dogrulama durumu yeniden hesaplanir. */
+  async belgeOnayla(roles: Role[], belgeId: string) {
+    return this.belgeKarar(roles, belgeId, SaticiBelgeDurum.ONAYLANDI);
+  }
+
+  /** Admin: belge reddi. Gerekce kayda gecer; dogrulama durumu yeniden hesaplanir. */
+  async belgeReddet(roles: Role[], belgeId: string, gerekce?: string) {
+    return this.belgeKarar(roles, belgeId, SaticiBelgeDurum.REDDEDILDI, gerekce);
+  }
+
+  private async belgeKarar(
+    roles: Role[],
+    belgeId: string,
+    durum: SaticiBelgeDurum,
+    gerekce?: string,
+  ) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Belge kararı için admin yetkisi gerekli');
+    }
+    const belge = await this.prisma.saticiBelge.findFirst({
+      where: { id: belgeId, deletedAt: null },
+    });
+    if (!belge) throw new NotFoundException('Belge bulunamadı');
+
+    const guncel = await this.prisma.saticiBelge.update({
+      where: { id: belgeId },
+      data: {
+        durum,
+        // Red gerekcesi yalnizca redde anlamli; onayda eski gerekce temizlenir.
+        redGerekce: durum === SaticiBelgeDurum.REDDEDILDI ? (gerekce ?? null) : null,
+      },
+    });
+    const satici = await this.dogrulamaVerisiniTazele(belge.sellerId);
+    return { belge: guncel, satici };
   }
 
   /**

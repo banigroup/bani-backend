@@ -19,7 +19,7 @@ import { KomisyonBildirDto } from './dto/komisyon-bildir.dto';
 import { SozlesmeOnaylaDto } from './dto/sozlesme-onayla.dto';
 import { LoadProfilKaydetDto } from './dto/load-profil-kaydet.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { cloudinaryUpload } from './cloudinary.util';
+import { cloudinaryUpload } from '../common/upload/cloudinary.util';
 
 @Controller('load')
 @UseGuards(JwtAuthGuard, RolesGuard)
