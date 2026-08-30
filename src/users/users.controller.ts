@@ -10,6 +10,7 @@ import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam } from '../common/pipes/uuid-param.pipe';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -29,25 +30,25 @@ export class UsersController {
 
   @Get(':id')
   @RequirePermissions(Permission.USER_READ)
-  get(@Param('id') id: string) {
+  get(@Param('id', UuidParam) id: string) {
     return this.users.findById(id);
   }
 
   @Patch(':id')
   @RequirePermissions(Permission.USER_WRITE)
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+  update(@Param('id', UuidParam) id: string, @Body() dto: UpdateUserDto) {
     return this.users.update(id, dto);
   }
 
   @Patch(':id/roles')
   @RequirePermissions(Permission.USER_ROLE_ASSIGN)
-  assignRoles(@Param('id') id: string, @Body() dto: AssignRolesDto, @CurrentUser() actor: AuthUser, @Req() req: Request) {
+  assignRoles(@Param('id', UuidParam) id: string, @Body() dto: AssignRolesDto, @CurrentUser() actor: AuthUser, @Req() req: Request) {
     return this.users.assignRoles(id, dto.roles, { actorId: actor.id, ip: req.ip });
   }
 
   @Patch(':id/status')
   @RequirePermissions(Permission.USER_SUSPEND)
-  setStatus(@Param('id') id: string, @Body() dto: SetStatusDto, @CurrentUser() actor: AuthUser, @Req() req: Request) {
+  setStatus(@Param('id', UuidParam) id: string, @Body() dto: SetStatusDto, @CurrentUser() actor: AuthUser, @Req() req: Request) {
     return this.users.setStatus(id, dto.status as UserStatus, { actorId: actor.id, ip: req.ip });
   }
 }

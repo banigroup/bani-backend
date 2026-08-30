@@ -5,6 +5,7 @@ import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
 import { DeliveryService } from './delivery.service';
 import { AraciKurumDto } from './dto/araci-kurum.dto';
@@ -50,7 +51,7 @@ export class DeliveryController {
   // geçişler audit'e girmez.
   @RequirePermissions(Permission.DELIVERY_CLAIM)
   @Post(':id/claim')
-  async claim(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async claim(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
     const r = await this.delivery.claim(user, id);
     await this.audit.record({ actorId: user.id, action: 'delivery.claim', entity: 'Delivery', entityId: id, ip: req.ip });
     return r;
@@ -58,7 +59,7 @@ export class DeliveryController {
 
   @RequirePermissions(Permission.DELIVERY_CLAIM)
   @Post(':id/pickup')
-  async pickup(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async pickup(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
     const r = await this.delivery.pickup(user, id);
     await this.audit.record({ actorId: user.id, action: 'delivery.pickup', entity: 'Delivery', entityId: id, ip: req.ip });
     return r;
@@ -68,7 +69,7 @@ export class DeliveryController {
   // kapanmaz ve escrow dagitilmaz (bkz. delivery.service.deliver).
   @RequirePermissions(Permission.DELIVERY_CLAIM)
   @Post(':id/deliver')
-  async deliver(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: TeslimKoduDto, @Req() req: Request) {
+  async deliver(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: TeslimKoduDto, @Req() req: Request) {
     const r = await this.delivery.deliver(user, id, dto.teslimKod);
     await this.audit.record({ actorId: user.id, action: 'delivery.deliver', entity: 'Delivery', entityId: id, ip: req.ip });
     return r;
@@ -78,7 +79,7 @@ export class DeliveryController {
   // Rol kontrolü servis içinde (aracikurumaVer).
   @RequirePermissions(Permission.DELIVERY_MANAGE)
   @Patch(':id/aracikurum')
-  async aracikurum(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AraciKurumDto, @Req() req: Request) {
+  async aracikurum(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: AraciKurumDto, @Req() req: Request) {
     const r = await this.delivery.aracikurumaVer(user, id, dto.kargoFirmasi, dto.takipNo);
     await this.audit.record({ actorId: user.id, action: 'delivery.aracikurum', entity: 'Delivery', entityId: id, ip: req.ip, metadata: { kargoFirmasi: dto.kargoFirmasi, takipNo: dto.takipNo } });
     return r;
