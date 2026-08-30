@@ -13,6 +13,7 @@ import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidQuery } from '../common/pipes/uuid-param.pipe';
 
 @Controller('catalog')
 export class CatalogController {
@@ -30,7 +31,10 @@ export class CatalogController {
   @Get('stores/:storeId/products')
   products(
     @Param('storeId') storeId: string,
-    @Query('categoryId') categoryId?: string,
+    // categoryId dogrudan Category.id / Category.parentId (@db.Uuid) kosuluna
+    // giriyor (catalog.service.listProducts). Bu uc @Public - dogrulanmadigi
+    // surece gecersiz bir deger KIMLIKSIZ trafikle 500 uretebiliyordu.
+    @Query('categoryId', UuidQuery) categoryId?: string,
     @Query('skip') skip?: string,
     @Query('take') take?: string,
   ) {
