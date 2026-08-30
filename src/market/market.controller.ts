@@ -12,6 +12,7 @@ import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
 
 @Controller('market')
@@ -36,7 +37,7 @@ export class MarketController {
 
   @Public()
   @Get('stores/:id')
-  getById(@Param('id') id: string) {
+  getById(@Param('id', UuidParam) id: string) {
     return this.market.getById(id);
   }
 
@@ -57,7 +58,7 @@ export class MarketController {
   @Patch('stores/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateStoreDto, @Req() req: Request) {
+  update(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateStoreDto, @Req() req: Request) {
     return this.market.update(id, user.id, user.roles, dto, req.ip);
   }
 
@@ -92,7 +93,7 @@ export class MarketController {
   @Patch('sellers/:id/status')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)
-  async saticiDurum(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: SaticiDurumDto, @Req() req: Request) {
+  async saticiDurum(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: SaticiDurumDto, @Req() req: Request) {
     const r = await this.market.saticiDurumDegistir(user.roles, id, dto.status);
     await this.audit.record({ actorId: user.id, action: 'seller.status', entity: 'Seller', entityId: id, ip: req.ip, metadata: { to: dto.status } });
     return r;
@@ -101,7 +102,7 @@ export class MarketController {
   @Patch('sellers/:id/verification')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)
-  async saticiDogrulama(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: SaticiDogrulamaDto, @Req() req: Request) {
+  async saticiDogrulama(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: SaticiDogrulamaDto, @Req() req: Request) {
     const r = await this.market.saticiDogrulama(user.roles, id, dto.sonuc, dto.verificationExpiresAt ? new Date(dto.verificationExpiresAt) : undefined);
     await this.audit.record({ actorId: user.id, action: 'seller.verification', entity: 'Seller', entityId: id, ip: req.ip, metadata: { sonuc: dto.sonuc } });
     return r;
@@ -115,14 +116,14 @@ export class MarketController {
   @Get('stores/:id/users')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  personelListesi(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  personelListesi(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
     return this.market.personelListesi(id, user.id, user.roles);
   }
 
   @Post('stores/:id/users')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  async personelEkle(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: PersonelEkleDto, @Req() req: Request) {
+  async personelEkle(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: PersonelEkleDto, @Req() req: Request) {
     const r = await this.market.personelEkle(id, user.id, user.roles, dto.userId);
     // C4: metadata'ya kapsam ve rol eklendi — "kime, HANGI MAGAZADA, HANGI ROL
     // verildi" sorusu audit'ten cevaplanabilmeli.
@@ -135,8 +136,8 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_WRITE)
   async personelDurum(
     @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Param('userId') userId: string,
+    @Param('id', UuidParam) id: string,
+    @Param('userId', UuidParam) userId: string,
     @Body() dto: PersonelDurumDto,
     @Req() req: Request,
   ) {
@@ -158,8 +159,8 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_WRITE)
   async rolVer(
     @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Param('userId') userId: string,
+    @Param('id', UuidParam) id: string,
+    @Param('userId', UuidParam) userId: string,
     @Body() dto: RolAtaDto,
     @Req() req: Request,
   ) {
@@ -176,8 +177,10 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_WRITE)
   async rolAl(
     @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Param('userId') userId: string,
+    @Param('id', UuidParam) id: string,
+    @Param('userId', UuidParam) userId: string,
+    // :role BILEREK HAM: Role enum degeri, UUID DEGIL. Dogrulamasi serviste
+    // atanabilirRolDogrula() ile yapiliyor (beyaz liste disi -> 400).
     @Param('role') role: string,
     @Req() req: Request,
   ) {
