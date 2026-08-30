@@ -179,7 +179,7 @@ export class MarketController {
   @Patch('sellers/belgeler/:id/onayla')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)
-  async belgeOnayla(@CurrentUser() user: AuthUser, @Param('id') id: string, @Req() req: Request) {
+  async belgeOnayla(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
     const r = await this.market.belgeOnayla(user.roles, id);
     await this.audit.record({ actorId: user.id, action: 'seller.belge.onay', entity: 'SaticiBelge', entityId: id, ip: req.ip, metadata: { verification: r.satici.verification } });
     return r;
@@ -188,7 +188,7 @@ export class MarketController {
   @Patch('sellers/belgeler/:id/reddet')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)
-  async belgeReddet(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: BelgeReddetDto, @Req() req: Request) {
+  async belgeReddet(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: BelgeReddetDto, @Req() req: Request) {
     const r = await this.market.belgeReddet(user.roles, id, dto.gerekce);
     await this.audit.record({ actorId: user.id, action: 'seller.belge.red', entity: 'SaticiBelge', entityId: id, ip: req.ip, metadata: { gerekce: dto.gerekce ?? null, verification: r.satici.verification } });
     return r;
@@ -200,6 +200,9 @@ export class MarketController {
   // O kilide DOKUNULMADI - satici icin burada kendi uclari aciliyor.
   // Onaylanabilir tipler serviste beyaz listeyle sinirli (SATICI_SOZLESMELERI).
 
+  // :tip'e UuidParam BILEREK TAKILMADI — SozlesmeTipi enum degeri, UUID degil.
+  // a5ce23c'nin :role icin verdigi gerekcenin aynisi; dogrulama serviste
+  // (SATICI_SOZLESMELERI beyaz listesi: liste disi -> 400).
   @Get('seller/sozlesme/:tip')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_READ)
