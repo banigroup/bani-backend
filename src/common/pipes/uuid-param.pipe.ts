@@ -1,4 +1,4 @@
-import { BadRequestException, ParseUUIDPipe } from '@nestjs/common';
+import { ArgumentMetadata, BadRequestException, Injectable, ParseUUIDPipe, PipeTransform } from '@nestjs/common';
 
 /**
  * YOL PARAMETRESI UUID DOGRULAMASI — tek ortak ornek.
@@ -25,3 +25,33 @@ import { BadRequestException, ParseUUIDPipe } from '@nestjs/common';
 export const UuidParam = new ParseUUIDPipe({
   exceptionFactory: () => new BadRequestException('Geçersiz kimlik biçimi (UUID bekleniyor)'),
 });
+
+/**
+ * OPSIYONEL SORGU PARAMETRESI ICIN UUID DOGRULAMASI.
+ *
+ * Yol parametresi ya vardir ya rota eslesmez; SORGU parametresi ise
+ * OLMAYABILIR. UuidParam'i dogrudan bir @Query'ye takmak, parametreyi
+ * gondermeyeni de 400'e dusururdu.
+ *
+ * ParseUUIDPipe'in `optional: true` SECENEGI TEK BASINA YETMIYOR: kaynak
+ * koddaki kosul `isNil(value)`, yani yalnizca undefined/null'i atlar. BOS
+ * STRING nil DEGILDIR - `?categoryId=` gonderen bir istemci (ornegin "tum
+ * kategoriler" secili bir acilir liste) bugun sorunsuz calisirken 400 almaya
+ * baslardi. Bugunku davranis: bos string falsy oldugu icin filtre hic
+ * uygulanmiyor (catalog.service.listProducts). Bu sarmalayici o davranisi
+ * AYNEN korur: bos string "hic gonderilmemis" sayilir.
+ *
+ * Dogrulama isini UuidParam'a devrediyor - ikinci bir UUID kurali/mesaji
+ * uretilmiyor. Dizi gelirse (`?categoryId=a&categoryId=b`) ParseUUIDPipe'in
+ * isString kontrolu devreye girer ve yine 400 doner, 500 DEGIL.
+ */
+@Injectable()
+class OpsiyonelUuidPipe implements PipeTransform<unknown, Promise<string | undefined>> {
+  async transform(value: unknown, metadata: ArgumentMetadata): Promise<string | undefined> {
+    if (value === undefined || value === null || value === '') return undefined;
+    return UuidParam.transform(value as string, metadata);
+  }
+}
+
+/** UuidParam'in opsiyonel kardesi; @Query icin. Durumsuz, tek ornek paylasilir. */
+export const UuidQuery = new OpsiyonelUuidPipe();
