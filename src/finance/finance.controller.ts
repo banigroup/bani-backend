@@ -2,6 +2,7 @@
 import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { FinanceService } from './finance.service';
+import { HoldingService } from '../holding/holding.service';
 import { TopupDto } from './dto/topup.dto';
 import { TopupBaslatDto, TopupDogrulaDto } from './dto/topup-odeme.dto';
 import { WithdrawDto } from './dto/withdraw.dto';
@@ -15,7 +16,12 @@ import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorat
 @Controller('finance')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class FinanceController {
-  constructor(private readonly finance: FinanceService) { }
+  constructor(
+    private readonly finance: FinanceService,
+    // Rapor govdesi HoldingService'e tasindi (Faz 0 / paket 2); rota, izin ve
+    // yanit ayni kaldi. Bkz. src/holding/holding.service.ts basligi.
+    private readonly holding: HoldingService,
+  ) { }
 
   @RequirePermissions(Permission.WALLET_READ)
   @Get('wallet')
@@ -86,7 +92,7 @@ export class FinanceController {
       const d = new Date(s);
       return isNaN(d.getTime()) ? undefined : d;
     };
-    return this.finance.businessUnitReport(parse(from), parse(to));
+    return this.holding.dikeyPnl(parse(from), parse(to));
   }
 }
 

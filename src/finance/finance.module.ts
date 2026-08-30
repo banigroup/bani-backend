@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HoldingModule } from '../holding/holding.module';
 import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 import { LedgerService } from './services/ledger.service';
@@ -11,6 +12,9 @@ import { IyzicoPaymentProvider } from './payment/iyzico-payment.provider';
 // hangi implementasyonun baglanacagini belirler. PAYMENT_AKTIF verilmezse
 // sandbox devrededir - yani gercek tahsilat yapilmaz.
 @Module({
+  // FinanceController'daki /report/business-units ucu HoldingService'e delege
+  // ediyor (Faz 0 / paket 2) - rota ve izin degismedi, yalnizca govde tasindi.
+  imports: [HoldingModule],
   controllers: [FinanceController],
   providers: [
     FinanceService, LedgerService, WalletService,

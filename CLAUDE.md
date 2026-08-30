@@ -26,3 +26,6 @@ Meta-kural: Karpaty mevcut çalışma disiplinini değiştirmek için değil, on
 6. HASSAS DOSYALAR (dokunmadan önce kullanıcıya söyle): src/main.ts, prisma/schema.prisma, src/instrument.ts, src/common/audit/*, src/auth/*.
 7. AUDIT TEK KAYNAK: kritik olay kayıtları controller katmanındadır — servise ikinci kayıt EKLENMEZ (çift kayıt yasağı).
 8. İLETİŞİM: Türkçe; tek seferde tek soru; kısa ve net; her işin sonunda kullanıcıya canlı kontrol listesi verilir.
+
+## Araç/altyapı notları
+- Strix (Docker + ChatGPT abonelik bağlı güvenlik tarama aracı) kurulu ama bilinçli olarak PASİF — ödeme entegrasyonu (iyzico gövdesi) veya auth/yetkilendirme sistemine dokunan büyük bir refaktör başladığında aktif taramaya alınmalı, o zamana kadar tetiklenmeyecek (sürekli çalışması tek-iş-odağı disiplinini bozar).

@@ -13,6 +13,7 @@ import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { UuidParam, UuidQuery } from '../common/pipes/uuid-param.pipe';
 
 @Controller('catalog')
 export class CatalogController {
@@ -21,7 +22,7 @@ export class CatalogController {
   // Herkese acik okuma
   @Public()
   @Get('stores/:storeId/categories')
-  categories(@Param('storeId') storeId: string, @Query('tumu') tumu?: string) {
+  categories(@Param('storeId', UuidParam) storeId: string, @Query('tumu') tumu?: string) {
     // tumu=1 -> yonetim ekrani: bos kategoriler de doner
     return this.catalog.listCategories(storeId, tumu === '1');
   }
@@ -29,8 +30,11 @@ export class CatalogController {
   @Public()
   @Get('stores/:storeId/products')
   products(
-    @Param('storeId') storeId: string,
-    @Query('categoryId') categoryId?: string,
+    @Param('storeId', UuidParam) storeId: string,
+    // categoryId dogrudan Category.id / Category.parentId (@db.Uuid) kosuluna
+    // giriyor (catalog.service.listProducts). Bu uc @Public - dogrulanmadigi
+    // surece gecersiz bir deger KIMLIKSIZ trafikle 500 uretebiliyordu.
+    @Query('categoryId', UuidQuery) categoryId?: string,
     @Query('skip') skip?: string,
     @Query('take') take?: string,
   ) {
@@ -41,7 +45,7 @@ export class CatalogController {
   // yalnizca vitrin fiyati. Kirilimi goren tekil-urun ucu asagidaki :id/detay.
   @Public()
   @Get('products/:id')
-  product(@Param('id') id: string) {
+  product(@Param('id', UuidParam) id: string) {
     return this.catalog.getPublicProduct(id);
   }
 
@@ -50,7 +54,7 @@ export class CatalogController {
   @Get('products/:id/detay')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  urunDetay(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  urunDetay(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.urunDetay(id, user.id, user.roles);
   }
 
@@ -58,7 +62,7 @@ export class CatalogController {
   @Get('stores/:storeId/pending')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  pending(@Param('storeId') storeId: string, @CurrentUser() user: AuthUser) {
+  pending(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser) {
     return this.catalog.listPending(storeId, user.id, user.roles);
   }
 
@@ -66,21 +70,21 @@ export class CatalogController {
   @Post('stores/:storeId/categories')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.CATEGORY_WRITE)
-  createCategory(@Param('storeId') storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateCategoryDto) {
+  createCategory(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateCategoryDto) {
     return this.catalog.createCategory(storeId, user.id, user.roles, dto);
   }
 
   @Post('stores/:storeId/products')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  createProduct(@Param('storeId') storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateProductDto) {
+  createProduct(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateProductDto) {
     return this.catalog.createProduct(storeId, user.id, user.roles, dto);
   }
 
   @Patch('products/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  updateProduct(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: UpdateProductDto) {
+  updateProduct(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: UpdateProductDto) {
     return this.catalog.updateProduct(id, user.id, user.roles, dto);
   }
 
@@ -92,21 +96,21 @@ export class CatalogController {
   @Patch('products/:id/approve')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_APPROVE)
-  approve(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  approve(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.approveProduct(id, user.id, user.roles);
   }
 
   @Patch('products/:id/reject')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_APPROVE)
-  reject(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  reject(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.rejectProduct(id, user.id, user.roles);
   }
 
   @Delete('products/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  removeProduct(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  removeProduct(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.removeProduct(id, user.id, user.roles);
   }
 
@@ -120,28 +124,28 @@ export class CatalogController {
   @Get('products/:id/variants')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantListesi(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  varyantListesi(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.varyantListesi(id, user.id, user.roles);
   }
 
   @Post('products/:id/variants')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantOlustur(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: VaryantOlusturDto) {
+  varyantOlustur(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: VaryantOlusturDto) {
     return this.catalog.varyantOlustur(id, user.id, user.roles, dto);
   }
 
   @Patch('variants/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantGuncelle(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: VaryantGuncelleDto) {
+  varyantGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: VaryantGuncelleDto) {
     return this.catalog.varyantGuncelle(id, user.id, user.roles, dto);
   }
 
   @Delete('variants/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantSil(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  varyantSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.varyantSil(id, user.id, user.roles);
   }
 
@@ -149,49 +153,49 @@ export class CatalogController {
   @Get('stores/:storeId/option-groups')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGruplari(@Param('storeId') storeId: string, @CurrentUser() user: AuthUser) {
+  secenekGruplari(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser) {
     return this.catalog.secenekGruplari(storeId, user.id, user.roles);
   }
 
   @Post('stores/:storeId/option-groups')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGrubuOlustur(@Param('storeId') storeId: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekGrubuDto) {
+  secenekGrubuOlustur(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekGrubuDto) {
     return this.catalog.secenekGrubuOlustur(storeId, user.id, user.roles, dto);
   }
 
   @Patch('option-groups/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGrubuGuncelle(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekGrubuDto) {
+  secenekGrubuGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekGrubuDto) {
     return this.catalog.secenekGrubuGuncelle(id, user.id, user.roles, dto);
   }
 
   @Delete('option-groups/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGrubuSil(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  secenekGrubuSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.secenekGrubuSil(id, user.id, user.roles);
   }
 
   @Post('option-groups/:id/options')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekEkle(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekDto) {
+  secenekEkle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekDto) {
     return this.catalog.secenekEkle(id, user.id, user.roles, dto);
   }
 
   @Patch('options/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGuncelle(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekDto) {
+  secenekGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekDto) {
     return this.catalog.secenekGuncelle(id, user.id, user.roles, dto);
   }
 
   @Delete('options/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekSil(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  secenekSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.secenekSil(id, user.id, user.roles);
   }
 
@@ -199,7 +203,7 @@ export class CatalogController {
   @Put('products/:id/option-groups')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  urunSecenekGruplari(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: UrunSecenekGruplariDto) {
+  urunSecenekGruplari(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: UrunSecenekGruplariDto) {
     return this.catalog.urunSecenekGruplari(id, user.id, user.roles, dto);
   }
 
@@ -207,28 +211,28 @@ export class CatalogController {
   @Get('products/:id/media')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaListesi(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  medyaListesi(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.medyaListesi(id, user.id, user.roles);
   }
 
   @Post('products/:id/media')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaEkle(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: MedyaEkleDto) {
+  medyaEkle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: MedyaEkleDto) {
     return this.catalog.medyaEkle(id, user.id, user.roles, dto);
   }
 
   @Patch('media/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaGuncelle(@Param('id') id: string, @CurrentUser() user: AuthUser, @Body() dto: MedyaGuncelleDto) {
+  medyaGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: MedyaGuncelleDto) {
     return this.catalog.medyaGuncelle(id, user.id, user.roles, dto);
   }
 
   @Delete('media/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaSil(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+  medyaSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
     return this.catalog.medyaSil(id, user.id, user.roles);
   }
 }
