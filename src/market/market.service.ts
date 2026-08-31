@@ -381,7 +381,19 @@ export class MarketService {
 
   // ---------------- SATICI (SELLER) ----------------
 
-  /** Kullanicinin satici kaydi. taxIdentifier COZULMEZ - yalnizca son 4 hane doner. */
+  /**
+   * Kullanicinin satici kaydi. taxIdentifier COZULMEZ - yalnizca son 4 hane doner.
+   *
+   * ACIK BAYRAGI ADDITIVE: her magazaya `acik` eklendi (BR-014, acikMi).
+   * Mevcut alanlarin HICBIRI degismedi, yalnizca yeni alan geldi - panel
+   * "magaza su an acik mi" bilgisini ayri bir uc acmadan gorebilsin diye.
+   *
+   * N+1 BILEREK KABUL EDILDI: acikMi magaza basina bir store_hours sorgusu
+   * yapiyor. Bir saticinin magaza sayisi tek haneli (canlida en fazla 5);
+   * tek sorguya indirmek icin saat mantigini SQL'e tasimak, BR-014'un gece
+   * yarisini asan mesai kuralini iki yerde tanimlamak demekti. Kural tek
+   * yerde (acikMi) kaliyor.
+   */
   async saticim(userId: string) {
     const s = await this.prisma.seller.findFirst({
       where: { ownerUserId: userId, deletedAt: null },
@@ -392,7 +404,9 @@ export class MarketService {
       },
     });
     if (!s) throw new NotFoundException('Satıcı kaydı bulunamadı');
-    return s;
+
+    const acikliklar = await Promise.all(s.stores.map((m) => this.acikMi(m.id)));
+    return { ...s, stores: s.stores.map((m, i) => ({ ...m, acik: acikliklar[i] })) };
   }
 
   private async saticimHam(userId: string) {
