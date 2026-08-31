@@ -13,6 +13,7 @@ import { PersonelEkleDto, PersonelDurumDto } from './dto/store-user.dto';
 import { RolAtaDto } from './dto/rol-ata.dto';
 import { SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
 import { SaticiSozlesmeOnaylaDto } from './dto/sozlesme.dto';
+import { SaticiSiparisSorguDto } from './dto/seller-orders.dto';
 import type { SozlesmeTipi } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
@@ -167,6 +168,21 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_READ)
   belgelerim(@CurrentUser() user: AuthUser) {
     return this.market.belgelerim(user.id);
+  }
+
+  // ---------------- SATICI SIPARIS OZETI ----------------
+  // Saticinin TUM magazalarindaki siparisler tek cagrida + sunucu tarafi
+  // toplamlar. /orders/store/:storeId ucuna DOKUNULMADI; o magaza basina
+  // calismaya devam ediyor (gerekce: MarketService.saticiSiparisleri basligi).
+  //
+  // Yetki ORDER_MANAGE: bu bir SIPARIS okumasi, magaza okumasi degil. Ayni
+  // izin OrdersController.storeOrders'ta da kullaniliyor - desen korundu.
+  // Salt okuma oldugu icin audit YOK (mevcut GET uclariyla ayni).
+  @Get('seller/orders')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.ORDER_MANAGE)
+  saticiSiparisleri(@CurrentUser() user: AuthUser, @Query() q: SaticiSiparisSorguDto) {
+    return this.market.saticiSiparisleri(user.id, q);
   }
 
   @Get('sellers/belgeler/bekleyenler')

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
-import { Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi } from '@prisma/client';
+import { Prisma, Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { SozlesmeService } from '../sozlesme/sozlesme.service';
@@ -588,6 +588,102 @@ export class MarketService {
       where: { sellerId: s.id, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  // ---------------- SATICI SIPARIS OZETI ----------------
+  //
+  // NEDEN BURADA, OrdersService'te DEGIL: OrdersModule zaten MarketModule'u
+  // import ediyor (magaza erisim kurali orada tek kaynak). Ters yonde bir
+  // import dairesel bagimlilik olurdu ve forwardRef gerektirirdi. Bu uc SALT
+  // OKUMA raporlamadir; siparisin YASAM DONGUSU (durum gecisi, iptal, escrow)
+  // OrdersService'te kalmaya devam eder - oraya dokunulmadi.
+  //
+  // /orders/store/:storeId ucundan FARKI ve varlik sebebi:
+  //   1) Satici basina TEK cagri. Demo Market'in 5 magazasi var; eski ucla
+  //      ekran 5 istek atmak zorundaydi.
+  //   2) TOPLAMLAR SUNUCUDA, listeden BAGIMSIZ. Eski uc take:100 ile sinirli
+  //      ve toplam donmuyordu; istemci 100 kaydi toplayinca hacim buyudugunde
+  //      KPI'lar sessizce yanlislasirdi. Burada aggregate ayri kosar, sayfalama
+  //      yalnizca listeyi etkiler.
+  //   3) Tarih araligi filtresi (eski ucta yok).
+  //
+  // MAGAZA ERISIM DENETIMI GEREKMEZ: magaza kumesi kullanicinin KENDI satici
+  // kaydindan turetiliyor, disaridan storeId alinmiyor. Baskasinin magazasini
+  // sorgulamanin yolu yok.
+  async saticiSiparisleri(
+    userId: string,
+    q: { from?: string; to?: string; status?: OrderStatus; skip?: number; take?: number },
+  ) {
+    const satici = await this.saticimHam(userId);
+
+    const magazalar = await this.prisma.store.findMany({
+      where: { sellerId: satici.id, deletedAt: null },
+      select: { id: true, name: true, businessUnit: true },
+    });
+    const magazaIdleri = magazalar.map((m) => m.id);
+
+    // Saticinin hic magazasi yoksa siparis de yoktur: bos ozet don, sorgu acma.
+    if (magazaIdleri.length === 0) {
+      return {
+        aralik: { from: q.from ?? null, to: q.to ?? null },
+        toplam: { siparisSayisi: 0, ciro: 0n, komisyon: 0n, hakedis: 0n },
+        durumDagilimi: {} as Record<string, number>,
+        magazalar: [],
+        kayitlar: [],
+      };
+    }
+
+    const placedAt =
+      q.from || q.to
+        ? { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to) } : {}) }
+        : undefined;
+
+    const where: Prisma.OrderWhereInput = {
+      storeId: { in: magazaIdleri },
+      deletedAt: null,
+      ...(placedAt ? { placedAt } : {}),
+      ...(q.status ? { status: q.status } : {}),
+    };
+
+    const take = Math.min(Math.max(1, q.take ?? 50), 100);
+    const skip = Math.max(0, q.skip ?? 0);
+
+    const [toplamlar, durumlar, magazaKirilimi, kayitlar] = await this.prisma.$transaction([
+      this.prisma.order.aggregate({
+        where,
+        _count: { _all: true },
+        _sum: { total: true, commission: true, netRevenue: true },
+      }),
+      // _count: true -> dogrudan sayi doner. orderBy bu Prisma surumunde
+      // groupBy icin ZORUNLU; siralamanin sonuca etkisi yok, gruplari
+      // deterministik sirada almak icin veriliyor.
+      this.prisma.order.groupBy({ by: ['status'], where, _count: true, orderBy: { status: 'asc' } }),
+      this.prisma.order.groupBy({ by: ['storeId'], where, _count: true, orderBy: { storeId: 'asc' } }),
+      this.prisma.order.findMany({
+        where,
+        orderBy: { placedAt: 'desc' },
+        skip,
+        take,
+        include: { items: { include: { secimler: true } } },
+      }),
+    ]);
+
+    const sayimlar = new Map(magazaKirilimi.map((g) => [g.storeId, g._count]));
+
+    return {
+      aralik: { from: q.from ?? null, to: q.to ?? null },
+      // BigInt'ler main.ts'teki toJSON yamasi sayesinde JSON'a STRING cikar.
+      // _sum kayit yoksa null doner; 0'a indiriliyor ki istemci null gormesin.
+      toplam: {
+        siparisSayisi: toplamlar._count._all,
+        ciro: toplamlar._sum.total ?? 0n,
+        komisyon: toplamlar._sum.commission ?? 0n,
+        hakedis: toplamlar._sum.netRevenue ?? 0n,
+      },
+      durumDagilimi: Object.fromEntries(durumlar.map((g) => [g.status, g._count])),
+      magazalar: magazalar.map((m) => ({ ...m, siparisSayisi: sayimlar.get(m.id) ?? 0 })),
+      kayitlar,
+    };
   }
 
   /** Admin: onay bekleyen belgeler. B1'deki listeleme deseniyle ayni. */
