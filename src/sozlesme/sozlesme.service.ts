@@ -40,7 +40,10 @@ export class SozlesmeService {
   async durum(userId: string, tip: SozlesmeTipi) {
     const v = await this.aktifVersiyon(tip);
     const onayli = await this.onayliMi(userId, tip);
-    return { sozlesmeTipi: tip, gecerliSurum: v.surum, onayli };
+    // metinHash ADDITIVE: mevcut uc alan (sozlesmeTipi/gecerliSurum/onayli)
+    // aynen korunuyor. Panel bu hash'i gomulu metnin hash'iyle karsilastirip
+    // fail-closed onay akisi kuruyor; v.metinHash zaten onayla()'da da kaynak.
+    return { sozlesmeTipi: tip, gecerliSurum: v.surum, onayli, metinHash: v.metinHash };
   }
 
   async onayla(userId: string, tip: SozlesmeTipi, ip?: string, cihaz?: string) {
