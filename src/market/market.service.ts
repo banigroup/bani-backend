@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
-import { Prisma, Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi, OrderStatus } from '@prisma/client';
+import { BusinessUnit, Prisma, Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { SozlesmeService } from '../sozlesme/sozlesme.service';
@@ -9,6 +9,7 @@ import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/rol-kontrol';
+import { DIKEY_DOMAIN } from '../common/domain/dikey-domain';
 
 /**
  * FAZ 1 / B2 — B2 UCLARINDAN ATANABILEN ROLLER. Kodda sabit, veride degil:
@@ -406,7 +407,17 @@ export class MarketService {
     if (!s) throw new NotFoundException('Satıcı kaydı bulunamadı');
 
     const acikliklar = await Promise.all(s.stores.map((m) => this.acikMi(m.id)));
-    return { ...s, stores: s.stores.map((m, i) => ({ ...m, acik: acikliklar[i] })) };
+    return {
+      ...s,
+      stores: s.stores.map((m, i) => ({ ...m, acik: acikliklar[i] })),
+      // DIKEY DOMAIN HARITASI YANITTA: panel "diger dikeylerinizde de magazaniz
+      // var" baglantisini kurabilmek icin dikey -> host eslemesine ihtiyac
+      // duyuyor. Haritayi panele KOPYALAMIYORUZ; dikey-domain.ts'in kendi
+      // basligi "markali bir domain eklenir/kaldirilirsa IKISI BIRDEN
+      // guncellenmelidir" diyor - ucuncu bir kopya o ikiliyi ucluye cikarir ve
+      // ayrisma riskini artirirdi. Kaynak tek, panel tuketici.
+      dikeyDomainleri: DIKEY_DOMAIN,
+    };
   }
 
   private async saticimHam(userId: string) {
@@ -624,14 +635,28 @@ export class MarketService {
   // MAGAZA ERISIM DENETIMI GEREKMEZ: magaza kumesi kullanicinin KENDI satici
   // kaydindan turetiliyor, disaridan storeId alinmiyor. Baskasinin magazasini
   // sorgulamanin yolu yok.
+  //
+  //   4) DIKEY SUZGECI (q.dikey) — OPSIYONEL, verilmezse davranis DEGISMEZ.
+  //      Suzgec MAGAZA KUMESINE uygulanir, siparis satirina degil: bir magaza
+  //      tek bir dikeye ait oldugu icin sonuc ayni, ama tek yerde durur ve
+  //      magazalar[] kirilimi de kendiliginden daralir. Toplamlar ayni where'i
+  //      paylastigi icin filtreli kumeye gore cikar - istemcinin toplam
+  //      hesaplamasina hic gerek kalmaz.
   async saticiSiparisleri(
     userId: string,
-    q: { from?: string; to?: string; status?: OrderStatus; skip?: number; take?: number },
+    q: {
+      from?: string;
+      to?: string;
+      status?: OrderStatus;
+      dikey?: BusinessUnit;
+      skip?: number;
+      take?: number;
+    },
   ) {
     const satici = await this.saticimHam(userId);
 
     const magazalar = await this.prisma.store.findMany({
-      where: { sellerId: satici.id, deletedAt: null },
+      where: { sellerId: satici.id, deletedAt: null, ...(q.dikey ? { businessUnit: q.dikey } : {}) },
       select: { id: true, name: true, businessUnit: true },
     });
     const magazaIdleri = magazalar.map((m) => m.id);
@@ -640,6 +665,7 @@ export class MarketService {
     if (magazaIdleri.length === 0) {
       return {
         aralik: { from: q.from ?? null, to: q.to ?? null },
+        dikey: q.dikey ?? null,
         toplam: { siparisSayisi: 0, ciro: 0n, komisyon: 0n, hakedis: 0n },
         durumDagilimi: {} as Record<string, number>,
         magazalar: [],
@@ -686,6 +712,8 @@ export class MarketService {
 
     return {
       aralik: { from: q.from ?? null, to: q.to ?? null },
+      // Uygulanan suzgec yanitta ECHO edilir: istemci ne suzuldugunu gorebilsin.
+      dikey: q.dikey ?? null,
       // BigInt'ler main.ts'teki toJSON yamasi sayesinde JSON'a STRING cikar.
       // _sum kayit yoksa null doner; 0'a indiriliyor ki istemci null gormesin.
       toplam: {
