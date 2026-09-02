@@ -388,6 +388,52 @@ export class CatalogService {
     return kdvOraniBul(urunAdi, kategoriAdi).oran; // otomatik tani; eslesme yoksa %20
   }
 
+  /**
+   * URUN FIYAT ALANLARI — FORMUL DIKEYE BAGLI.
+   *
+   * Vitrin formulu (kargo + komisyon + KDV gomulu) YALNIZCA Carsi'da calisir:
+   * satici NET fiyat verir, musterinin gordugu fiyat + muhasebe kirilimi uretilir.
+   * Diger dikeylerde (Yemek/Market/...) price saticinin girdigi SATIS fiyatidir ve
+   * kirilim yazilmaz. varyantFiyatAlanlari ile AYNI desen — ikinci formul yok.
+   *
+   * Formul oralarda da calisirken netFiyat=0 kayitlarda update fallback'i
+   * (dto.netFiyat ?? product.netFiyat = 0) price'i kargo tabaniyla eziyordu.
+   */
+  private urunFiyatAlanlari(
+    store: { businessUnit: BusinessUnit; commissionRate: number },
+    girdi: { netKurus: bigint; desi: number; weightKg: number; satisModeli: string; kdvOrani: number },
+    dtoPrice: number | undefined,
+  ): {
+    price?: bigint;
+    netFiyat?: bigint;
+    komisyonTutari?: bigint;
+    kargoTutari?: bigint;
+    malKdvTutari?: bigint;
+    hizmetKdvTutari?: bigint;
+  } {
+    if (store.businessUnit !== BusinessUnit.CARSI) {
+      return dtoPrice !== undefined ? { price: BigInt(dtoPrice) } : {};
+    }
+    const hesap = vitrinFiyatHesapla(
+      girdi.netKurus,
+      girdi.desi,
+      girdi.weightKg,
+      girdi.satisModeli,
+      girdi.kdvOrani,
+      BigInt(store.commissionRate) / 100n,
+    );
+    if (!hesap.ok) throw new BadRequestException(hesap.sebep);
+    return {
+      price: hesap.vitrinKurus, // musterinin gordugu fiyat (gomulu)
+      netFiyat: girdi.netKurus,
+      // --- Muhasebe kirilimi (price = netFiyat + asagidaki 4 kalem) ---
+      komisyonTutari: hesap.komisyonKurus,
+      kargoTutari: hesap.kargoKurus + hesap.yuvarlamaKurus, // yuvarlama farki kargoya
+      malKdvTutari: hesap.malKdvKurus, // saticinin KDV beyani
+      hizmetKdvTutari: hesap.hizmetKdvKurus, // platformun KDV beyani
+    };
+  }
+
   async createProduct(storeId: string, userId: string, roles: Role[], dto: CreateProductDto) {
     await this.market.assertOwner(storeId, userId, roles);
     const baseSlug = slugify(dto.name) || 'urun';
@@ -403,13 +449,21 @@ export class CatalogService {
     // KDV orani: acik verildiyse o, yoksa kategori+isimden otomatik
     const kdvOrani = await this.kdvOraniBelirle(dto.kdvOrani, dto.name, dto.categoryId);
 
-    // Komisyon orani magazadan (merkezi): commissionRate binde (800=%8) -> yuzde (/100 -> 8n)
-    const magaza1 = await this.prisma.store.findUnique({ where: { id: storeId }, select: { commissionRate: true } });
-    const komisyonOran1 = BigInt(magaza1?.commissionRate ?? 800) / 100n;
+    // Dikey + komisyon orani magazadan (merkezi): commissionRate binde (800=%8) -> yuzde
+    const magaza1 = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      select: { businessUnit: true, commissionRate: true },
+    });
 
-    // Vitrin fiyati + ayristirilmis muhasebe kalemleri
-    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli, kdvOrani, komisyonOran1);
-    if (!hesap.ok) throw new BadRequestException(hesap.sebep);
+    // Vitrin fiyati + muhasebe kirilimi YALNIZCA Carsi'da uretilir
+    const fiyatAlanlari = this.urunFiyatAlanlari(
+      {
+        businessUnit: magaza1?.businessUnit ?? BusinessUnit.CARSI,
+        commissionRate: magaza1?.commissionRate ?? 800,
+      },
+      { netKurus, desi, weightKg, satisModeli, kdvOrani },
+      dto.price,
+    );
 
     return this.prisma.product.create({
       data: {
@@ -420,14 +474,11 @@ export class CatalogService {
         description: dto.description,
         sku: dto.sku,
         imageUrl: dto.imageUrl,
-        price: hesap.vitrinKurus, // musterinin gordugu fiyat (gomulu)
-        netFiyat: netKurus,
+        // Carsi disinda satis fiyati dogrudan budur; Carsi'da spread vitrin
+        // fiyatini ve muhasebe kirilimini (netFiyat + 4 kalem) uzerine yazar.
+        price: BigInt(dto.price),
+        ...fiyatAlanlari,
         kdvOrani,
-        // --- Muhasebe kirilimi (price = netFiyat + asagidaki 4 kalem) ---
-        komisyonTutari: hesap.komisyonKurus,
-        kargoTutari: hesap.kargoKurus + hesap.yuvarlamaKurus, // yuvarlama farki kargoya
-        malKdvTutari: hesap.malKdvKurus, // saticinin KDV beyani
-        hizmetKdvTutari: hesap.hizmetKdvKurus, // platformun KDV beyani
         satisModeli,
         stock: dto.stock ?? 0,
         unit: dto.unit ?? 'adet',
@@ -451,22 +502,29 @@ export class CatalogService {
     // (otomatik tanima sadece create'te; update'te admin/saticinin kararina dokunmuyoruz)
     const kdvOrani = dto.kdvOrani ?? product.kdvOrani;
 
-    // Komisyon orani magazadan (merkezi)
-    const magaza2 = await this.prisma.store.findUnique({ where: { id: product.storeId }, select: { commissionRate: true } });
-    const komisyonOran2 = BigInt(magaza2?.commissionRate ?? 800) / 100n;
+    // Dikey + komisyon orani magazadan (merkezi)
+    const magaza2 = await this.prisma.store.findUnique({
+      where: { id: product.storeId },
+      select: { businessUnit: true, commissionRate: true },
+    });
 
-    const hesap = vitrinFiyatHesapla(netKurus, desi, weightKg, satisModeli, kdvOrani, komisyonOran2);
-    if (!hesap.ok) throw new BadRequestException(hesap.sebep);
+    // Carsi disinda formul HIC calismaz: netKurus fallback'i (product.netFiyat=0)
+    // eski kayitlarin price'ini kargo tabaniyla eziyordu. Orada price yalnizca
+    // dto ile degisir, mevcut fiyat oldugu gibi kalir.
+    const fiyatAlanlari = this.urunFiyatAlanlari(
+      {
+        businessUnit: magaza2?.businessUnit ?? BusinessUnit.CARSI,
+        commissionRate: magaza2?.commissionRate ?? 800,
+      },
+      { netKurus, desi, weightKg, satisModeli, kdvOrani },
+      dto.price,
+    );
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = { ...dto };
-    data.price = hesap.vitrinKurus;
-    data.netFiyat = netKurus;
+    if (dto.netFiyat !== undefined) data.netFiyat = BigInt(dto.netFiyat); // ham deger -> BigInt
+    Object.assign(data, fiyatAlanlari); // Carsi: price + kirilim, digeri: yalnizca price
     data.kdvOrani = kdvOrani;
-    data.komisyonTutari = hesap.komisyonKurus;
-    data.kargoTutari = hesap.kargoKurus + hesap.yuvarlamaKurus;
-    data.malKdvTutari = hesap.malKdvKurus;
-    data.hizmetKdvTutari = hesap.hizmetKdvKurus;
     data.desi = desi;
     data.weightKg = weightKg;
     data.satisModeli = satisModeli;
