@@ -705,7 +705,27 @@ export class MarketService {
     const take = Math.min(Math.max(1, q.take ?? 50), 100);
     const skip = Math.max(0, q.skip ?? 0);
 
-    const [toplamlar, durumlar, magazaKirilimi, kayitlar] = await this.prisma.$transaction([
+    // GUN SERISI icin ham SQL: Prisma groupBy date_trunc desteklemedigi icin
+    // $queryRaw. Filtreler yukaridaki `where` ile AYNI DEGERLERDEN turetilir
+    // (magazaIdleri / placedAt / status / arama) - ayni guvenlik ve daralma
+    // kapsami. arama'da ILIKE, Prisma contains+insensitive'e denk; %/_/\ escape
+    // edilir ki gun serisi listeyle BIREBIR ayni suzulsun (Prisma contains ozel
+    // karakterleri literal alir, ham ILIKE ise wildcard sayardi).
+    const rawKosullar: Prisma.Sql[] = [
+      Prisma.sql`o."storeId" IN (${Prisma.join(magazaIdleri.map((id) => Prisma.sql`${id}::uuid`))})`,
+      Prisma.sql`o."deletedAt" IS NULL`,
+    ];
+    if (q.from) rawKosullar.push(Prisma.sql`o."placedAt" >= ${new Date(q.from)}`);
+    if (q.to) rawKosullar.push(Prisma.sql`o."placedAt" <= ${new Date(q.to)}`);
+    if (q.status) rawKosullar.push(Prisma.sql`o.status = ${q.status}::"OrderStatus"`);
+    if (arama) {
+      const like = `%${arama.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+      rawKosullar.push(
+        Prisma.sql`(o."orderNo" ILIKE ${like} ESCAPE '\\' OR u."name" ILIKE ${like} ESCAPE '\\' OR u."surname" ILIKE ${like} ESCAPE '\\')`,
+      );
+    }
+
+    const [toplamlar, durumlar, magazaKirilimi, kayitlar, gunlukSeri] = await this.prisma.$transaction([
       this.prisma.order.aggregate({
         where,
         _count: { _all: true },
@@ -723,6 +743,19 @@ export class MarketService {
         take,
         include: { items: { include: { secimler: true } } },
       }),
+      // 5. sorgu - GUN SERISI: gun basina adet + ciro. Ayni $transaction icinde
+      // diger dortyle tutarli kar. adet::int -> number, ciro::bigint -> BigInt
+      // (main.ts toJSON ile JSON'a string), gun -> Date (JSON'a ISO string).
+      this.prisma.$queryRaw<Array<{ gun: Date; adet: number; ciro: bigint }>>(Prisma.sql`
+        SELECT date_trunc('day', o."placedAt") AS gun,
+               count(*)::int AS adet,
+               COALESCE(sum(o.total), 0)::bigint AS ciro
+        FROM orders o
+        JOIN users u ON u.id = o."userId"
+        WHERE ${Prisma.join(rawKosullar, ' AND ')}
+        GROUP BY 1
+        ORDER BY 1
+      `),
     ]);
 
     const sayimlar = new Map(magazaKirilimi.map((g) => [g.storeId, g._count]));
@@ -742,6 +775,9 @@ export class MarketService {
       durumDagilimi: Object.fromEntries(durumlar.map((g) => [g.status, g._count])),
       magazalar: magazalar.map((m) => ({ ...m, siparisSayisi: sayimlar.get(m.id) ?? 0 })),
       kayitlar,
+      // ADDITIVE: gun basina { gun, adet, ciro }. Diger alanlarin hicbiri
+      // degismedi. Bos aralikta bos dizi doner.
+      gunlukSeri,
     };
   }
 
