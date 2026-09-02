@@ -649,6 +649,7 @@ export class MarketService {
       to?: string;
       status?: OrderStatus;
       dikey?: BusinessUnit;
+      q?: string;
       skip?: number;
       take?: number;
     },
@@ -678,11 +679,27 @@ export class MarketService {
         ? { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to) } : {}) }
         : undefined;
 
+    // Bos/whitespace arama YOK SAYILIR: additive, q verilmezse davranis birebir.
+    const arama = q.q?.trim();
+
     const where: Prisma.OrderWhereInput = {
       storeId: { in: magazaIdleri },
       deletedAt: null,
       ...(placedAt ? { placedAt } : {}),
       ...(q.status ? { status: q.status } : {}),
+      // Siparis no VEYA musteri adi/soyadi. Tek where'de yasadigi icin dort
+      // sorgu (aggregate/groupBy/groupBy/findMany) da ayni daralmayi gorur.
+      ...(arama
+        ? {
+            OR: [
+              { orderNo: { contains: arama, mode: 'insensitive' } },
+              { user: { OR: [
+                { name: { contains: arama, mode: 'insensitive' } },
+                { surname: { contains: arama, mode: 'insensitive' } },
+              ] } },
+            ],
+          }
+        : {}),
     };
 
     const take = Math.min(Math.max(1, q.take ?? 50), 100);

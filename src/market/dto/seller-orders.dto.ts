@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsISO8601, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsISO8601, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BusinessUnit, OrderStatus } from '@prisma/client';
 
@@ -32,6 +32,13 @@ export class SaticiSiparisSorguDto {
    * suzuyor.)
    */
   @IsOptional() @IsIn(Object.keys(BusinessUnit)) dikey?: BusinessUnit;
+
+  /**
+   * ARAMA — OPSIYONEL. Siparis no (orderNo) VEYA musteri adi/soyadi icinde
+   * gecen metin. Bos/whitespace ise serviste yok sayilir (davranis birebir
+   * korunur). Filtre tek where'de yasadigi icin hem liste hem toplamlari suzer.
+   */
+  @IsOptional() @IsString() @MaxLength(100) q?: string;
 
   // Sayfalama LISTE icindir; TOPLAMLAR bundan etkilenmez (aggregate ayri kosar).
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) skip?: number;
