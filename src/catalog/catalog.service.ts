@@ -529,6 +529,40 @@ export class CatalogService {
     data.weightKg = weightKg;
     data.satisModeli = satisModeli;
 
+    // YENIDEN ONAY KAPISI — gercek icerik degisikligi urunu yayindan dusurur.
+    //
+    // TETIKLEYEN ALANLAR (musterinin gordugu / admin onayinin dogruladigi icerik):
+    //   name, description, categoryId, sku, imageUrl, netFiyat ve efektif price.
+    //   Price uzerinden Carsi'da desi / weightKg / kdvOrani / satisModeli
+    //   degisiklikleri de DOLAYLI olarak tetikler: bunlar vitrin fiyatini
+    //   degistirdiginde musteri baska bir fiyat gorur, yani onay konusu olur.
+    //   Carsi disinda price yalnizca dto.price ile degisir.
+    //
+    // TETIKLEMEYEN ALANLAR:
+    //   stock — BILEREK. Stok gun icinde surekli degisen OPERASYONEL bir alan;
+    //   her stok guncellemesinde urunu onaydan dusurmek saticiyi cezalandirir ve
+    //   yayindaki katalogu sebepsiz bosaltirdi. Ayni sekilde unit / desi /
+    //   weightKg / kdvOrani / satisModeli tek baslarina (fiyati degistirmedikleri
+    //   surece) yayini dusurmez.
+    //
+    // KARSILASTIRMA "GERCEKTEN DEGISTI" MANTIGI: alan dto'da yoksa (undefined)
+    // veya mevcut degerin aynisi gonderildiyse tetiklenmez — ayni govdeyi iki kez
+    // gondermek urunu yayindan dusurmez.
+    //
+    // Yayina geri alma yolu TEK: PATCH /catalog/products/:id/approve (bkz.
+    // approveProduct). isActive UpdateProductDto'da yok; buradaki false sunucu
+    // tarafinda yazilir, istekten gelemez.
+    const degisti = (yeni: unknown, mevcut: unknown) => yeni !== undefined && yeni !== mevcut;
+    const icerikDegisti =
+      degisti(data.name, product.name) ||
+      degisti(data.description, product.description) ||
+      degisti(data.categoryId, product.categoryId) ||
+      degisti(data.sku, product.sku) ||
+      degisti(data.imageUrl, product.imageUrl) ||
+      degisti(data.netFiyat, product.netFiyat) ||
+      degisti(data.price, product.price);
+    if (icerikDegisti) data.isActive = false;
+
     return this.prisma.product.update({ where: { id }, data });
   }
 
