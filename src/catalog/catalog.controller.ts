@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
 import { CatalogService } from './catalog.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -14,10 +15,27 @@ import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { UuidParam, UuidQuery } from '../common/pipes/uuid-param.pipe';
+import { AuditService } from '../common/audit/audit.service';
 
 @Controller('catalog')
 export class CatalogController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly audit: AuditService,
+  ) {}
+
+  // ============================================================
+  // AUDIT — KRITIK OLAY KAYDI YALNIZCA BURADA (controller katmani).
+  // Servise ikinci kayit EKLENMEZ: cift kayit yasagi. Desen
+  // market.controller ile birebir ayni: { actorId, action, entity, entityId,
+  // ip, metadata }.
+  //
+  // PARA ALANLARI metadata'ya STRING yazilir. price/netFiyat BigInt ve
+  // metadata Prisma'nin Json kolonuna gidiyor; main.ts'teki
+  // BigInt.prototype.toJSON yamasi JSON.stringify yolunu duzeltir, Prisma'nin
+  // Json alan yazimini degil. String() ile gonderilmezse kayit sessizce
+  // dusebilirdi (AuditService hatayi yutup logluyor).
+  // ============================================================
 
   // Herkese acik okuma
   @Public()
@@ -77,15 +95,58 @@ export class CatalogController {
   @Post('stores/:storeId/products')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  createProduct(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateProductDto) {
-    return this.catalog.createProduct(storeId, user.id, user.roles, dto);
+  async createProduct(
+    @Param('storeId', UuidParam) storeId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateProductDto,
+    @Req() req: Request,
+  ) {
+    const r = await this.catalog.createProduct(storeId, user.id, user.roles, dto);
+    await this.audit.record({
+      actorId: user.id, action: 'product.create', entity: 'Product', entityId: r.id, ip: req.ip,
+      metadata: {
+        storeId, ad: r.name, alanlar: Object.keys(dto),
+        price: String(r.price), netFiyat: String(r.netFiyat), stock: r.stock, isActive: r.isActive,
+      },
+    });
+    return r;
   }
 
   @Patch('products/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  updateProduct(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: UpdateProductDto) {
-    return this.catalog.updateProduct(id, user.id, user.roles, dto);
+  async updateProduct(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UpdateProductDto,
+    @Req() req: Request,
+  ) {
+    // ONCEKI HAL AYRI SORGUYLA OKUNUR. Servis yalnizca guncel satiri
+    // donduruyor; "hangi fiyattan hangi fiyata" sorusu ancak once/sonra
+    // ikilisiyle cevaplanir ve fiyat degisikligi bu ucun en hassas etkisi.
+    // getProduct, servisin updateProduct icinde zaten yaptigi ilk cagrinin
+    // aynisi ve yetki kontrolu ondan SONRA geliyor: yetkisiz kullanici
+    // eskisiyle ayni 404/403'u alir, yeni bir sizinti yok.
+    const once = await this.catalog.getProduct(id);
+    const r = await this.catalog.updateProduct(id, user.id, user.roles, dto);
+    await this.audit.record({
+      actorId: user.id, action: 'product.update', entity: 'Product', entityId: id, ip: req.ip,
+      metadata: {
+        storeId: r.storeId, ad: r.name, alanlar: Object.keys(dto),
+        once: {
+          price: String(once.price), netFiyat: String(once.netFiyat),
+          stock: once.stock, isActive: once.isActive,
+        },
+        sonra: {
+          price: String(r.price), netFiyat: String(r.netFiyat),
+          stock: r.stock, isActive: r.isActive,
+        },
+        // YENIDEN ONAY KAPISI TETIKLENDI MI (catalog.service updateProduct).
+        // "Urunum neden vitrinden dustu" sorusunun tek izlenebilir cevabi.
+        yenidenOnaya: once.isActive && !r.isActive,
+      },
+    });
+    return r;
   }
 
   // Admin: onayla / reddet
@@ -96,22 +157,49 @@ export class CatalogController {
   @Patch('products/:id/approve')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_APPROVE)
-  approve(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.approveProduct(id, user.id, user.roles);
+  async approve(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Req() req: Request) {
+    const r = await this.catalog.approveProduct(id, user.id, user.roles);
+    await this.audit.record({
+      actorId: user.id, action: 'product.approve', entity: 'Product', entityId: id, ip: req.ip,
+      metadata: { storeId: r.storeId, ad: r.name, price: String(r.price), isActive: r.isActive },
+    });
+    return r;
   }
 
   @Patch('products/:id/reject')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_APPROVE)
-  reject(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.rejectProduct(id, user.id, user.roles);
+  async reject(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Req() req: Request) {
+    // ANLIK GORUNTU ONCEDEN ALINIR: reject deletedAt yaziyor ve hicbir okuma
+    // ucu deletedAt dolu satir dondurmuyor. Kayit sonradan kurulsaydi audit
+    // satiri "neyin reddedildigini" soyleyemezdi.
+    const once = await this.catalog.getProduct(id);
+    const r = await this.catalog.rejectProduct(id, user.id, user.roles);
+    await this.audit.record({
+      actorId: user.id, action: 'product.reject', entity: 'Product', entityId: id, ip: req.ip,
+      metadata: {
+        storeId: once.storeId, ad: once.name, price: String(once.price),
+        onceAktifMiydi: once.isActive,
+      },
+    });
+    return r;
   }
 
   @Delete('products/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  removeProduct(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.removeProduct(id, user.id, user.roles);
+  async removeProduct(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Req() req: Request) {
+    // reject ile ayni gerekce: silinen satir sonradan okunamaz.
+    const once = await this.catalog.getProduct(id);
+    const r = await this.catalog.removeProduct(id, user.id, user.roles);
+    await this.audit.record({
+      actorId: user.id, action: 'product.delete', entity: 'Product', entityId: id, ip: req.ip,
+      metadata: {
+        storeId: once.storeId, ad: once.name, price: String(once.price),
+        onceAktifMiydi: once.isActive,
+      },
+    });
+    return r;
   }
 
   // ============================================================
