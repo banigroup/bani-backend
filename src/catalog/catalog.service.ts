@@ -542,6 +542,8 @@ export class CatalogService {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = { ...dto };
+    // expectedStock BIR URUN ALANI DEGIL, yazma kosulu: Prisma'ya gitmemeli.
+    delete data.expectedStock;
     if (dto.netFiyat !== undefined) data.netFiyat = BigInt(dto.netFiyat); // ham deger -> BigInt
     Object.assign(data, fiyatAlanlari); // Carsi: price + kirilim, digeri: yalnizca price
     data.kdvOrani = kdvOrani;
@@ -583,7 +585,48 @@ export class CatalogService {
       degisti(data.price, product.price);
     if (icerikDegisti) data.isActive = false;
 
-    return this.prisma.product.update({ where: { id }, data });
+    // STOK YAZIMI IYIMSER KILITLI — kayip guncelleme (lost update) kapisi.
+    //
+    // SORUN: siparis hatti stogu GORELI dusuruyor (orders.service:
+    // stock: { decrement: q }, transaction icinde), panel ise MUTLAK yaziyor.
+    // Satici formu acip rafi sayarken araya bir siparis girerse mutlak yazma o
+    // dusumu SESSIZCE eziyordu: satilan mal stoga geri doner, sonuc fazla satis
+    // olur ve hicbir yerde hata gorunmez.
+    //
+    // COZUM: stok gonderildiginde yazma "stok HALA beklenen deger mi"
+    // kosuluyla yapilir (updateMany + etkilenen satir sayisi). Kosul tutmazsa
+    // hicbir sey yazilmaz ve 409 doner - istemci tazeleyip tekrar dener.
+    //
+    // TABAN DEGER:
+    //   dto.expectedStock varsa  -> ISTEMCININ GORDUGU deger; formun acik
+    //                               kaldigi TUM sureyi korur (dogru koruma).
+    //   yoksa (eski istemci)     -> bu istegin basinda okunan product.stock;
+    //                               yalnizca istegin kendi penceresini korur.
+    //                               Yine de kontrolsuz yazmadan iyidir ve
+    //                               mevcut istemcileri KIRMAZ.
+    //
+    // STOK GONDERILMEDIYSE kosul KURULMAZ: fiyat/ad guncelleyen bir istegi,
+    // arka planda satis oldu diye reddetmek gereksiz catisma uretirdi.
+    if (data.stock === undefined) {
+      return this.prisma.product.update({ where: { id }, data });
+    }
+
+    const beklenenStok = dto.expectedStock ?? product.stock;
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.product.updateMany({
+        where: { id, deletedAt: null, stock: beklenenStok },
+        data,
+      });
+      if (count === 0) {
+        const guncel = await tx.product.findUnique({ where: { id }, select: { stock: true } });
+        throw new ConflictException(
+          `Stok bilgisi değişti (güncel: ${guncel?.stock ?? 'bilinmiyor'}), lütfen sayfayı yenileyip tekrar deneyin`,
+        );
+      }
+      // Uc, guncellenmis TAM satiri donduruyor (controller audit'i de onu
+      // okuyor); updateMany yalnizca sayi verdigi icin satir ayrica okunur.
+      return tx.product.findUniqueOrThrow({ where: { id } });
+    });
   }
 
   // Urun onayi PLATFORM YONETICISININ isidir (ADMIN / SUPER_ADMIN).
