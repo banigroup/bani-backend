@@ -436,6 +436,8 @@ export class CatalogService {
 
   async createProduct(storeId: string, userId: string, roles: Role[], dto: CreateProductDto) {
     await this.market.assertOwner(storeId, userId, roles);
+    // SLUG YALNIZCA BURADA URETILIR — urunun omru boyunca degismez.
+    // Gerekcesi updateProduct'ta yazili.
     const baseSlug = slugify(dto.name) || 'urun';
     const exists = await this.prisma.product.findFirst({ where: { storeId, slug: baseSlug } });
     const slug = exists ? `${baseSlug}-${randomSuffix()}` : baseSlug;
@@ -492,6 +494,24 @@ export class CatalogService {
   async updateProduct(id: string, userId: string, roles: Role[], dto: UpdateProductDto) {
     const product = await this.getProduct(id);
     await this.market.assertOwner(product.storeId, userId, roles);
+
+    // SLUG BILEREK YENIDEN URETILMIYOR — ad degisse bile eski slug kalir.
+    //
+    // Sebep: slug urunun DISARIYA verdigi kalici etiket (vitrin alanlarinda
+    // donuyor, paylasilan/yer imine eklenen baglantiyi ve arama motorunun
+    // gordugu adresi o tasiyor). Ada bagli yeniden uretilseydi bir yazim
+    // duzeltmesi bile daha once paylasilmis her baglantiyi sessizce kirardi;
+    // ustelik sunucu kirilan adresi yenisine YONLENDIREMEZ, cunku eski slug'in
+    // saklandigi bir yer yok.
+    //
+    // Disaridan da degistirilemez: CreateProductDto'da slug alani yok, dolayisi
+    // ile PartialType'i olan UpdateProductDto'da da yok; govdeye yazilirsa
+    // forbidNonWhitelisted 400 doner. Yani bu karar tek yerde degil, iki yerde
+    // birden korunuyor.
+    //
+    // Not: bugun hicbir okuma ucu urunu slug ile ARAMIYOR (hepsi id ile
+    // calisiyor); slug'in tuketicisi istemci tarafindaki baglantilardir.
+    // Ileride slug ile okuma ucu acilirsa bu karar daha da baglayici olur.
 
     // Guncel degerler (dto'da yoksa mevcut urundekini kullan)
     const desi = dto.desi ?? product.desi;
