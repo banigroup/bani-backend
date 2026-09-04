@@ -382,12 +382,38 @@ export class MarketService {
   }
 
   async update(storeId: string, userId: string, roles: Role[], dto: UpdateStoreDto, ip?: string) {
-    await this.ownedOrAdmin(storeId, userId, roles);
+    // SAHIPLIK KAPISI (degismedi): sahip | aktif personel | platform yoneticisi.
+    // Donen satir ONCEKI hal - audit'te once/sonra icin EK SORGU GEREKMIYOR.
+    const once = await this.ownedOrAdmin(storeId, userId, roles);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = { ...dto };
     if (dto.minOrder !== undefined) data.minOrder = BigInt(dto.minOrder);
     const store = await this.prisma.store.update({ where: { id: storeId }, data });
-    await this.audit.record({ actorId: userId, action: 'store.update', entity: 'Store', entityId: storeId, ip });
+    // AUDIT PR #16 DESENINE CEKILDI: kayit zaten vardi ama metadata BOSTU -
+    // "magazada bir sey degisti" diyor, NE degistigini soylemiyordu.
+    //
+    // alanlar: istegin dokundugu alan adlari (seller.update ile ayni desen).
+    // isActive ve minOrder icin ONCE/SONRA da yazilir; ikisi de is etkisi olan
+    // alanlar (magazayi vitrinden dusurmek / siparis esigini degistirmek) ve
+    // "kim, ne zaman, hangi degerden hangi degere" sorusu ancak boyle
+    // cevaplanir. minOrder BigInt oldugu icin STRING yazilir - Prisma'nin Json
+    // kolonu BigInt serilestiremez (bkz. catalog.controller audit basligi).
+    await this.audit.record({
+      actorId: userId, action: 'store.update', entity: 'Store', entityId: storeId, ip,
+      metadata: {
+        // TANIMSIZLARI ELE: UpdateStoreDto'da DOGRUDAN tanimli alan (isActive)
+        // istekte gonderilmese bile Object.keys'te cikiyor (sinif alani olarak
+        // undefined degeriyle var). Filtre olmasa audit "isActive degisti"
+        // diyordu - yerel testte yakalandi.
+        alanlar: Object.keys(dto).filter((k) => (dto as Record<string, unknown>)[k] !== undefined),
+        ...(dto.isActive !== undefined
+          ? { isActiveOnce: once.isActive, isActiveSonra: store.isActive }
+          : {}),
+        ...(dto.minOrder !== undefined
+          ? { minOrderOnce: String(once.minOrder), minOrderSonra: String(store.minOrder) }
+          : {}),
+      },
+    });
     return store;
   }
 
