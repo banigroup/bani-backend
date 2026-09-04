@@ -92,6 +92,32 @@ export class CatalogController {
     return this.catalog.createCategory(storeId, user.id, user.roles, dto);
   }
 
+  // GORSEL YUKLEME IMZASI — MAGAZA KAPSAMLI.
+  //
+  // ISTEMCIDEN HICBIR PARAMETRE ALINMAZ: @Body YOK. Klasor, timestamp ve imza
+  // tamamen sunucuda uretilir. Istemci govdede folder/upload_preset gonderse
+  // bile okunmaz - imzalanan deger sunucununkidir, farkli bir klasorle yapilan
+  // yukleme Cloudinary tarafinda imza uyusmazligindan reddedilir.
+  //
+  // URUN DEGIL MAGAZA KAPSAMI: gorsel, urun HENUZ YOKKEN de yuklenebilmeli
+  // (once gorseli sec, sonra urunu olustur akisi). Yetki kapisi bu yuzden
+  // urun degil magaza uzerinden: market.assertOwner (sahip | aktif personel |
+  // platform yoneticisi) - urun yazma uclarinin dayandigi kapinin aynisi.
+  @Post('stores/:storeId/media-imza')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
+  async medyaImza(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Req() req: Request) {
+    const r = await this.catalog.medyaYuklemeImzasi(storeId, user.id, user.roles);
+    // AUDIT: imza bir YUKLEME YETKISIDIR, verilmesi kayda gecer (PR #16 deseni).
+    // metadata'ya YALNIZCA klasor yazilir; signature/apiKey audit'e GIRMEZ -
+    // KYC ucunda dosya URL'inin yazilmamasiyla ayni gerekce.
+    await this.audit.record({
+      actorId: user.id, action: 'product.media.sign', entity: 'Store', entityId: storeId, ip: req.ip,
+      metadata: { folder: r.folder },
+    });
+    return r;
+  }
+
   @Post('stores/:storeId/products')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)

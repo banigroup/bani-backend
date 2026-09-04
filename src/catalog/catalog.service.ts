@@ -11,6 +11,7 @@ import {
 } from './dto/varyant.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { vitrinFiyatHesapla, kdvOraniBul, ekUcretHesapla } from '../delivery/pricing';
+import { cloudinaryImzala } from '../common/upload/cloudinary.util';
 import { etkinFiyat, etkinStok } from '../common/domain/varyant';
 
 // VITRINDE GORUNEN SECENEK YAPISI — okuma uclarinin ortak include'u.
@@ -946,6 +947,28 @@ export class CatalogService {
   async medyaListesi(productId: string, userId: string, roles: Role[]) {
     await this.urunVeMagaza(productId, userId, roles);
     return this.prisma.productMedia.findMany({ where: { productId }, orderBy: { sortOrder: 'asc' } });
+  }
+
+  /**
+   * URUN GORSELI ICIN YUKLEME IMZASI — MAGAZA KAPSAMLI.
+   *
+   * KLASOR SUNUCUDA URETILIR: `bani/products/<storeId>`. Istemci govdesinden
+   * hicbir sey okunmaz (uc @Body almiyor); folder/upload_preset gonderilse
+   * bile yok sayilir. Imza yalnizca { folder, timestamp } uzerine atildigi
+   * icin istemci klasoru degistirirse Cloudinary imzayi reddeder - yani
+   * "baska bir magazanin klasorune yukleme" bu imzayla mumkun degil.
+   *
+   * YETKI: market.assertOwner (sahip | aktif personel | platform yoneticisi) -
+   * urun yazma uclarinin dayandigi kapinin aynisi. Imza bir YETKI DEVRIDIR;
+   * kapisi da yazma kapisiyla ayni olmali.
+   *
+   * AKIS: imza al -> istemci dosyayi DOGRUDAN Cloudinary'ye yukler -> donen
+   * secure_url ile POST /catalog/products/:id/media cagrilir (birincil medya
+   * kurali ve Product.imageUrl senkronu orada calisir).
+   */
+  async medyaYuklemeImzasi(storeId: string, userId: string, roles: Role[]) {
+    await this.market.assertOwner(storeId, userId, roles);
+    return cloudinaryImzala(`bani/products/${storeId}`);
   }
 
   async medyaEkle(productId: string, userId: string, roles: Role[], dto: MedyaEkleDto) {
