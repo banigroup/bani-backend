@@ -25,6 +25,17 @@ export const ATANABILIR_MAGAZA_ROLLERI: ReadonlySet<Role> = new Set([
   Role.STORE_STOCK,
 ]);
 
+/**
+ * Iki an arasindaki TAM GUN farki. Bekleme suresi "kac gundur" diye okunur,
+ * saat/dakika artigi yuvarlanmaz - 0,9 gun bekleyen kayit "1 gundur bekliyor"
+ * gibi gorunmesin diye asagi kirpilir. Negatif deger (ileri tarihli kayit)
+ * 0'a sabitlenir.
+ */
+function gunFarki(baslangic: Date, simdi: Date): number {
+  const fark = simdi.getTime() - baslangic.getTime();
+  return fark <= 0 ? 0 : Math.floor(fark / 86400000);
+}
+
 @Injectable()
 export class MarketService {
   constructor(
@@ -538,7 +549,66 @@ export class MarketService {
         take: Math.min(Math.max(1, take), 100),
       }),
     ]);
-    return { durum, toplam, kayitlar };
+
+    // HESAPLANMIS UYARI ALANLARI — SORGU ZAMANINDA, SALT OKUMA.
+    // Hicbir kayit guncellenmez, hicbir otomatik aksiyon tetiklenmez; bu uc
+    // alan yalnizca admin kuyrugunda "once hangisine bakmali" sorusuna yardim
+    // eder. Saticinin gordugu hicbir uc bu hesaptan etkilenmez.
+    const simdi = new Date();
+
+    return {
+      durum,
+      toplam,
+      kayitlar: kayitlar.map((k) => {
+        // SURE HESABI DEPOLANAN DURUMA DEGIL CANLI TARIHE BAKAR.
+        // verification alani "gecerli mi" sorusunun GUVENILIR cevabi degil:
+        // tarihi gecmis bir kayit hala ONAYLANDI olarak duruyor olabilir
+        // (asagidaki durumTutarsiz tam olarak bunu yakalar). Dogru olan
+        // her istekte tarihi simdiyle karsilastirmak.
+        const suresiGecti = !!k.verificationExpiresAt && k.verificationExpiresAt < simdi;
+        return {
+          ...k,
+          // BELGE SURESI: satici_belgeleri'nde BELGE BASINA bitis tarihi ALANI
+          // YOK (tip/dosyaUrl/durum/redGerekce + zaman damgalari). Platformda
+          // "gecerlilik" tek yerde tutuluyor: Seller.verificationExpiresAt,
+          // yani belgelerin onayiyla verilen dogrulamanin bitis tarihi. Bu alan
+          // onu olcer. Belge basina son kullanma istenirse once semaya alan
+          // eklenmeli.
+          belgeSuresiGecti: suresiGecti,
+
+          // DURUM TUTARSIZLIGI — OLU GECIS MANTIGININ IZI.
+          // Depolanan dogrulama ONAYLANDI ("gecerli") diyor ama bitis tarihi
+          // gecmis. Bu, kaydi SURESI_DOLDU'ya cekmesi gereken mekanizmanin ya
+          // hic olmadigini ya da calismadigini gosterir. Alan bunu GORUNUR
+          // kilar, hicbir seyi duzeltmez; degeri true olan kayit birikiyorsa
+          // sorun mekanizmadadir, veride degil.
+          //
+          // BURADA SellerVerification.SURESI_DOLDU YAZILMIYOR — BILINCLI.
+          // Bu bir GET ucu; salt okuma. Bir listeleme isteginin veriyi
+          // duzeltmesi, admin listesini acan herkesin sessizce durum
+          // degistirmesi demek olurdu (ve "kim degistirdi" sorusunun cevabi
+          // olmazdi). Otomatik gecis AYRI bir karardir ve bu turun kapsami
+          // disindadir.
+          durumTutarsiz:
+            k.verification === SellerVerification.ONAYLANDI && suresiGecti,
+
+          // BEKLEME SURESI — KAYNAK updatedAt.
+          //
+          // SINIRLAMA ACIKCA BILINIYOR: Seller'da "UNDER_REVIEW'a gecti"
+          // damgasi YOK, updatedAt ise HER yazmada tazeleniyor. Yani kayda
+          // dokunan herhangi bir islem (belge onayi/reddi, unvan duzeltmesi,
+          // dogrulama sonucu, admin durum degisikligi) sayaci SIFIRLAR ve
+          // bekleme suresi OLDUGUNDAN KISA gorunur. Sayi "EN AZ bu kadar"
+          // diye okunmalidir, kesin bekleme suresi degildir.
+          //
+          // Kesin olcum ancak ayri bir damga (or. incelemeyeGirdiAt) ya da
+          // audit'teki seller.submit / seller.status kayitlarindan turetmekle
+          // olur; ikisi de bu turun kapsami disinda.
+          bekleyenGunSayisi:
+            k.status === SellerStatus.UNDER_REVIEW ? gunFarki(k.updatedAt, simdi) : null,
+        };
+      }),
+    };
   }
 
   // ---------------- SATICI KYC BELGELERI ----------------
