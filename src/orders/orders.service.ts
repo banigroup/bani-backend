@@ -280,16 +280,53 @@ export class OrdersService {
       // STOK DUSUMU: varyantli kalemde varyantin stogu duser, varyantsizda
       // urunun. Varyantta stock NULL ise stok urun duzeyinde tutuluyor demektir
       // (etkinStok orada urune dusuyordu), dolayisiyla dusum de urunden yapilir.
+      //
+      // DUSUM KOSULLU — CHECK-THEN-ACT YARISI BURADA KAPANIR.
+      //
+      // Yukaridaki yeterlilik kontrolu (etkinStok < quantity) transaction'in
+      // DISINDA, sepet okunurken yapiliyor. Dusum kosulsuz oldugu surece iki
+      // musteri ayni anda kontrolden gecip ikisi de dusum yapabiliyordu:
+      // yerelde uretildi - stok 1 iken iki eszamanli checkout, iki 201, stok
+      // -1 ve IKI cuzdandan tahsilat. Kosul (stock >= quantity) UPDATE'in
+      // kendisine tasindi: Postgres satir kilidi altinda degerlendirdigi icin
+      // ikinci istek 0 satir gunceller ve buradan geri doner.
+      //
+      // DESEN EV DESENI: finance/services/ledger.service ayni sinifi ayni
+      // sekilde cozuyor ("atomik yaz, sonra dogrula, ihlalde transaction'i
+      // geri sar" - bakiye eksiye duserse ConflictException). cancel() de
+      // durum gecisini kosullu updateMany + count===0 ile koruyor.
+      //
+      // TRANSACTION'IN TAMAMI GERI SARILIR: siparis, escrow'a alma, teslimat
+      // kaydi ve sepet temizligi bu throw'un ARDINDAN gelen adimlar oldugu
+      // icin hicbiri yazilmaz. Yani "parasi cekilmis ama urunu olmayan
+      // musteri" durumu dogmaz ve SEPET DE DURUR (musteri kalemi cikarip
+      // tekrar deneyebilir).
       for (const it of cart.items) {
-        if (it.variantId && it.variant?.stock !== null && it.variant?.stock !== undefined) {
-          await tx.productVariant.update({
-            where: { id: it.variantId },
-            data: { stock: { decrement: it.quantity } },
-          });
-        } else {
-          await tx.product.update({
-            where: { id: it.productId },
-            data: { stock: { decrement: it.quantity } },
+        const varyantStogu =
+          !!it.variantId && it.variant?.stock !== null && it.variant?.stock !== undefined;
+        const { count } = varyantStogu
+          ? await tx.productVariant.updateMany({
+              where: { id: it.variantId as string, stock: { gte: it.quantity } },
+              data: { stock: { decrement: it.quantity } },
+            })
+          : await tx.product.updateMany({
+              where: { id: it.productId, stock: { gte: it.quantity } },
+              data: { stock: { decrement: it.quantity } },
+            });
+        if (count === 0) {
+          // TUM SIPARIS DURUR, kalem ATLANMAZ: siparis sepetin tamamindan tek
+          // parca olarak kuruluyor (toplam, komisyon, Carsi kirilimi ve escrow
+          // tutari transaction'a girmeden ONCE hesaplandi). Bir kalemi burada
+          // dusurmek o hesaplarin hepsini gecersiz kilardi; ustelik musteri
+          // onaylamadigi bir sepet icin odeme yapmis olurdu.
+          const ad = it.variant ? `${it.product?.name} (${it.variant.name})` : it.product?.name;
+          throw new ConflictException({
+            statusCode: 409,
+            kod: 'STOK_TUKENDI',
+            message: `Ürün tükendi: ${ad}. Sepetinizden çıkarıp tekrar deneyebilirsiniz.`,
+            urunId: it.productId,
+            variantId: it.variantId ?? null,
+            error: 'Conflict',
           });
         }
       }
