@@ -504,10 +504,25 @@ model StoreHour {
   storeId String @db.Uuid
   store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
-  weekday   Int      @db.SmallInt // 0=Pazar ... 6=Cumartesi (JS getDay ile ayni)
-  openTime  DateTime @db.Time(0) // string degil TIME: karsilastirma ve saat dogrulugu
-  closeTime DateTime @db.Time(0)
-  isClosed  Boolean  @default(false) // o gun tamamen kapali
+  weekday Int @db.SmallInt // 0=Pazar ... 6=Cumartesi (JS getDay ile ayni)
+
+  // COKLU ARALIK: bir gun birden fazla satirla temsil edilir (ogle arasi ->
+  // 09:00-13:00 + 14:00-19:00). sequence gun icindeki sirayi tutar; unique
+  // kirilimina girdigi icin ayni gune birden fazla aralik yazilabiliyor.
+  // Gun KAPALIYSA tek satir: sequence=0, isClosed=true, saatler NULL.
+  sequence Int @default(0)
+
+  // SAATLER NULL OLABILIR: kapali gunde saat kavrami yok. Acik gunde ikisi de
+  // zorunlu - bu kural DTO'da ve yazma metodunda uygulanir (semada ifade
+  // edilemez).
+  //
+  // DEGER TURKIYE DUVAR SAATIDIR (UTC DEGIL): satici ne yazdiysa o. Sunucu
+  // UTC calisiyor, bu yuzden karsilastirmayi yapan acikMi "simdi"yi Turkiye
+  // saatine cevirir (TR kalici UTC+3, yaz saati yok). Kayitla karsilastirma
+  // baska turlu tutmazdi - bkz. market.service acikMi basligi.
+  openTime  DateTime? @db.Time(0) // string degil TIME: karsilastirma ve saat dogrulugu
+  closeTime DateTime? @db.Time(0)
+  isClosed  Boolean   @default(false) // o gun tamamen kapali
 
   effectiveFrom  DateTime  @db.Date
   effectiveUntil DateTime? @db.Date
@@ -515,7 +530,7 @@ model StoreHour {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([storeId, weekday, effectiveFrom])
+  @@unique([storeId, weekday, effectiveFrom, sequence])
   @@index([storeId])
   @@map("store_hours")
 }

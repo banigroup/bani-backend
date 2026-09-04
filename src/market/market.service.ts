@@ -7,6 +7,7 @@ import { SellerStatusService } from './seller-status.service';
 import { sifrele, son4 } from '../common/crypto/gizli-alan';
 import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateStoreDto } from './dto/create-store.dto';
+import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/rol-kontrol';
 import { DIKEY_DOMAIN } from '../common/domain/dikey-domain';
@@ -34,6 +35,41 @@ export const ATANABILIR_MAGAZA_ROLLERI: ReadonlySet<Role> = new Set([
 function gunFarki(baslangic: Date, simdi: Date): number {
   const fark = simdi.getTime() - baslangic.getTime();
   return fark <= 0 ? 0 : Math.floor(fark / 86400000);
+}
+
+/**
+ * TIME kolonundan dakikaya. Sema Time(0) saklarken Prisma bunu 1970-01-01
+ * tabanli bir Date'e cozer; kadran UTC parcalarinda durur (bkz. saatDate).
+ */
+function dakika(d: Date): number {
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+/** "HH:MM" -> TIME kolonuna yazilacak Date. Kadran UTC parcalarina konur ki
+ *  dakika() ile birebir geri okunsun. */
+function saatDate(hhmm: string): Date {
+  const [s, d] = hhmm.split(':').map(Number);
+  return new Date(Date.UTC(1970, 0, 1, s, d, 0, 0));
+}
+
+/** TIME kolonundan "HH:MM". */
+function saatMetni(d: Date): string {
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * Bir araligi 0-1440 ekseninde PARCALARA acar. Gece yarisini asan aralik iki
+ * parcaya bolunur (20:00-02:00 -> [1200,1440) + [0,120)); cakisma kontrolu
+ * boylece duz aralik karsilastirmasina iner.
+ */
+/** "HH:MM" -> dakika. Bicim dogrulamasi DTO'da yapildi. */
+function dakikaMetin(hhmm: string): number {
+  const [sa, dk] = hhmm.split(':').map(Number);
+  return sa * 60 + dk;
+}
+
+function parcalar(acilis: number, kapanis: number): [number, number][] {
+  return acilis <= kapanis ? [[acilis, kapanis]] : [[acilis, 1440], [0, kapanis]];
 }
 
 @Injectable()
@@ -994,14 +1030,239 @@ export class MarketService {
    * BR-014 — magaza su an acik mi.
    *
    * KAYIT YOKSA ACIK SAYILIR: aksi halde store_hours tablosu eklendigi an canli
-   * 5 magazanin hepsi kapanirdi (hicbirinde saat kaydi yok).
-   * Ayni gun icin birden fazla gecerli kayit varsa EN YENI effectiveFrom kazanir
+   * magazalarin hepsi kapanirdi (hicbirinde saat kaydi yok).
+   * Ayni gun icin birden fazla gecerli SURUM varsa EN YENI effectiveFrom kazanir
    * (sezonluk saat eskisinin uzerine yazmadan tanimlanabilsin).
+   *
+   * SAAT DILIMI — KAYITLAR TURKIYE DUVAR SAATIDIR. Sunucu UTC calisiyor
+   * (Railway konteynerinde TZ ayarli degil; 00:17 TR'deki deploy'un logu
+   * 21:17 damgali). Eski hal kayitli saati getUTCHours ile okuyup SUNUCU YEREL
+   * saatiyle karsilastiriyordu: satici "09:00-18:00" yazsa magaza canlida
+   * 12:00-21:00 TR arasi acik gorunurdu - 3 saat kayma. Simdi "simdi" TR'ye
+   * cevriliyor. Turkiye KALICI UTC+3 (yaz saati uygulamasi yok), o yuzden tek
+   * sabit yeterli; kutuphane/veritabani TZ ayari gerekmiyor.
+   *
+   * GUN SECIMI DE TR'YE GORE: 01:00 TR = 22:00 UTC, yani UTC'ye gore gun
+   * ONCEKI gundur. Bu cevrilmezse gece yarisindan sonra yanlis gunun saatleri
+   * okunurdu.
+   *
+   * COKLU ARALIK: bir gun birden fazla satirla temsil edilebiliyor (ogle
+   * arasi). Herhangi bir satir isClosed ise gun kapali; degilse ARALIKLARDAN
+   * HERHANGI BIRI kapsiyorsa acik (OR).
+   *
+   * BILINEN SINIR — ONCEKI GUNDEN TASAN ARALIK: yalnizca BUGUNUN satirlarina
+   * bakilir. Cuma 20:00-02:00 tanimliysa Cumartesi 01:00'de Cumartesi'nin
+   * satirlari okunur; Cumartesi'de de gece asan bir aralik varsa dogru sonuc
+   * cikar, yoksa "kapali" denir. Eski davranis da boyleydi; degistirmek her
+   * kontrolde ikinci bir gun sorgusu demek - ayri karar olarak birakildi.
    */
+  // ---------------- CALISMA SAATLERI ----------------
+
+  /**
+   * HAFTALIK PROGRAM (okuma). Yetki magaza guncellemeyle AYNI kapidan:
+   * ownedOrAdmin (sahip | magaza kapsamli rol | platform yoneticisi).
+   *
+   * Kaydi olmayan gun "acik" demektir (BR-014); yanit yine 7 gun dondurur ve o
+   * gunler isClosed:false + bos aralik olarak gorunur - panel formu "eksik gun"
+   * diye bir durumla ugrasmasin.
+   */
+  async calismaSaatleri(storeId: string, userId: string, roles: Role[]) {
+    await this.ownedOrAdmin(storeId, userId, roles);
+    return this.calismaSaatleriOku(storeId);
+  }
+
+  /** Yetki kontrolu YAPMAZ - cagiran taraf zaten yapti (okuma + audit ortak yolu). */
+  private async calismaSaatleriOku(storeId: string) {
+    const bugun = this.trBugun();
+    const satirlar = await this.prisma.storeHour.findMany({
+      where: {
+        storeId,
+        effectiveFrom: { lte: bugun },
+        OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: bugun } }],
+      },
+      orderBy: [{ effectiveFrom: 'desc' }, { weekday: 'asc' }, { sequence: 'asc' }],
+    });
+    // Gun basina YALNIZCA en yeni surum - acikMi ile ayni secim kurali.
+    const enYeni = new Map<number, Date>();
+    for (const k of satirlar) if (!enYeni.has(k.weekday)) enYeni.set(k.weekday, k.effectiveFrom);
+
+    const gunler = [0, 1, 2, 3, 4, 5, 6].map((weekday) => {
+      const surum = enYeni.get(weekday);
+      const gunSatirlari = surum
+        ? satirlar.filter((k) => k.weekday === weekday && k.effectiveFrom.getTime() === surum.getTime())
+        : [];
+      const kapali = gunSatirlari.some((k) => k.isClosed);
+      return {
+        weekday,
+        isClosed: kapali,
+        araliklar: kapali
+          ? []
+          : gunSatirlari
+              .filter((k) => k.openTime !== null && k.closeTime !== null)
+              .map((k) => ({
+                openTime: saatMetni(k.openTime as Date),
+                closeTime: saatMetni(k.closeTime as Date),
+              })),
+      };
+    });
+    return { storeId, gunler };
+  }
+
+  /** Turkiye gununun tarihi (UTC gece yarisi) - DATE kolonu kiyaslari icin. */
+  private trBugun(an: Date = new Date()): Date {
+    const tr = MarketService.trAn(an);
+    return new Date(Date.UTC(tr.getUTCFullYear(), tr.getUTCMonth(), tr.getUTCDate()));
+  }
+
+  /**
+   * HAFTALIK PROGRAMI YAZ (7 gun, tek transaction).
+   *
+   * ATOMIK DEGISTIRME: ayni effectiveFrom icin eski satirlar SILINIP yenileri
+   * yaziliyor (deleteMany + createMany, tek transaction). Upsert secilmedi
+   * cunku coklu aralikta gun basina SATIR SAYISI degisebiliyor - iki aralikli
+   * bir gun tek araliga inince artik satir kalirdi.
+   *
+   * SURUMLEME: effectiveFrom verilmezse BUGUN. Ayni gun tekrar kaydetmek ayni
+   * surumu gunceller; baska bir gun kaydetmek YENI surum yaratir ve acikMi en
+   * yenisini secer - gecmis program silinmeden tarihce olusur.
+   */
+  async calismaSaatleriGuncelle(
+    storeId: string,
+    userId: string,
+    roles: Role[],
+    dto: CalismaSaatleriDto,
+    ip?: string,
+  ) {
+    await this.ownedOrAdmin(storeId, userId, roles);
+
+    const bugun = this.trBugun();
+    const effectiveFrom = dto.effectiveFrom
+      ? new Date(dto.effectiveFrom.slice(0, 10) + 'T00:00:00.000Z')
+      : bugun;
+    if (Number.isNaN(effectiveFrom.getTime())) throw new BadRequestException('effectiveFrom gecersiz');
+    if (effectiveFrom < bugun) {
+      throw new BadRequestException('effectiveFrom gecmis bir tarih olamaz');
+    }
+
+    const gunler = this.calismaSaatleriDogrula(dto);
+    const once = await this.calismaSaatleriOku(storeId);
+
+    const satirlar: Prisma.StoreHourCreateManyInput[] = gunler.flatMap(
+      (g): Prisma.StoreHourCreateManyInput[] =>
+      g.isClosed
+        ? [{
+            storeId, weekday: g.weekday, sequence: 0, isClosed: true,
+            openTime: null, closeTime: null, effectiveFrom,
+          }]
+        : g.araliklar.map((a, i) => ({
+            storeId, weekday: g.weekday, sequence: i, isClosed: false,
+            openTime: saatDate(a.openTime), closeTime: saatDate(a.closeTime), effectiveFrom,
+          })),
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.storeHour.deleteMany({ where: { storeId, effectiveFrom } });
+      await tx.storeHour.createMany({ data: satirlar });
+    });
+
+    const sonra = await this.calismaSaatleriOku(storeId);
+
+    // AUDIT (PR #22 deseni): yalnizca DEGISEN gunler yazilir - 7 gunun tamamini
+    // her kayitta yazmak audit'i gurultuye bogardi. Once/sonra icin EK SORGU
+    // acilmadi; iki okuma zaten yapiliyor.
+    const ozet = (g: { isClosed: boolean; araliklar: { openTime: string; closeTime: string }[] }) =>
+      g.isClosed ? 'KAPALI' : g.araliklar.map((a) => a.openTime + '-' + a.closeTime).join(', ');
+    const degisen = sonra.gunler
+      .map((g, i) => ({ weekday: g.weekday, once: ozet(once.gunler[i]), sonra: ozet(g) }))
+      .filter((d) => d.once !== d.sonra);
+
+    await this.audit.record({
+      actorId: userId, action: 'store.hours.update', entity: 'Store', entityId: storeId, ip,
+      metadata: {
+        effectiveFrom: effectiveFrom.toISOString().slice(0, 10),
+        degisenGunler: degisen.map((d) => d.weekday),
+        degisiklikler: degisen,
+      },
+    });
+
+    return {
+      ...sonra,
+      effectiveFrom: effectiveFrom.toISOString().slice(0, 10),
+      // SU AN ACIK MI: satici yanlis saat kaydettigini siparis reddiyle
+      // (MAGAZA_KAPALI) degil, formda ANINDA gorsun.
+      suAnAcik: await this.acikMi(storeId),
+    };
+  }
+
+  /**
+   * IS KURALLARI (DTO'da ifade edilemeyenler):
+   *  - 7 gun de TAM OLARAK bir kez gonderilmeli
+   *  - kapali gunde aralik OLMAMALI, acik gunde EN AZ BIR aralik
+   *  - openTime === closeTime YASAK: sifir uzunluk mu 24 saat mi belirsiz
+   *  - AYNI GUNUN ARALIKLARI CAKISAMAZ (gece yarisini asan aralik dahil)
+   */
+  private calismaSaatleriDogrula(dto: CalismaSaatleriDto) {
+    const gunler = [...dto.gunler].sort((a, b) => a.weekday - b.weekday);
+    if (new Set(gunler.map((g) => g.weekday)).size !== 7) {
+      throw new BadRequestException('Haftanin 7 gunu de tam olarak bir kez gonderilmeli');
+    }
+    for (const g of gunler) {
+      if (g.isClosed) {
+        if (g.araliklar.length > 0) {
+          throw new BadRequestException('Kapali gun icin aralik gonderilemez (gun ' + g.weekday + ')');
+        }
+        continue;
+      }
+      if (g.araliklar.length === 0) {
+        throw new BadRequestException('Acik gun en az bir aralik ister (gun ' + g.weekday + ')');
+      }
+      const parcaListesi = g.araliklar.map((a) => {
+        const acilis = dakikaMetin(a.openTime);
+        const kapanis = dakikaMetin(a.closeTime);
+        if (acilis === kapanis) {
+          throw new BadRequestException(
+            'Acilis ve kapanis ayni olamaz (gun ' + g.weekday + ', ' + a.openTime +
+              '). 24 saat acik icin 00:00-23:59 girin.',
+          );
+        }
+        return parcalar(acilis, kapanis);
+      });
+      // CAKISMA: her aralik parcalara acilir (gece yarisini asan aralik ikiye
+      // bolunur), sonra ikili karsilastirilir - kural tek bicimde uygulanir.
+      for (let i = 0; i < parcaListesi.length; i++) {
+        for (let j = i + 1; j < parcaListesi.length; j++) {
+          for (const [a1, b1] of parcaListesi[i]) {
+            for (const [a2, b2] of parcaListesi[j]) {
+              if (a1 < b2 && a2 < b1) {
+                throw new BadRequestException(
+                  'Ayni gunun araliklari cakisiyor (gun ' + g.weekday + '): ' +
+                    g.araliklar[i].openTime + '-' + g.araliklar[i].closeTime + ' ve ' +
+                    g.araliklar[j].openTime + '-' + g.araliklar[j].closeTime,
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+    return gunler;
+  }
+
+  private static readonly TR_OFSET_DK = 180; // UTC+3, kalici
+
+  /** Bir Date'i Turkiye duvar saatine tasir; parcalar getUTC* ile okunur. */
+  private static trAn(an: Date): Date {
+    return new Date(an.getTime() + MarketService.TR_OFSET_DK * 60_000);
+  }
+
   async acikMi(storeId: string, an: Date = new Date()): Promise<boolean> {
-    const gun = an.getDay();
-    const bugun = new Date(Date.UTC(an.getFullYear(), an.getMonth(), an.getDate()));
-    const kayit = await this.prisma.storeHour.findFirst({
+    const tr = MarketService.trAn(an);
+    const gun = tr.getUTCDay();
+    const bugun = new Date(Date.UTC(tr.getUTCFullYear(), tr.getUTCMonth(), tr.getUTCDate()));
+    const simdi = tr.getUTCHours() * 60 + tr.getUTCMinutes();
+
+    // 1) GECERLI SURUM: en yeni effectiveFrom.
+    const surum = await this.prisma.storeHour.findFirst({
       where: {
         storeId,
         weekday: gun,
@@ -1009,15 +1270,26 @@ export class MarketService {
         OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: bugun } }],
       },
       orderBy: { effectiveFrom: 'desc' },
+      select: { effectiveFrom: true },
     });
-    if (!kayit) return true;
-    if (kayit.isClosed) return false;
-    const dk = (d: Date) => d.getUTCHours() * 60 + d.getUTCMinutes();
-    const simdi = an.getHours() * 60 + an.getMinutes();
-    const acilis = dk(kayit.openTime);
-    const kapanis = dk(kayit.closeTime);
-    // Gece yarisini asan mesai (or. 20:00 - 02:00) tek araliga sigmaz.
-    return acilis <= kapanis ? simdi >= acilis && simdi < kapanis : simdi >= acilis || simdi < kapanis;
+    if (!surum) return true;
+
+    // 2) O SURUMUN TUM ARALIKLARI (coklu aralik).
+    const satirlar = await this.prisma.storeHour.findMany({
+      where: { storeId, weekday: gun, effectiveFrom: surum.effectiveFrom },
+      orderBy: { sequence: 'asc' },
+      select: { isClosed: true, openTime: true, closeTime: true },
+    });
+    // Kapali gun TEK satirdir; yine de savunmaci: bir satir bile kapali diyorsa kapali.
+    if (satirlar.some((k) => k.isClosed)) return false;
+
+    return satirlar.some((k) => {
+      if (!k.openTime || !k.closeTime) return false; // yarim kayit -> kapsamiyor
+      const acilis = dakika(k.openTime);
+      const kapanis = dakika(k.closeTime);
+      // Gece yarisini asan mesai (or. 20:00 - 02:00) tek araliga sigmaz.
+      return acilis <= kapanis ? simdi >= acilis && simdi < kapanis : simdi >= acilis || simdi < kapanis;
+    });
   }
 
   async assertOwner(storeId: string, userId: string, roles: Role[]) {
