@@ -23,15 +23,30 @@ import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+import { OnbellekService } from '../common/cache/onbellek.service';
 
 @Controller('market')
 export class MarketController {
   constructor(
     private readonly market: MarketService,
     private readonly audit: AuditService,
+    private readonly onbellek: OnbellekService,
   ) {}
 
   // Herkese açık: aktif mağaza listesi
+  //
+  // ONBELLEKLI (60 sn) — vitrinin ana listesi, nadiren degisir.
+  // KULLANICIYA OZEL DEGIL: listActive yalnizca "isActive + satici ACTIVE"
+  // suzuyor, istekten hicbir sey okumuyor. TTL urun listesinden UZUN cunku
+  // icerigi stok/fiyat gibi hizli degisen alan tasimiyor. Magaza yazmalari ve
+  // satici durumu degisimi bu anahtarlari ANINDA temizler.
+  //
+  // DEKORATOR SIRASI: @Public @Get'in HEMEN USTUNDE kalmali -
+  // scripts/check-guards.js korumayi bu yakinliktan okuyor (araya dekorator
+  // girince uc "korumasiz" sayildi, yerelde yakalandi).
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(60_000)
   @Public()
   @Get('stores')
   list(@Query('skip') skip?: string, @Query('take') take?: string) {
@@ -60,15 +75,21 @@ export class MarketController {
   @Post('stores')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  create(@CurrentUser() user: AuthUser, @Body() dto: CreateStoreDto, @Req() req: Request) {
-    return this.market.create(user.id, dto, req.ip);
+  async create(@CurrentUser() user: AuthUser, @Body() dto: CreateStoreDto, @Req() req: Request) {
+    const r = await this.market.create(user.id, dto, req.ip);
+    // ONBELLEK: yeni magaza vitrin listesinde gorunmeli.
+    await this.onbellek.magazaListesiniTemizle();
+    return r;
   }
 
   @Patch('stores/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  update(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateStoreDto, @Req() req: Request) {
-    return this.market.update(id, user.id, user.roles, dto, req.ip);
+  async update(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateStoreDto, @Req() req: Request) {
+    const r = await this.market.update(id, user.id, user.roles, dto, req.ip);
+    // ONBELLEK: ad/logo/isActive degismis olabilir - liste bayatladi.
+    await this.onbellek.magazaListesiniTemizle();
+    return r;
   }
 
   // LOGO YUKLEME IMZASI — dosya sunucudan GECMEZ, istemci dogrudan
@@ -168,6 +189,12 @@ export class MarketController {
   async saticiDurum(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: SaticiDurumDto, @Req() req: Request) {
     const r = await this.market.saticiDurumDegistir(user.roles, id, dto.status);
     await this.audit.record({ actorId: user.id, action: 'seller.status', entity: 'Seller', entityId: id, ip: req.ip, metadata: { to: dto.status } });
+    // ONBELLEK: satici durumu HEM magaza listesini HEM urun listelerini suzuyor
+    // (listActive ve listProducts ikisi de "satici ACTIVE" kosulu tasiyor).
+    // Askiya alinan satici vitrinden ANINDA dusmeli - TTL beklemek kabul
+    // edilemez, bu bir yaptirim karari.
+    await this.onbellek.magazaListesiniTemizle();
+    await this.onbellek.tumUrunListeleriniTemizle();
     return r;
   }
 

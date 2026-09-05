@@ -1,4 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards, UseInterceptors,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
 import { CatalogService } from './catalog.service';
@@ -16,12 +18,15 @@ import { Permission } from '../common/rbac/permissions.enum';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { UuidParam, UuidQuery } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+import { OnbellekService } from '../common/cache/onbellek.service';
 
 @Controller('catalog')
 export class CatalogController {
   constructor(
     private readonly catalog: CatalogService,
     private readonly audit: AuditService,
+    private readonly onbellek: OnbellekService,
   ) {}
 
   // ============================================================
@@ -45,6 +50,19 @@ export class CatalogController {
     return this.catalog.listCategories(storeId, tumu === '1');
   }
 
+  // ONBELLEKLI (30 sn) — vitrinin en sik cagrilan ucu.
+  //
+  // KULLANICIYA OZEL DEGIL: yanit yalnizca storeId + sorgu parametrelerine
+  // bagli (listProducts kullaniciyi HIC okumuyor), bu yuzden URL anahtari
+  // dogru kirilim. Uc @Public; token'li istemci de ayni yaniti alir.
+  //
+  // TTL KISA TUTULDU (30 sn): yanit stok ve fiyat tasiyor. Satici tarafli her
+  // degisiklikte zaten aninda temizleniyor (bkz. yazma uclarindaki
+  // onbellek.magazaUrunleriniTemizle); 30 sn yalnizca SIPARIS kaynakli stok
+  // dususu icin ust sinir - checkout stogu DB'den yeniden dogruladigi icin
+  // bayat gorunum fazla satisa yol acmaz.
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(30_000)
   @Public()
   @Get('stores/:storeId/products')
   products(
@@ -135,6 +153,9 @@ export class CatalogController {
         price: String(r.price), netFiyat: String(r.netFiyat), stock: r.stock, isActive: r.isActive,
       },
     });
+    // ONBELLEK: vitrindeki urun listesi bayatladi. Yeni urun isActive:false ile
+    // dogsa da listeyi temizliyoruz - onay/red akisiyla tek kural.
+    await this.onbellek.magazaUrunleriniTemizle(storeId);
     return r;
   }
 
@@ -172,6 +193,8 @@ export class CatalogController {
         yenidenOnaya: once.isActive && !r.isActive,
       },
     });
+    // ONBELLEK: fiyat/stok/ad/gorunurluk degismis olabilir.
+    await this.onbellek.magazaUrunleriniTemizle(r.storeId);
     return r;
   }
 
@@ -189,6 +212,8 @@ export class CatalogController {
       actorId: user.id, action: 'product.approve', entity: 'Product', entityId: id, ip: req.ip,
       metadata: { storeId: r.storeId, ad: r.name, price: String(r.price), isActive: r.isActive },
     });
+    // ONBELLEK: urun yayina girdi, listede gorunmeli.
+    await this.onbellek.magazaUrunleriniTemizle(r.storeId);
     return r;
   }
 
@@ -208,6 +233,8 @@ export class CatalogController {
         onceAktifMiydi: once.isActive,
       },
     });
+    // ONBELLEK: urun listeden dustu (reject deletedAt yaziyor).
+    await this.onbellek.magazaUrunleriniTemizle(once.storeId);
     return r;
   }
 
@@ -225,6 +252,8 @@ export class CatalogController {
         onceAktifMiydi: once.isActive,
       },
     });
+    // ONBELLEK: urun listeden dustu.
+    await this.onbellek.magazaUrunleriniTemizle(once.storeId);
     return r;
   }
 
