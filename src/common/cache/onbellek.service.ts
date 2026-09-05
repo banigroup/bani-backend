@@ -41,9 +41,21 @@ export class OnbellekService {
    *
    * Desen magaza kapsamli (`catalog/stores/<id>/*`): bu on ek altinda
    * onbellege alinan BASKA bir uc yok (yalnizca products ve categories).
+   *
+   * IKINCI DESEN — TEKIL URUN: public detay ucunun URL'inde storeId YOK
+   * (/catalog/products/<urunId>), yani magaza kapsamli desen onu ASLA
+   * yakalayamaz. Ayri bir metot yapmak yerine ikinci desen olarak buraya
+   * baglandi: yazma uclarindaki cagri tek satir kaliyor ve "listeyi
+   * temizleyip detayi unutma" ihtimali cagiran tarafta degil, bu metodun
+   * icinde kilitli.
+   *
+   * urunId OPSIYONEL: urun OLUSTURMADA verilmiyor cunku heniz var olmayan
+   * bir id'nin detay anahtari da olamaz (404 yanitlari onbellege girmez).
    */
-  async magazaKataloguTemizle(storeId: string): Promise<number> {
-    return this.desenSil(`*catalog/stores/${storeId}/*`);
+  async magazaKataloguTemizle(storeId: string, urunId?: string): Promise<number> {
+    const desenler = [`*catalog/stores/${storeId}/*`];
+    if (urunId) desenler.push(`*catalog/products/${urunId}*`);
+    return this.desenSil(...desenler);
   }
 
   /**
@@ -53,8 +65,11 @@ export class OnbellekService {
    * id'lerini ayrica sorgulamak yerine desenle silmek daha ucuz - islem nadir
    * (admin karari) ve onbellek zaten TTL'li.
    */
-  async tumUrunListeleriniTemizle(): Promise<number> {
-    return this.desenSil('*catalog/stores/*/products*');
+  async tumUrunOnbelleginiTemizle(): Promise<number> {
+    // Ikinci desen TEKIL DETAYLAR: getPublicProduct de "satici ACTIVE"
+    // suzuyor, yani askiya alma detay anahtarlarini da bayatlatiyor. Magaza
+    // kapsamli desen bunlari yakalayamaz (URL'de storeId yok).
+    return this.desenSil('*catalog/stores/*/products*', '*catalog/products/*');
   }
 
   /**
@@ -70,24 +85,26 @@ export class OnbellekService {
    * bellek store'una dusuldugu bir kurulum) sessizce 0 doner - cagiran taraf
    * icin davranis ayni: temizlik "en iyi caba".
    */
-  private async desenSil(desen: string): Promise<number> {
+  private async desenSil(...desenler: string[]): Promise<number> {
     const istemci = this.redisIstemcisi();
     if (!istemci) return 0;
     try {
       let silinen = 0;
-      let imlec = '0';
-      do {
-        const [yeniImlec, anahtarlar] = await istemci.scan(imlec, 'MATCH', desen, 'COUNT', 200);
-        imlec = yeniImlec;
-        if (anahtarlar.length > 0) {
-          await istemci.del(...anahtarlar);
-          silinen += anahtarlar.length;
-        }
-      } while (imlec !== '0');
-      if (silinen > 0) this.logger.log(`Onbellek temizlendi: ${desen} -> ${silinen} anahtar`);
+      for (const desen of desenler) {
+        let imlec = '0';
+        do {
+          const [yeniImlec, anahtarlar] = await istemci.scan(imlec, 'MATCH', desen, 'COUNT', 200);
+          imlec = yeniImlec;
+          if (anahtarlar.length > 0) {
+            await istemci.del(...anahtarlar);
+            silinen += anahtarlar.length;
+          }
+        } while (imlec !== '0');
+      }
+      if (silinen > 0) this.logger.log(`Onbellek temizlendi: ${desenler.join(' + ')} -> ${silinen} anahtar`);
       return silinen;
     } catch (e) {
-      this.logger.warn(`Onbellek temizligi atlandi (${desen}): ${(e as Error).message}`);
+      this.logger.warn(`Onbellek temizligi atlandi (${desenler.join(' + ')}): ${(e as Error).message}`);
       return 0;
     }
   }

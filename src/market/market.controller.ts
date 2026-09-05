@@ -194,7 +194,7 @@ export class MarketController {
     // Askiya alinan satici vitrinden ANINDA dusmeli - TTL beklemek kabul
     // edilemez, bu bir yaptirim karari.
     await this.onbellek.magazaListesiniTemizle();
-    await this.onbellek.tumUrunListeleriniTemizle();
+    await this.onbellek.tumUrunOnbelleginiTemizle();
     return r;
   }
 

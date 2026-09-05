@@ -97,6 +97,23 @@ export class CatalogController {
 
   // MUSTERI DETAYI: muhasebe kirilimi (netFiyat/komisyon/kargo/KDV) DONMEZ,
   // yalnizca vitrin fiyati. Kirilimi goren tekil-urun ucu asagidaki :id/detay.
+  //
+  // ONBELLEKLI (30 sn). SATICI DETAY UCU (:id/detay) ILE KARISTIRILMAMALI: o uc
+  // auth'lu ve kullaniciya ozel, ONBELLEGE ALINMADI. Burasi @Public ve yanit
+  // yalnizca urun id'sine bagli.
+  //
+  // TTL URUN LISTESIYLE AYNI (30 sn) — BILINCLI TUTARLILIK: ayni urunun ayni
+  // stok/fiyat degerleri iki ucta farkli surelerde bayatlarsa musteri listede
+  // baska, detayda baska bir sayi gorur. Iki uc da ayni veriyi tasidigi icin
+  // ayni sureye baglandi. Satici tarafli her degisiklikte zaten aninda
+  // temizleniyor; 30 sn yalnizca SIPARIS kaynakli stok dususu icin ust sinir -
+  // checkout stogu DB'den yeniden dogruladigi icin bayat gorunum fazla satisa
+  // yol acmaz.
+  //
+  // DEKORATOR SIRASI: @Public, @Get'in HEMEN ustunde kalmali; araya girerse
+  // scripts/check-guards.js ucu "korumasiz" sayar.
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(30_000)
   @Public()
   @Get('products/:id')
   product(@Param('id', UuidParam) id: string) {
@@ -213,8 +230,9 @@ export class CatalogController {
         yenidenOnaya: once.isActive && !r.isActive,
       },
     });
-    // ONBELLEK: fiyat/stok/ad/gorunurluk degismis olabilir.
-    await this.onbellek.magazaKataloguTemizle(r.storeId);
+    // ONBELLEK: fiyat/stok/ad/gorunurluk degismis olabilir. Ikinci arguman
+    // tekil detay anahtari (/catalog/products/<id>).
+    await this.onbellek.magazaKataloguTemizle(r.storeId, id);
     return r;
   }
 
@@ -232,8 +250,10 @@ export class CatalogController {
       actorId: user.id, action: 'product.approve', entity: 'Product', entityId: id, ip: req.ip,
       metadata: { storeId: r.storeId, ad: r.name, price: String(r.price), isActive: r.isActive },
     });
-    // ONBELLEK: urun yayina girdi, listede gorunmeli.
-    await this.onbellek.magazaKataloguTemizle(r.storeId);
+    // ONBELLEK: urun yayina girdi, listede gorunmeli. Detay ucu onay oncesi
+    // 404 donuyordu; o yanit onbellege girmez ama urun sonradan degistiyse
+    // eski satir durabilir - tekil anahtar da temizleniyor.
+    await this.onbellek.magazaKataloguTemizle(r.storeId, id);
     return r;
   }
 
@@ -253,8 +273,9 @@ export class CatalogController {
         onceAktifMiydi: once.isActive,
       },
     });
-    // ONBELLEK: urun listeden dustu (reject deletedAt yaziyor).
-    await this.onbellek.magazaKataloguTemizle(once.storeId);
+    // ONBELLEK: urun listeden dustu (reject deletedAt yaziyor) - detay ucu de
+    // artik 404 dondurmeli, tekil anahtar temizleniyor.
+    await this.onbellek.magazaKataloguTemizle(once.storeId, id);
     return r;
   }
 
@@ -272,8 +293,8 @@ export class CatalogController {
         onceAktifMiydi: once.isActive,
       },
     });
-    // ONBELLEK: urun listeden dustu.
-    await this.onbellek.magazaKataloguTemizle(once.storeId);
+    // ONBELLEK: urun listeden dustu - detay ucu de artik 404 dondurmeli.
+    await this.onbellek.magazaKataloguTemizle(once.storeId, id);
     return r;
   }
 
