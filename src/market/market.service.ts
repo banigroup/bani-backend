@@ -6,6 +6,7 @@ import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { SellerStatusService } from './seller-status.service';
 import { sifrele, son4 } from '../common/crypto/gizli-alan';
 import { slugify, randomSuffix } from '../common/util/slug';
+import { cloudinaryImzala } from '../common/upload/cloudinary.util';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
@@ -1027,35 +1028,30 @@ export class MarketService {
   }
 
   /**
-   * BR-014 — magaza su an acik mi.
+   * MAGAZA LOGOSU ICIN YUKLEME IMZASI.
    *
-   * KAYIT YOKSA ACIK SAYILIR: aksi halde store_hours tablosu eklendigi an canli
-   * magazalarin hepsi kapanirdi (hicbirinde saat kaydi yok).
-   * Ayni gun icin birden fazla gecerli SURUM varsa EN YENI effectiveFrom kazanir
-   * (sezonluk saat eskisinin uzerine yazmadan tanimlanabilsin).
+   * KATALOG UCUNUN (catalog: bani/products/<storeId>) IKIZI, iki bilincli
+   * farkla:
+   *   1) KLASOR bani/stores/<storeId> - logo urun gorseli degil, magazanin
+   *      kendi varligi; ayni klasorde durmalari ileride "urun gorsellerini
+   *      temizle" gibi bir isi tehlikeli hale getirirdi.
+   *   2) IZIN STORE_WRITE (PRODUCT_WRITE degil) - logo bir MAGAZA AYARIDIR.
+   *      Katalog izniyle verilseydi yalnizca urun yazma yetkisi olan depo
+   *      personeli magazanin logosunu degistirebilirdi.
    *
-   * SAAT DILIMI — KAYITLAR TURKIYE DUVAR SAATIDIR. Sunucu UTC calisiyor
-   * (Railway konteynerinde TZ ayarli degil; 00:17 TR'deki deploy'un logu
-   * 21:17 damgali). Eski hal kayitli saati getUTCHours ile okuyup SUNUCU YEREL
-   * saatiyle karsilastiriyordu: satici "09:00-18:00" yazsa magaza canlida
-   * 12:00-21:00 TR arasi acik gorunurdu - 3 saat kayma. Simdi "simdi" TR'ye
-   * cevriliyor. Turkiye KALICI UTC+3 (yaz saati uygulamasi yok), o yuzden tek
-   * sabit yeterli; kutuphane/veritabani TZ ayari gerekmiyor.
+   * GUVENLIK KATALOGDAKININ AYNISI: klasor SUNUCUDA uretilir, istemciden
+   * hicbir parametre alinmaz (uc @Body almiyor), imza yalnizca
+   * { folder, timestamp } uzerine atilir. Istemci baska bir klasor kullanmaya
+   * kalkarsa Cloudinary imzayi reddeder. public_id imzalanmaz: imzalansaydi
+   * istemci ayni klasordeki baska bir varligin uzerine yazabilirdi.
    *
-   * GUN SECIMI DE TR'YE GORE: 01:00 TR = 22:00 UTC, yani UTC'ye gore gun
-   * ONCEKI gundur. Bu cevrilmezse gece yarisindan sonra yanlis gunun saatleri
-   * okunurdu.
-   *
-   * COKLU ARALIK: bir gun birden fazla satirla temsil edilebiliyor (ogle
-   * arasi). Herhangi bir satir isClosed ise gun kapali; degilse ARALIKLARDAN
-   * HERHANGI BIRI kapsiyorsa acik (OR).
-   *
-   * BILINEN SINIR — ONCEKI GUNDEN TASAN ARALIK: yalnizca BUGUNUN satirlarina
-   * bakilir. Cuma 20:00-02:00 tanimliysa Cumartesi 01:00'de Cumartesi'nin
-   * satirlari okunur; Cumartesi'de de gece asan bir aralik varsa dogru sonuc
-   * cikar, yoksa "kapali" denir. Eski davranis da boyleydi; degistirmek her
-   * kontrolde ikinci bir gun sorgusu demek - ayri karar olarak birakildi.
+   * YETKI: ownedOrAdmin - magaza guncellemenin AYNI kapisi.
    */
+  async logoImzasi(storeId: string, userId: string, roles: Role[]) {
+    await this.ownedOrAdmin(storeId, userId, roles);
+    return cloudinaryImzala(`bani/stores/${storeId}`);
+  }
+
   // ---------------- CALISMA SAATLERI ----------------
 
   /**
@@ -1248,6 +1244,36 @@ export class MarketService {
     return gunler;
   }
 
+  /**
+   * BR-014 — magaza su an acik mi.
+   *
+   * KAYIT YOKSA ACIK SAYILIR: aksi halde store_hours tablosu eklendigi an canli
+   * magazalarin hepsi kapanirdi (hicbirinde saat kaydi yok).
+   * Ayni gun icin birden fazla gecerli SURUM varsa EN YENI effectiveFrom kazanir
+   * (sezonluk saat eskisinin uzerine yazmadan tanimlanabilsin).
+   *
+   * SAAT DILIMI — KAYITLAR TURKIYE DUVAR SAATIDIR. Sunucu UTC calisiyor
+   * (Railway konteynerinde TZ ayarli degil; 00:17 TR'deki deploy'un logu
+   * 21:17 damgali). Eski hal kayitli saati getUTCHours ile okuyup SUNUCU YEREL
+   * saatiyle karsilastiriyordu: satici "09:00-18:00" yazsa magaza canlida
+   * 12:00-21:00 TR arasi acik gorunurdu - 3 saat kayma. Simdi "simdi" TR'ye
+   * cevriliyor. Turkiye KALICI UTC+3 (yaz saati uygulamasi yok), o yuzden tek
+   * sabit yeterli; kutuphane/veritabani TZ ayari gerekmiyor.
+   *
+   * GUN SECIMI DE TR'YE GORE: 01:00 TR = 22:00 UTC, yani UTC'ye gore gun
+   * ONCEKI gundur. Bu cevrilmezse gece yarisindan sonra yanlis gunun saatleri
+   * okunurdu.
+   *
+   * COKLU ARALIK: bir gun birden fazla satirla temsil edilebiliyor (ogle
+   * arasi). Herhangi bir satir isClosed ise gun kapali; degilse ARALIKLARDAN
+   * HERHANGI BIRI kapsiyorsa acik (OR).
+   *
+   * BILINEN SINIR — ONCEKI GUNDEN TASAN ARALIK: yalnizca BUGUNUN satirlarina
+   * bakilir. Cuma 20:00-02:00 tanimliysa Cumartesi 01:00'de Cumartesi'nin
+   * satirlari okunur; Cumartesi'de de gece asan bir aralik varsa dogru sonuc
+   * cikar, yoksa "kapali" denir. Eski davranis da boyleydi; degistirmek her
+   * kontrolde ikinci bir gun sorgusu demek - ayri karar olarak birakildi.
+   */
   private static readonly TR_OFSET_DK = 180; // UTC+3, kalici
 
   /** Bir Date'i Turkiye duvar saatine tasir; parcalar getUTC* ile okunur. */

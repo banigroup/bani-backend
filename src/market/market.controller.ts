@@ -71,6 +71,26 @@ export class MarketController {
     return this.market.update(id, user.id, user.roles, dto, req.ip);
   }
 
+  // LOGO YUKLEME IMZASI — dosya sunucudan GECMEZ, istemci dogrudan
+  // Cloudinary'ye yukler. Katalogdaki media-imza ucunun ikizi; farklar:
+  // klasor bani/stores/<storeId> ve izin STORE_WRITE (logo magaza ayaridir).
+  //
+  // ISTEMCIDEN PARAMETRE ALINMAZ: @Body YOK. Govdede folder/upload_preset
+  // gonderilse bile okunmaz; imzalanan deger sunucununkidir.
+  @Post('stores/:id/logo-imza')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  async logoImza(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
+    const r = await this.market.logoImzasi(id, user.id, user.roles);
+    // AUDIT: imza bir YUKLEME YETKISIDIR (katalog ucuyla ayni gerekce).
+    // metadata'ya YALNIZCA klasor; signature/apiKey audit'e GIRMEZ.
+    await this.audit.record({
+      actorId: user.id, action: 'store.logo.sign', entity: 'Store', entityId: id, ip: req.ip,
+      metadata: { folder: r.folder },
+    });
+    return r;
+  }
+
   // ---------------- CALISMA SAATLERI ----------------
   //
   // Yetki magaza guncellemeyle AYNI: STORE_WRITE + serviste ownedOrAdmin.
