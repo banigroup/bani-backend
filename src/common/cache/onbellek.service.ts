@@ -31,9 +31,19 @@ export class OnbellekService {
 
   constructor(@Inject(CACHE_MANAGER) private readonly cache: Cache) {}
 
-  /** Bir magazanin urun listesi anahtarlarinin tamami. */
-  async magazaUrunleriniTemizle(storeId: string): Promise<number> {
-    return this.desenSil(`*catalog/stores/${storeId}/products*`);
+  /**
+   * Bir magazanin KATALOG anahtarlarinin tamami: urun listeleri VE kategori
+   * listesi. Tek desende birlestirildi cunku kategori listesi urun durumuna
+   * BAGLI - listCategories bos kategorileri gizliyor ve _count'u stok>0 olan
+   * urunlerden sayiyor. Yani her urun yazmasi ikisini birden bayatlatiyor;
+   * ayri iki SCAN yerine tek SCAN yapmak hem daha ucuz hem de "birini
+   * temizleyip digerini unutma" hatasini yapisal olarak imkansiz kiliyor.
+   *
+   * Desen magaza kapsamli (`catalog/stores/<id>/*`): bu on ek altinda
+   * onbellege alinan BASKA bir uc yok (yalnizca products ve categories).
+   */
+  async magazaKataloguTemizle(storeId: string): Promise<number> {
+    return this.desenSil(`*catalog/stores/${storeId}/*`);
   }
 
   /**

@@ -43,6 +43,24 @@ export class CatalogController {
   // ============================================================
 
   // Herkese acik okuma
+  //
+  // ONBELLEKLI (60 sn) — vitrinin ikinci en sik cagrilan ucu; her magaza
+  // sayfasi acilisinda urun listesiyle birlikte cagriliyor.
+  //
+  // KULLANICIYA OZEL DEGIL: yanit yalnizca storeId + `tumu` parametresine
+  // bagli, listCategories kullaniciyi HIC okumuyor. `tumu=1` (yonetim gorunumu)
+  // URL'nin parcasi oldugu icin CacheInterceptor bunu AYRI anahtarda tutuyor -
+  // yonetimin gordugu bos kategoriler vitrine sizmaz.
+  //
+  // TTL URUN LISTESINDEN UZUN (60 sn): kategori agaci yavas degisen veri.
+  // Icerigi urun durumuna bagli oldugu icin (bos kategori gizleniyor, _count
+  // stoktan sayiliyor) urun yazmalarinda da temizleniyor - bkz.
+  // onbellek.magazaKataloguTemizle.
+  //
+  // DEKORATOR SIRASI: @Public, @Get'in HEMEN ustunde kalmali; araya girerse
+  // scripts/check-guards.js ucu "korumasiz" sayar.
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(60_000)
   @Public()
   @Get('stores/:storeId/categories')
   categories(@Param('storeId', UuidParam) storeId: string, @Query('tumu') tumu?: string) {
@@ -58,7 +76,7 @@ export class CatalogController {
   //
   // TTL KISA TUTULDU (30 sn): yanit stok ve fiyat tasiyor. Satici tarafli her
   // degisiklikte zaten aninda temizleniyor (bkz. yazma uclarindaki
-  // onbellek.magazaUrunleriniTemizle); 30 sn yalnizca SIPARIS kaynakli stok
+  // onbellek.magazaKataloguTemizle); 30 sn yalnizca SIPARIS kaynakli stok
   // dususu icin ust sinir - checkout stogu DB'den yeniden dogruladigi icin
   // bayat gorunum fazla satisa yol acmaz.
   @UseInterceptors(CacheInterceptor)
@@ -106,8 +124,10 @@ export class CatalogController {
   @Post('stores/:storeId/categories')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.CATEGORY_WRITE)
-  createCategory(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateCategoryDto) {
-    return this.catalog.createCategory(storeId, user.id, user.roles, dto);
+  async createCategory(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateCategoryDto) {
+    const r = await this.catalog.createCategory(storeId, user.id, user.roles, dto);
+    await this.onbellek.magazaKataloguTemizle(storeId);
+    return r;
   }
 
   // GORSEL YUKLEME IMZASI — MAGAZA KAPSAMLI.
@@ -155,7 +175,7 @@ export class CatalogController {
     });
     // ONBELLEK: vitrindeki urun listesi bayatladi. Yeni urun isActive:false ile
     // dogsa da listeyi temizliyoruz - onay/red akisiyla tek kural.
-    await this.onbellek.magazaUrunleriniTemizle(storeId);
+    await this.onbellek.magazaKataloguTemizle(storeId);
     return r;
   }
 
@@ -194,7 +214,7 @@ export class CatalogController {
       },
     });
     // ONBELLEK: fiyat/stok/ad/gorunurluk degismis olabilir.
-    await this.onbellek.magazaUrunleriniTemizle(r.storeId);
+    await this.onbellek.magazaKataloguTemizle(r.storeId);
     return r;
   }
 
@@ -213,7 +233,7 @@ export class CatalogController {
       metadata: { storeId: r.storeId, ad: r.name, price: String(r.price), isActive: r.isActive },
     });
     // ONBELLEK: urun yayina girdi, listede gorunmeli.
-    await this.onbellek.magazaUrunleriniTemizle(r.storeId);
+    await this.onbellek.magazaKataloguTemizle(r.storeId);
     return r;
   }
 
@@ -234,7 +254,7 @@ export class CatalogController {
       },
     });
     // ONBELLEK: urun listeden dustu (reject deletedAt yaziyor).
-    await this.onbellek.magazaUrunleriniTemizle(once.storeId);
+    await this.onbellek.magazaKataloguTemizle(once.storeId);
     return r;
   }
 
@@ -253,7 +273,7 @@ export class CatalogController {
       },
     });
     // ONBELLEK: urun listeden dustu.
-    await this.onbellek.magazaUrunleriniTemizle(once.storeId);
+    await this.onbellek.magazaKataloguTemizle(once.storeId);
     return r;
   }
 
