@@ -1407,6 +1407,43 @@ export class MarketService {
     };
   }
 
+  /**
+   * CHECKOUT KAPISI ICIN UYGUNLUK SORGUSU.
+   *
+   * NEDEN BURADA, orders.service'te DEGIL: karsilastirma bolgeAnahtar() ile
+   * yapiliyor ve o normalizasyon TEK YERDE yasamali. Satici secimi ile musteri
+   * adresi farkli kurallarla normalize edilirse satici "Kayapınar" secip
+   * musterisi "kayapinar" adresiyle reddedilirdi - hatanin en pahali turu.
+   *
+   * ILCE KARSILASTIRILIR, MAHALLE DEGIL (bu turda): satici mahalle bazli satir
+   * yazmis olsa bile kapi ilce duzeyinde calisir, yani o ilcenin BASKA bir
+   * mahallesindeki musteri de gecer. Adres tablosunda neighborhood canlida 4
+   * adresin 1'inde dolu; mahalle karsilastirmasi bugun musterilerin cogunu
+   * haksiz yere engellerdi. Mahalle kirilimi ayri bir paketin isi.
+   *
+   * ILCESIZ ADRES GECMEZ: dogrulanamayan adresi gecirmek, saticinin gitmedigi
+   * bir yere siparis kabul etmek demektir.
+   */
+  async teslimatBolgesiUygun(storeId: string, il?: string | null, ilce?: string | null) {
+    const bolgeler = await this.prisma.magazaTeslimatBolgesi.findMany({
+      where: { storeId },
+      select: { il: true, ilce: true },
+    });
+
+    // KISIT YOK -> HER YERE TESLIMAT. store_hours ile ayni geriye donuk uyum
+    // kurali; aksi halde bu kapi eklendigi an kaydi olmayan tum magazalar
+    // siparis alamaz hale gelirdi.
+    if (bolgeler.length === 0) return { uygun: true, kisitVar: false, ilceler: [] as string[] };
+
+    const ilceler = [...new Set(bolgeler.map((b) => `${b.il} / ${b.ilce}`))].sort();
+    const adresIlce = this.bosaCevir(ilce);
+    if (!adresIlce) return { uygun: false, kisitVar: true, ilceler };
+
+    const anahtar = this.bolgeAnahtar(il, adresIlce);
+    const uygun = bolgeler.some((b) => this.bolgeAnahtar(b.il, b.ilce) === anahtar);
+    return { uygun, kisitVar: true, ilceler };
+  }
+
   /** Magazanin SECTIGI bolgeler. kisitVar=false -> her yere teslimat. */
   async teslimatBolgeleri(storeId: string, userId: string, roles: Role[]) {
     await this.ownedOrAdmin(storeId, userId, roles);
