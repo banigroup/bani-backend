@@ -30,11 +30,6 @@ import { NewsletterModule } from './newsletter/newsletter.module';
   imports: [
     SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
-    // ScheduleModule BILEREK YOK — cron'lar WORKER surecinde calisiyor
-    // (src/worker.module.ts). @Cron dekoratoru tek basina bir sey yapmaz;
-    // metadatayi zamanlayiciya baglayan ScheduleModule'dur. Burada
-    // olmadigi icin API surecinde HICBIR cron tetiklenmez - kapatma
-    // yapisal, unutulabilecek bir ortam degiskenine bagli degil.
     // ---------------- ONBELLEK (Redis) ----------------
     //
     // isGlobal: CACHE_MANAGER her dilimden enjekte edilebilsin (bugun yalnizca
@@ -64,6 +59,11 @@ import { NewsletterModule } from './newsletter/newsletter.module';
         ttl: 30_000,
       }),
     }),
+    // ScheduleModule BILEREK YOK — cron'lar WORKER surecinde calisiyor
+    // (src/worker.module.ts). @Cron dekoratoru tek basina bir sey yapmaz;
+    // metadatayi zamanlayiciya baglayan ScheduleModule'dur. Burada
+    // olmadigi icin API surecinde HICBIR cron tetiklenmez - kapatma
+    // yapisal, unutulabilecek bir ortam degiskenine bagli degil.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PrismaModule,
     RbacModule,
