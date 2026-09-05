@@ -9,6 +9,7 @@ import { slugify, randomSuffix } from '../common/util/slug';
 import { cloudinaryImzala } from '../common/upload/cloudinary.util';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
+import { TeslimatBolgeleriDto } from './dto/teslimat-bolge.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/rol-kontrol';
 import { DIKEY_DOMAIN } from '../common/domain/dikey-domain';
@@ -1316,6 +1317,245 @@ export class MarketService {
       // Gece yarisini asan mesai (or. 20:00 - 02:00) tek araliga sigmaz.
       return acilis <= kapanis ? simdi >= acilis && simdi < kapanis : simdi >= acilis || simdi < kapanis;
     });
+  }
+
+  // ==========================================================================
+  // TESLIMAT BOLGELERI
+  //
+  // IKI TABLO, IKI FARKLI IS:
+  //   platform_hizmet_bolgeleri  -> saticinin NELERI SECEBILECEGI (kapsam)
+  //   magaza_teslimat_bolgeleri  -> saticinin NELERI SECTIGI (teslimat kurali)
+  // Checkout YALNIZCA ikincisini okur; platform kapsami odeme yolunda hic
+  // devreye girmez. Boylece platform bir ilceyi kapsamdan cikardiginda o
+  // ilcede zaten calisan magazalar aniden siparis alamaz hale gelmez.
+  // ==========================================================================
+
+  /**
+   * KARSILASTIRMA ANAHTARI. Canli olcumde (2026-09-05) ayni ilce yalnizca bas
+   * harfte ayrisan iki yazimla kayitliydi, ili de oyle. Ham metin
+   * karsilastirmasi gercek bir musteriyi haksiz yere engellerdi.
+   *
+   * toLocaleLowerCase('tr'): "İ" -> "i" ve "I" -> "ı" donusumu Turkce'ye ozel;
+   * varsayilan yerel ayarla "İstanbul" ile "istanbul" eslesmezdi.
+   */
+  private bolgeAnahtar(...parcalar: (string | null | undefined)[]): string {
+    return parcalar
+      .map((x) =>
+        (x ?? '')
+          .trim()
+          .toLocaleLowerCase('tr')
+          // TURKCE KARAKTER KATLAMA: "kayapinar" ile "kayapınar" ayni bolgedir.
+          // Turkce klavyesi olmayan (veya otomatik duzeltmesi kapali) bir
+          // kullanicinin adresi bu yuzden reddedilmemeli. Yanlis birlesme
+          // riski pratikte yok: yalnizca aksanla ayrisan iki ayri Turkiye
+          // ilcesi bulunmuyor.
+          .replace(/[ıî]/g, 'i')
+          .replace(/ş/g, 's')
+          .replace(/ğ/g, 'g')
+          .replace(/[üû]/g, 'u')
+          .replace(/ö/g, 'o')
+          .replace(/ç/g, 'c')
+          .replace(/â/g, 'a')
+          // Ic bosluklari tekile indir: "Bagcilar  Mah" ile "Bagcilar Mah".
+          .replace(/\s+/g, ' '),
+      )
+      .join('|');
+  }
+
+  /** Bos/whitespace metni yoklukla ayni sayar: "" ve undefined -> undefined. */
+  private bosaCevir(x?: string | null): string | undefined {
+    const t = (x ?? '').trim();
+    return t.length > 0 ? t : undefined;
+  }
+
+  /**
+   * PLATFORM KAPSAMI - satici panelinin secim listesini besleyen okuma ucu.
+   *
+   * tumIlce: o ilce icin mahalle=NULL satiri var demektir -> ilcenin TAMAMI
+   * acik, satici istedigi mahalleyi (veya ilcenin tamamini) secebilir.
+   * tumIlce=false ise yalnizca listelenen mahalleler secilebilir.
+   */
+  async aktifBolgeler() {
+    const satirlar = await this.prisma.platformHizmetBolgesi.findMany({
+      where: { isActive: true },
+      select: { il: true, ilce: true, mahalle: true },
+      orderBy: [{ il: 'asc' }, { ilce: 'asc' }, { mahalle: 'asc' }],
+    });
+
+    const iller = new Map<string, Map<string, { tumIlce: boolean; mahalleler: string[] }>>();
+    for (const r of satirlar) {
+      if (!iller.has(r.il)) iller.set(r.il, new Map());
+      const ilceler = iller.get(r.il)!;
+      if (!ilceler.has(r.ilce)) ilceler.set(r.ilce, { tumIlce: false, mahalleler: [] });
+      const kayit = ilceler.get(r.ilce)!;
+      if (r.mahalle === null) kayit.tumIlce = true;
+      else kayit.mahalleler.push(r.mahalle);
+    }
+
+    return {
+      iller: [...iller.entries()].map(([il, ilceler]) => ({
+        il,
+        ilceler: [...ilceler.entries()].map(([ilce, k]) => ({
+          ilce,
+          tumIlce: k.tumIlce,
+          // NULL satir varsa mahalle listesi ANLAMSIZDIR: ilce butunuyle acik.
+          // Istemciye bos dizi donmek "secenek yok" gibi okunmasin diye
+          // tumIlce bayragi ayri tasiniyor.
+          mahalleler: k.tumIlce ? [] : k.mahalleler,
+        })),
+      })),
+    };
+  }
+
+  /** Magazanin SECTIGI bolgeler. kisitVar=false -> her yere teslimat. */
+  async teslimatBolgeleri(storeId: string, userId: string, roles: Role[]) {
+    await this.ownedOrAdmin(storeId, userId, roles);
+    return this.teslimatBolgeleriOku(storeId);
+  }
+
+  private async teslimatBolgeleriOku(storeId: string) {
+    const bolgeler = await this.prisma.magazaTeslimatBolgesi.findMany({
+      where: { storeId },
+      select: { il: true, ilce: true, mahalle: true, feeKurus: true },
+      orderBy: [{ il: 'asc' }, { ilce: 'asc' }, { mahalle: 'asc' }],
+    });
+    return { storeId, kisitVar: bolgeler.length > 0, bolgeler };
+  }
+
+  /**
+   * TUM LISTEYI DEGISTIR (PUT). Bos dizi = kisit yok.
+   *
+   * DOGRULAMA PLATFORM KAPSAMINA KARSI: gonderilen her satir
+   * platform_hizmet_bolgeleri'nde karsiligi olmali, yoksa 400. Satici
+   * platformun hizmet vermedigi bir ilceyi secip musteriye "buraya teslimat
+   * var" izlenimi veremez.
+   *
+   * KAYDEDILEN DEGER KANONIKTIR: saticinin gonderdigi metin degil, platform
+   * tablosundaki yazim yazilir. "kayapinar" gonderen satici da "Kayapınar"
+   * kaydeder; checkout karsilastirmasi tek yazim uzerinden yurur.
+   */
+  async teslimatBolgeleriGuncelle(
+    storeId: string,
+    userId: string,
+    roles: Role[],
+    dto: TeslimatBolgeleriDto,
+    ip?: string,
+  ) {
+    await this.ownedOrAdmin(storeId, userId, roles);
+
+    const kapsam = await this.prisma.platformHizmetBolgesi.findMany({
+      where: { isActive: true },
+      select: { il: true, ilce: true, mahalle: true },
+    });
+
+    // ilce anahtari -> { kanonik il/ilce, tumIlce, mahalle anahtari -> kanonik ad }
+    const harita = new Map<string, {
+      il: string; ilce: string; tumIlce: boolean; mahalleler: Map<string, string>;
+    }>();
+    for (const k of kapsam) {
+      const anahtar = this.bolgeAnahtar(k.il, k.ilce);
+      if (!harita.has(anahtar)) {
+        harita.set(anahtar, { il: k.il, ilce: k.ilce, tumIlce: false, mahalleler: new Map() });
+      }
+      const kayit = harita.get(anahtar)!;
+      if (k.mahalle === null) kayit.tumIlce = true;
+      else kayit.mahalleler.set(this.bolgeAnahtar(k.mahalle), k.mahalle);
+    }
+
+    const satirlar: Prisma.MagazaTeslimatBolgesiCreateManyInput[] = [];
+    const gorulen = new Set<string>();
+
+    for (const b of dto.bolgeler) {
+      const ilceKaydi = harita.get(this.bolgeAnahtar(b.il, b.ilce));
+      if (!ilceKaydi) {
+        throw new BadRequestException(
+          `Platform kapsamı dışında: ${b.il} / ${b.ilce}. Seçilebilir bölgeler için GET /market/aktif-bolgeler.`,
+        );
+      }
+
+      const mahalle = this.bosaCevir(b.mahalle);
+      let kanonikMahalle: string | null = null;
+
+      if (mahalle === undefined) {
+        // ILCENIN TAMAMI istendi: yalnizca ilce butun olarak aciksa gecerli.
+        if (!ilceKaydi.tumIlce) {
+          throw new BadRequestException(
+            `${ilceKaydi.il} / ${ilceKaydi.ilce} ilçesinde yalnızca belirli mahalleler hizmete açık; ` +
+            `mahalle seçmelisiniz (${[...ilceKaydi.mahalleler.values()].join(', ')}).`,
+          );
+        }
+      } else if (ilceKaydi.tumIlce) {
+        // Ilce butunuyle acik -> HER mahalle serbest, platformda satiri olmasi
+        // gerekmez. Saticinin girdigi yazim korunur (kanonik karsiligi yok).
+        kanonikMahalle = mahalle;
+      } else {
+        const eslesen = ilceKaydi.mahalleler.get(this.bolgeAnahtar(mahalle));
+        if (!eslesen) {
+          throw new BadRequestException(
+            `Platform kapsamı dışında mahalle: ${ilceKaydi.il} / ${ilceKaydi.ilce} / ${mahalle}. ` +
+            `Açık mahalleler: ${[...ilceKaydi.mahalleler.values()].join(', ')}.`,
+          );
+        }
+        kanonikMahalle = eslesen;
+      }
+
+      // TEKILLESTIRME: unique index mahalle NULL satirlarda calismaz
+      // (Postgres'te NULL != NULL), bu yuzden ayni satirin iki kez gonderilmesi
+      // createMany'de P2002 degil SESSIZ COGALMA uretirdi.
+      //
+      // ANAHTARDA UCRET YOK (bilerek): ayni bolge iki farkli ucretle
+      // gonderilirse bu bir istemci hatasidir; iki satir yazip birini rastgele
+      // kullanmaktansa ILK gonderileni almak ongorulebilir davranistir.
+      const tekil = this.bolgeAnahtar(ilceKaydi.il, ilceKaydi.ilce, kanonikMahalle);
+      if (gorulen.has(tekil)) continue;
+      gorulen.add(tekil);
+
+      // feeKurus DOGRULANMAZ, OLDUGU GIBI YAZILIR: platform kapsami bolgenin
+      // SECILEBILIRLIGINI belirler, fiyatini degil - ucret saticinin ticari
+      // karari. Sinirlar DTO'da (0 <= feeKurus <= 1.000.000).
+      satirlar.push({
+        storeId,
+        il: ilceKaydi.il,
+        ilce: ilceKaydi.ilce,
+        mahalle: kanonikMahalle,
+        feeKurus: b.feeKurus ?? null,
+      });
+    }
+
+    const once = await this.teslimatBolgeleriOku(storeId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.magazaTeslimatBolgesi.deleteMany({ where: { storeId } });
+      if (satirlar.length > 0) await tx.magazaTeslimatBolgesi.createMany({ data: satirlar });
+    });
+
+    const sonra = await this.teslimatBolgeleriOku(storeId);
+
+    // AUDIT: tum listeyi iki kez yazmak yerine FARKI yaziyoruz (PR #22 deseni).
+    // "Hangi bolge ne zaman acildi/kapandi" sorusunun cevabi bu.
+    // UCRET DE FARKA GIRER: ayni bolgenin ucretinin degismesi de izlenebilir
+    // olmali, yoksa "teslimat ucreti ne zaman 25 TL oldu" sorusu cevapsiz kalir.
+    const metin = (b: { il: string; ilce: string; mahalle: string | null; feeKurus: number | null }) => {
+      const yer = b.mahalle ? `${b.il}/${b.ilce}/${b.mahalle}` : `${b.il}/${b.ilce}`;
+      return b.feeKurus === null ? yer : `${yer} (${b.feeKurus} kr)`;
+    };
+    const onceSet = new Set(once.bolgeler.map(metin));
+    const sonraSet = new Set(sonra.bolgeler.map(metin));
+
+    await this.audit.record({
+      actorId: userId, action: 'store.delivery_areas.update', entity: 'Store', entityId: storeId, ip,
+      metadata: {
+        oncekiAdet: once.bolgeler.length,
+        sonrakiAdet: sonra.bolgeler.length,
+        eklenen: [...sonraSet].filter((x) => !onceSet.has(x)),
+        kaldirilan: [...onceSet].filter((x) => !sonraSet.has(x)),
+        // KISIT KALKTI MI: bos listeye dusmek "her yere teslimat" demektir ve
+        // en az eklemek kadar onemli bir davranis degisikligi.
+        kisitKalkti: once.kisitVar && !sonra.kisitVar,
+      },
+    });
+
+    return sonra;
   }
 
   async assertOwner(storeId: string, userId: string, roles: Role[]) {

@@ -535,6 +535,79 @@ model StoreHour {
   @@map("store_hours")
 }
 
+// PLATFORM HIZMET BOLGESI — BANI'nin hizmet verdigi il/ilce/mahalle kumesi.
+//
+// KAPSAM KAPISI, TESLIMAT KURALI DEGIL: bu tablo saticinin NELERI SECEBILECEGINI
+// sinirlar. Checkout'ta kullanilmaz - orada karsilastirma musteri adresi ile
+// SATICININ sectigi bolgeler arasinda yapilir (magaza_teslimat_bolgeleri).
+// Platform bir ilceyi kapsamdan cikarirsa eski satici secimleri OLDUGU GIBI
+// KALIR; yalnizca yeni secim yapilamaz. Boylece kapsam degisikligi calisan
+// magazalari aniden teslimatsiz birakmaz.
+//
+// MAHALLE NULL = ILCENIN TAMAMI ACIK. Dolu satir yalnizca o mahalleyi acar.
+// Ayni ilce icin NULL satir VARSA o ilce butunuyle aciktir ve mahalle
+// satirlari gereksizdir (NULL onceliklidir - bkz. market.service
+// teslimatBolgeleriGuncelle icindeki kapsam haritasi).
+//
+// YAZMA UCU YOK (bu turda): veri migration ile giriliyor, yonetim ekrani
+// SuperAdmin panelinin isi. Bu yuzden "ayni (il,ilce) icin iki NULL satir"
+// gibi tekillik bosluklari bugun olusamaz - Postgres'te NULL != NULL oldugu
+// icin @@unique bunu yakalayamaz; yazma ucu geldiginde uygulama tarafinda
+// kontrol edilmeli (backlog).
+model PlatformHizmetBolgesi {
+  id       String  @id @default(uuid()) @db.Uuid
+  il       String
+  ilce     String
+  mahalle  String? // NULL = ilcenin tamami
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([il, ilce, mahalle])
+  @@index([il, ilce])
+  @@map("platform_hizmet_bolgeleri")
+}
+
+// MAGAZANIN TESLIMAT ETTIGI BOLGELER — saticinin kendi secimi.
+//
+// KAYIT YOKSA MAGAZA HER YERE TESLIM EDER. store_hours ile ayni felsefe:
+// aksi halde bu tablo eklendigi an kaydi olmayan tum magazalar hicbir yere
+// teslimat yapamaz duruma duserdi.
+//
+// DEGERLER KANONIKTIR: yazma metodu saticinin gonderdigi metni degil,
+// PlatformHizmetBolgesi'ndeki YAZIMI kaydeder. Canli olcumde (2026-09-05)
+// ayni ilce yalnizca bas harfte ayrisan iki yazimla kayitliydi; ham metni
+// saklamak karsilastirmayi kirilgan yapardi.
+//
+// mahalle NULL = ilcenin tamami (platform o ilceyi butun olarak actiysa).
+model MagazaTeslimatBolgesi {
+  id      String @id @default(uuid()) @db.Uuid
+  storeId String @db.Uuid
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  il      String
+  ilce    String
+  mahalle String? // NULL = ilcenin tamami
+
+  // BOLGEYE OZEL TESLIMAT UCRETI (kurus). NULL = bu bolgenin kendi ucreti YOK;
+  // siparis mevcut varsayilan kurala duser (orders.service: 15 TL, 300 TL ve
+  // uzeri ucretsiz). Saticinin alani bos birakmasi ile 0 yazmasi AYNI SEY
+  // DEGILDIR: 0 "bu bolgeye teslimat ucretsiz" demektir.
+  //
+  // Int (BigInt degil): teslimat ucreti kurus cinsinden bile 2 milyari asmaz;
+  // para alanlarinin BigInt oldugu yerler siparis/cuzdan toplamlaridir.
+  //
+  // BUGUN OKUNMUYOR: checkout kapisi henuz yazilmadi, alan yalnizca saklaniyor.
+  feeKurus Int?
+
+  createdAt DateTime @default(now())
+
+  @@unique([storeId, il, ilce, mahalle])
+  @@index([storeId])
+  @@map("magaza_teslimat_bolgeleri")
+}
+
 model Store {
   id             String       @id @default(uuid()) @db.Uuid
   ownerId        String       @db.Uuid
@@ -569,13 +642,14 @@ model Store {
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
 
-  categories      Category[]
-  products        Product[]
-  secenekGruplari OptionGroup[]
-  orders          Order[]
-  personel        StoreUser[]
-  calismaSaati    StoreHour[]
-  stokHareketleri InventoryMovement[]
+  categories        Category[]
+  products          Product[]
+  secenekGruplari   OptionGroup[]
+  orders            Order[]
+  personel          StoreUser[]
+  calismaSaati      StoreHour[]
+  teslimatBolgeleri MagazaTeslimatBolgesi[]
+  stokHareketleri   InventoryMovement[]
 
   @@index([ownerId])
   @@index([sellerId])
