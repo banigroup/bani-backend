@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req,
+  BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req,
   UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -13,6 +13,7 @@ import { PersonelEkleDto, PersonelDurumDto } from './dto/store-user.dto';
 import { RolAtaDto } from './dto/rol-ata.dto';
 import { SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
 import { SaticiSozlesmeOnaylaDto } from './dto/sozlesme.dto';
+import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { SaticiSiparisSorguDto } from './dto/seller-orders.dto';
 import type { SozlesmeTipi } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -68,6 +69,32 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_WRITE)
   update(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateStoreDto, @Req() req: Request) {
     return this.market.update(id, user.id, user.roles, dto, req.ip);
+  }
+
+  // ---------------- CALISMA SAATLERI ----------------
+  //
+  // Yetki magaza guncellemeyle AYNI: STORE_WRITE + serviste ownedOrAdmin.
+  // Audit servis icinde yaziliyor - store.update ile ayni yerde durmasi icin
+  // (bkz. o metodun basligi; market modulunde magaza yazmalarinin audit'i
+  // serviste toplaniyor).
+
+  @Get('stores/:id/calisma-saatleri')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_READ)
+  calismaSaatleri(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
+    return this.market.calismaSaatleri(id, user.id, user.roles);
+  }
+
+  @Put('stores/:id/calisma-saatleri')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  calismaSaatleriGuncelle(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @Body() dto: CalismaSaatleriDto,
+    @Req() req: Request,
+  ) {
+    return this.market.calismaSaatleriGuncelle(id, user.id, user.roles, dto, req.ip);
   }
 
   // ---------------- SATICI (SELLER) ----------------
