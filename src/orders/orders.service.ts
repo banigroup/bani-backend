@@ -184,6 +184,37 @@ export class OrdersService {
 
     const isCarsi = store.businessUnit === BusinessUnit.CARSI;
 
+    // TESLIMAT BOLGESI KAPISI — para ve stok adimlarindan ONCE, ucuz yoldan.
+    //
+    // CARSI MUAF: Carsi siparisi BANIGO kuryesiyle degil DicleFul kargosuyla
+    // ulke geneline gidiyor (delivery.service: "Carsi siparisi BANIGO Kurye ile
+    // tasinmaz"). Ilce kisiti orada anlamsiz olurdu.
+    //
+    // KISIT YOKSA KAPI CALISMAZ: magazanin hic bolge kaydi yoksa her yere
+    // teslimat eder (bkz. market.teslimatBolgesiUygun). Bugun canlida hicbir
+    // magazanin kaydi yok, yani bu kapi kimseyi etkilemiyor.
+    //
+    // UCRET BU TURDA OKUNMUYOR: bolge satirinda feeKurus var ama teslimat
+    // ucreti hala DELIVERY_FEE / FREE_DELIVERY_THRESHOLD kuralindan geliyor.
+    // Kisit kontrolu ile ucretlendirmeyi ayni pakete koymak, para hesabini
+    // dogrulanmamis bir alana baglamak olurdu.
+    if (!isCarsi) {
+      const bolge = await this.market.teslimatBolgesiUygun(store.id, addr.city, addr.district);
+      if (!bolge.uygun) {
+        throw new ConflictException({
+          statusCode: 409,
+          kod: 'TESLIMAT_BOLGESI_DISI',
+          message:
+            `Bu mağaza teslimat adresinize hizmet vermiyor. ` +
+            `Hizmet verilen bölgeler: ${bolge.ilceler.join(', ')}.`,
+          // Istemci baska bir adres onerebilsin diye liste GOVDEDE de var:
+          // mesaji ayristirmak kirilgan olurdu (bicim degisirse istemci kirilir).
+          hizmetVerilenBolgeler: bolge.ilceler,
+          error: 'Conflict',
+        });
+      }
+    }
+
     // Stok + tutar kontrolü (+ Çarşı için gömülü muhasebe kırılımı toplama)
     let subtotal = 0n;
     // Çarşı gömülü kalemleri (ürün fiyatına dahil):

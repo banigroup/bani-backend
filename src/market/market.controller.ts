@@ -14,6 +14,7 @@ import { RolAtaDto } from './dto/rol-ata.dto';
 import { SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
 import { SaticiSozlesmeOnaylaDto } from './dto/sozlesme.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
+import { TeslimatBolgeleriDto } from './dto/teslimat-bolge.dto';
 import { SaticiSiparisSorguDto } from './dto/seller-orders.dto';
 import type { SozlesmeTipi } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -136,6 +137,48 @@ export class MarketController {
     @Req() req: Request,
   ) {
     return this.market.calismaSaatleriGuncelle(id, user.id, user.roles, dto, req.ip);
+  }
+
+  // ---------------- TESLIMAT BOLGELERI ----------------
+
+  // PLATFORM KAPSAMI - satici panelinin secim listesini dolduran uc.
+  //
+  // @Public: icerik platformun hizmet verdigi il/ilce/mahalle ADLARINDAN
+  // ibaret; kisisel veri yok, magazaya ozel veri yok. Musteriye donuk
+  // "nerelere teslimat yapiyoruz" ekrani da ayni listeyi kullanabilir, uca
+  // ikinci bir kopya acmaya gerek kalmaz.
+  //
+  // ONBELLEGE ALINMADI: bu turda yazma ucu yok (veri migration ile giriliyor),
+  // yani invalidation tetigi de yok. SuperAdmin yazma ucu geldiginde onbellek
+  // + temizlik birlikte dusunulmeli - yarim baglamak bayat kapsam listesi
+  // gosterirdi.
+  //
+  // DEKORATOR SIRASI: @Public, @Get'in HEMEN ustunde kalmali (check-guards).
+  @Public()
+  @Get('aktif-bolgeler')
+  aktifBolgeler() {
+    return this.market.aktifBolgeler();
+  }
+
+  @Get('stores/:id/teslimat-bolgeleri')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_READ)
+  teslimatBolgeleri(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
+    return this.market.teslimatBolgeleri(id, user.id, user.roles);
+  }
+
+  // Audit servis icinde yaziliyor - calisma saatleri ve store.update ile ayni
+  // yerde dursun diye (market modulunde magaza yazmalarinin audit'i serviste).
+  @Put('stores/:id/teslimat-bolgeleri')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_WRITE)
+  teslimatBolgeleriGuncelle(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @Body() dto: TeslimatBolgeleriDto,
+    @Req() req: Request,
+  ) {
+    return this.market.teslimatBolgeleriGuncelle(id, user.id, user.roles, dto, req.ip);
   }
 
   // ---------------- SATICI (SELLER) ----------------
