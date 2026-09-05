@@ -62,7 +62,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^20.14.14",
     "@types/passport-jwt": "^4.0.1",
-    "prisma": "^5.18.0",
+    "prisma": "^7.10.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4"
   }
