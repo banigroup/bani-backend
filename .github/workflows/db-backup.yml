@@ -54,9 +54,13 @@ jobs:
           # -Fc: custom format · --no-owner/--no-privileges: restore taşınabilirliği
           /usr/lib/postgresql/18/bin/pg_dump -Fc --no-owner --no-privileges \
             "${DATABASE_PUBLIC_URL}" -f "${OUT}"
-          # SADECE boyut/bütünlük raporu — içerik ve URL asla basılmaz
+          # SADECE boyut/bütünlük raporu — içerik ve URL asla basılmaz.
           ls -lh "${OUT}"
-          /usr/lib/postgresql/18/bin/pg_restore --list "${OUT}" | head -3
+          # Bütünlük: custom-format arşivin TOC'u tam okunabiliyor mu?
+          # (TOC'u önce dosyaya yazıyoruz; doğrudan `| head` boruyu erken kapatıp
+          #  pipefail altında "Broken pipe" ile düşürüyordu — yedek sağlamken.)
+          /usr/lib/postgresql/18/bin/pg_restore --list "${OUT}" > toc.txt
+          echo "Arşiv geçerli — TOC ilk satırlar:"; head -5 toc.txt; rm -f toc.txt
           echo "OUT=${OUT}" >> "$GITHUB_ENV"
 
       - name: Artifact olarak yükle (14 gün saklanır)
