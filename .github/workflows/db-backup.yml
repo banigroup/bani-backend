@@ -33,12 +33,10 @@ jobs:
       - name: PostgreSQL 18 client kur (PGDG)
         run: |
           set -euo pipefail
-          sudo install -d /usr/share/postgresql-common/pgdg
-          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            | sudo gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          # PGDG deposunu resmi non-interactive script ile kur (gpg/tty derdi yok).
           sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-18
           /usr/lib/postgresql/18/bin/pg_dump --version
 
