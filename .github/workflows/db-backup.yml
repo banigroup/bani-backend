@@ -1,0 +1,70 @@
+name: DB Backup (Postgres)
+
+# BANİLOAD/BANİMARKET canlı Postgres'in GÜNLÜK otomatik yedeği.
+#
+# NEDEN ARTIFACT: en basit ve ek kimlik/servis gerektirmeyen yol. Yedek, repoya
+# COMMIT EDİLMEZ; GitHub Actions artifact olarak (private, repoya erişimi olanlar
+# indirebilir) saklanır. Rotasyon GitHub tarafından yapılır: retention-days=14 →
+# 14 günden eski yedekler otomatik silinir (disk/şişme yok, temizlik script'i yok).
+#
+# KAYNAK: secrets.DATABASE_PUBLIC_URL (Railway Postgres public proxy). Değer hiçbir
+# adımda ekrana basılmaz; yalnızca pg_dump'a ortam değişkeni olarak geçer.
+#
+# pg_dump -Fc: custom (sıkıştırılmış) format → pg_restore ile geri yüklenir.
+# Sunucu PostgreSQL 18 olduğu için client de 18 kurulur (eski client 18'i dökemiyor).
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # her gün 02:00 UTC (~05:00 TR)
+  workflow_dispatch: {}    # elle tetikleme (ilk doğrulama + gerektiğinde)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: PostgreSQL 18 client kur (PGDG)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-18
+          /usr/lib/postgresql/18/bin/pg_dump --version
+
+      - name: Yedek al (pg_dump -Fc)
+        env:
+          DATABASE_PUBLIC_URL: ${{ secrets.DATABASE_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_PUBLIC_URL:-}" ]; then
+            echo "HATA: DATABASE_PUBLIC_URL secret'i tanımlı değil."; exit 1
+          fi
+          TS="$(date -u +%Y%m%d-%H%M)"
+          OUT="bani_yedek_${TS}.dump"
+          echo "Yedek alınıyor: ${OUT} (UTC ${TS})"
+          # -Fc: custom format · --no-owner/--no-privileges: restore taşınabilirliği
+          /usr/lib/postgresql/18/bin/pg_dump -Fc --no-owner --no-privileges \
+            "${DATABASE_PUBLIC_URL}" -f "${OUT}"
+          # SADECE boyut/bütünlük raporu — içerik ve URL asla basılmaz
+          ls -lh "${OUT}"
+          /usr/lib/postgresql/18/bin/pg_restore --list "${OUT}" | head -3
+          echo "OUT=${OUT}" >> "$GITHUB_ENV"
+
+      - name: Artifact olarak yükle (14 gün saklanır)
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ env.OUT }}
+          path: ${{ env.OUT }}
+          retention-days: 14
+          if-no-files-found: error
