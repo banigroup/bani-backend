@@ -96,6 +96,11 @@ model User {
   aldigiDegerlendirmeler  LoadDegerlendirme[] @relation("AldigiDegerlendirmeler")
   stokHareketleri         InventoryMovement[]
 
+  // Approval Engine (S8) — yalnizca INVERSE relation (users tablosunda fiziksel kolon YOK).
+  // FK kolonlari change_requests tarafinda (requestedById / reviewedById).
+  degisiklikTalepleri ChangeRequest[] @relation("CRRequester")
+  inceledigiTalepler  ChangeRequest[] @relation("CRReviewer")
+
   // @@index([phone]) KALDIRILDI: phone zaten @unique - users_phone_key ayni isi goruyor
   @@map("users")
 }
@@ -2057,4 +2062,81 @@ model InventoryMovement {
   @@index([storeId, createdAt])
   @@index([referenceType, referenceId])
   @@map("inventory_movements")
+}
+
+// ===================== S8 — APPROVAL ENGINE / CHANGE REQUEST =====================
+// Ortak (hibrit) approval cekirdeginin veri modeli (D110/D114). Bu tur YALNIZCA
+// sema + migration; core/adapter/RBAC/endpoint STEP 2'nin isidir.
+//
+// POLYMORPHIC HEDEF: entityType + entityId (AuditLog.entity/entityId deseninin ikizi).
+// entityId BILEREK duz String (uuid degil): cekirdek belli bir ID domainine
+// kilitlenmesin, adapter gercek ID formatini kendi sinirinda dogrular. Store hard
+// FK'si de YOK (storeId scalar) — user_roles ile ayni holding izolasyon ilkesi.
+//
+// proposedData core tarafindan DOGRUDAN uygulanmaz (D111): adapter tipli dogrulama
+// yapip uygular. beforeData UPDATE/DELETE'te kanonik snapshot, CREATE'te null.
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum ChangeRequestAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model ChangeRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  // POLYMORPHIC HEDEF — hard FK YOK.
+  entityType String // 'STORE' | 'DELIVERY_ZONE' | ... (adapter registry; enum degil)
+  entityId   String? // CREATE'te null; uuid'ye kilitlenmez (mixed-ID hedef destegi)
+  actionType ChangeRequestAction
+
+  // SCOPE — self-approval cozumu + admin inbox filtresi. Store hard FK YOK
+  // (user_roles.storeId deseni: cekirdek/approval tablosu ticaret dikeyine FK vermez).
+  storeId      String?       @db.Uuid
+  businessUnit BusinessUnit?
+
+  status ChangeRequestStatus @default(PENDING)
+
+  // AKTORLER — iki ayri User relation.
+  requestedById String  @db.Uuid
+  requestedBy   User    @relation("CRRequester", fields: [requestedById], references: [id])
+  reviewedById  String? @db.Uuid
+  reviewedBy    User?   @relation("CRReviewer", fields: [reviewedById], references: [id])
+
+  proposedData Json // adapter dogrulamasi olmadan uygulanmaz (D111)
+  beforeData   Json? // CREATE=null; UPDATE/DELETE=kanonik snapshot (D116)
+  metadata     Json? // yalnizca ek/opsiyonel baglam; reviewer/reason/proposed/before'in tekrari DEGIL
+
+  rejectionReason String?
+
+  requestedAt DateTime  @default(now())
+  reviewedAt  DateTime?
+
+  // SUPERSEDE — 1->1 zincir (D112/D115). Tek fiziksel FK (supersedesId) + @unique:
+  // bir CR en fazla bir onceki CR'i supersede eder VE en fazla bir sonraki CR
+  // tarafindan supersede edilir (dallanma yok). supersededBy fiziksel kolon DEGIL.
+  // onDelete: Restrict — approval gecmisi silinerek zincir kopmasin (repo emsali:
+  // Store "StoreTree" parent, deliveries.courierId).
+  // NOT: @unique supersede zincirinin dallanmasini engeller; "ayni hedef icin tek
+  // aktif PENDING" kisiti DEGILDIR — o STEP 2 guarded-transaction'a birakildi.
+  supersedesId String?        @unique @db.Uuid
+  supersedes   ChangeRequest? @relation("CRSupersede", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy ChangeRequest? @relation("CRSupersede")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status]) // dikey-genel inbox
+  @@index([entityType, status]) // entity turune gore inbox
+  @@index([storeId]) // magaza scope filtresi
+  @@index([requestedById]) // "benim taleplerim"
+  @@index([entityType, entityId, status]) // hedefin aktif-PENDING lookup'u (STEP 2)
+  @@map("change_requests")
 }
