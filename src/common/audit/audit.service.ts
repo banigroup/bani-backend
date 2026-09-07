@@ -32,4 +32,22 @@ export class AuditService {
       this.logger.error(`Audit yazılamadı: ${rec.action}`, e as Error);
     }
   }
+
+  // Dışarıdan verilen bir transaction client (tx) içinde çalışır — root prisma KULLANMAZ.
+  // record()'dan tek farkı: hata YUTULMAZ. Approval gibi "iş + iz birlikte ya da hiç"
+  // gereken akışlarda audit yazımı başarısız olursa çağıran transaction geri sarılmalı,
+  // aksi halde uygulanmış bir değişiklik izsiz kalır. Payload eşlemesi record() ile aynı.
+  // (LedgerService.postWithTx deseni.)
+  async recordWithTx(tx: Prisma.TransactionClient, rec: AuditRecord): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        actorId: rec.actorId ?? null,
+        action: rec.action,
+        entity: rec.entity ?? null,
+        entityId: rec.entityId ?? null,
+        ip: rec.ip ?? null,
+        metadata: rec.metadata,
+      },
+    });
+  }
 }
