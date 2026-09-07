@@ -21,6 +21,12 @@ COPY . .
 # bagimli hale gelirdik (imaj ileride dist-only'ye kucultulurse canlida coker).
 RUN node scripts/check-boundaries.js && node scripts/check-guards.js
 
+# D130 — TEST KAPISI: build ONCESI. Boundary/guard ile ayni gerekce (Railway CI'i
+# BEKLEMIYOR): test kirmiziysa IMAJ URETILMEZ, deploy hic gerceklesmez, eski
+# surum ayakta kalir. pnpm install devDependencies'i de kurdugu icin jest burada
+# mevcuttur.
+RUN pnpm test
+
 RUN pnpm run build
 ENV NODE_ENV=production
 EXPOSE 4000

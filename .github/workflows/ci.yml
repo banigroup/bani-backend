@@ -50,4 +50,8 @@ jobs:
       # + skipLibCheck iceriyor; ek bayrak gerekmez.
       - run: pnpm exec tsc --noEmit
 
+      # D130 — TEST KAPISI: typecheck ile build ARASINDA. Tipler bozukken test
+      # ciktisi gurultu olur; davranis bozukken build'in dakikalari harcanmasin.
+      - run: pnpm test
+
       - run: pnpm run build
