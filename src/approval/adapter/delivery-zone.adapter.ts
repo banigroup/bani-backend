@@ -90,7 +90,11 @@ export class DeliveryZoneAdapter implements ApprovalAdapter {
     context: ApprovalAdapterContext,
   ): Promise<unknown> {
     this.aksiyonDogrula(context.actionType);
-    const storeId = this.storeIdCoz(context.storeId ?? null);
+    // AUDIT-001: burada YALNIZCA kapsam alani dogrulanabiliyor - sozlesme bu
+    // metoda entityId vermiyor. Esitlik invariant'i submit'in AYNI
+    // transaction'inda buildBeforeData tarafindan, ChangeRequest yazilmadan
+    // ONCE uygulaniyor (bkz. hedefMagazaIdCoz).
+    const storeId = this.magazaIdGerekli(context.storeId, 'storeId');
     const ham = this.girdiCoz(proposedData);
 
     // Ayni kural kaynagi: panel yolunun kullandigi DB-bagimli dogrulayici.
@@ -152,7 +156,7 @@ export class DeliveryZoneAdapter implements ApprovalAdapter {
    */
   async apply(tx: Prisma.TransactionClient, input: ApprovalApplyInput): Promise<void> {
     this.aksiyonDogrula(input.actionType);
-    const storeId = this.storeIdCoz(input.entityId);
+    const storeId = this.hedefMagazaIdCoz(input.entityId, input.context.storeId);
     const veri = this.proposedDataCoz(input.proposedData);
 
     await this.market.teslimatBolgeleriYazTx(
@@ -171,7 +175,7 @@ export class DeliveryZoneAdapter implements ApprovalAdapter {
     context: ApprovalAdapterContext,
   ): Promise<DeliveryZoneSnapshot> {
     this.aksiyonDogrula(context.actionType);
-    const storeId = this.storeIdCoz(entityId);
+    const storeId = this.hedefMagazaIdCoz(entityId, context.storeId);
     const goruntu = await this.market.teslimatBolgeleriAnlikGoruntuTx(tx, storeId);
     return {
       revision: goruntu.revision,
@@ -193,14 +197,53 @@ export class DeliveryZoneAdapter implements ApprovalAdapter {
     }
   }
 
-  /** entityId = Store.id. NULL kabul edilmez - fail-closed. */
-  private storeIdCoz(deger: string | null): string {
+  /** Tek bir mağaza kimliği alanının dolu olmasını şart koşar - fail-closed. */
+  private magazaIdGerekli(deger: string | null | undefined, alan: string): string {
     if (typeof deger !== 'string' || deger.length === 0) {
       throw new BadRequestException(
-        'Teslimat bölgesi talebi mağaza kimliği olmadan işlenemez',
+        `Teslimat bölgesi talebi mağaza kimliği olmadan işlenemez (${alan})`,
       );
     }
     return deger;
+  }
+
+  /**
+   * HEDEF MAGAZA KIMLIGININ TEK KAYNAGI (AUDIT-001).
+   *
+   * Sozlesme mağaza kimligini IKI ayri alanda tasiyor: ChangeRequest.entityId
+   * (adapter'in degistirdigi kayit) ve context.storeId (talebin kapsami). Bu
+   * adapter icin ikisi de AYNI SEYDIR - hedef her zaman bir Store.id'dir.
+   *
+   * NEDEN ZORUNLU: ApprovalService inceleme bagimsizligini (D123/D125)
+   * talep.storeId uzerinden olcer, ama apply'i talep.entityId'ye uygular
+   * (approval.service.ts:239 vs :293). Ikisi ayrisirsa bagimsizlik YANLIS
+   * magazaya karsi dogrulanir ve bir magaza sahibi kendi magazasinin talebini
+   * onaylayabilir. Sozlesme bu esitligi sart kosmadigi ve Core domain-agnostik
+   * oldugu (baska adapter'larda entityId ile storeId MESRU sekilde farkli
+   * olabilir) icin invariant BURADA, adapter'da uygulanir.
+   *
+   * FAIL-CLOSED: entityId yok, storeId yok ya da ikisi farkli -> islem yapilmaz.
+   *
+   * KAPSAM NOTU: validateProposedData bu helper'i CAGIRAMAZ, cunku sozlesme o
+   * metoda entityId VERMEZ (approval-adapter.interface.ts:50-53) ve sozlesme bu
+   * pakette degistirilmiyor. Bosluk yok: submit sirasinda buildBeforeData AYNI
+   * transaction icinde ve ChangeRequest yazilmadan ONCE cagriliyor
+   * (approval.service.ts:169 -> :171), dolayisiyla esitsiz bir talep hic
+   * kaydedilemiyor. apply de ayrica korunuyor (defense in depth): elle/legacy
+   * olusturulmus bozuk bir kayit ileride apply'a ulasirsa orada durur.
+   */
+  private hedefMagazaIdCoz(
+    entityId: string | null | undefined,
+    storeId: string | null | undefined,
+  ): string {
+    const hedef = this.magazaIdGerekli(entityId, 'entityId');
+    const kapsam = this.magazaIdGerekli(storeId, 'storeId');
+    if (hedef !== kapsam) {
+      throw new BadRequestException(
+        'Teslimat bölgesi talebinde hedef mağaza ile kapsam mağazası aynı olmalı',
+      );
+    }
+    return hedef;
   }
 
   /** Ham (istemciden gelen) govdeyi dar sekle indirger. */

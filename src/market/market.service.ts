@@ -29,6 +29,21 @@ export interface TeslimatBolgeGirdi {
 }
 
 /**
+ * TESLIMAT BOLGESI BOYUT SINIRLARI (AUDIT-002).
+ *
+ * Degerler TeslimatBolgeleriDto / TeslimatBolgeDto'daki @ArrayMaxSize(500) ve
+ * @MaxLength(80) ile BILEREK ayni. DTO'nun class-validator dekoratorleri sabit
+ * ifade bekledigi icin oradan bu sabitler REFERANS ALINAMIYOR; deger iki yerde
+ * duruyor ve teslimatBolgeleriDogrulaTx testleri esligi koruyor.
+ *
+ * NEDEN BURADA DA GEREKLI: DTO yalnizca HTTP panel yolundadir. Approval
+ * yolunda proposedData Core'a `unknown` gelir ve DTO'dan HIC gecmez; sinir
+ * yalnizca DTO'da kalirsa o yol sinirsiz olur.
+ */
+const TESLIMAT_BOLGE_MAX_ADET = 500;
+const TESLIMAT_BOLGE_MAX_METIN = 80;
+
+/**
  * FAZ 1 / B2 — B2 UCLARINDAN ATANABILEN ROLLER. Kodda sabit, veride degil:
  * korundugumuz sey magaza yoneticisinin yanlis/kotu niyetli girdisi. Guard'daki
  * MAGAZA_ROLU_IZIN_BEYAZ_LISTESI ile ayni gerekce, ayni desen.
@@ -1537,6 +1552,45 @@ export class MarketService {
     storeId: string,
     bolgeler: TeslimatBolgeGirdi[],
   ): Promise<Prisma.MagazaTeslimatBolgesiCreateManyInput[]> {
+    // BOYUT SINIRLARI BURADA DA (AUDIT-002): ucret sinirinin ayni gerekcesi -
+    // panel yolunda @ArrayMaxSize(500) ve @MaxLength(80) DTO'da uygulaniyor, ama
+    // approval yolunda proposedData DTO'dan GECMEZ. Sinirlar yalnizca DTO'da
+    // kalirsa approval yolu SINIRSIZ olur: milyonlarca satirlik bir liste ya da
+    // 10 MB'lik bir mahalle metni tek createMany'ye giderdi.
+    //
+    // SIRA ONEMLI: once O(1) adet kontrolu, sonra metin uzunluklari, en son
+    // ucret ve kapsam. Boylece devasa girdi en ucuz kontrolde kesilir.
+    //
+    // Panel icin DAVRANIS DEGISMEZ: DTO zaten ayni degerleri reddediyor.
+    if (bolgeler.length > TESLIMAT_BOLGE_MAX_ADET) {
+      throw new BadRequestException(
+        `Teslimat bölgesi listesi en fazla ${TESLIMAT_BOLGE_MAX_ADET} satır olabilir (gelen: ${bolgeler.length})`,
+      );
+    }
+
+    // METIN UZUNLUKLARI: deger ECHO EDILMEZ - asiri uzun girdiyi hata mesajina
+    // koymak ayni sorunu log/yanit tarafina tasirdi; satir numarasi yeterli.
+    // mahalle YOKSA kontrol edilmez; bos metin ("") gecerlidir ve mevcut
+    // semantikte bosaCevir tarafindan "ilcenin tamami"na indirgenir.
+    for (let i = 0; i < bolgeler.length; i++) {
+      const b = bolgeler[i];
+      if (b.il.length > TESLIMAT_BOLGE_MAX_METIN) {
+        throw new BadRequestException(
+          `İl adı en fazla ${TESLIMAT_BOLGE_MAX_METIN} karakter olabilir (#${i + 1})`,
+        );
+      }
+      if (b.ilce.length > TESLIMAT_BOLGE_MAX_METIN) {
+        throw new BadRequestException(
+          `İlçe adı en fazla ${TESLIMAT_BOLGE_MAX_METIN} karakter olabilir (#${i + 1})`,
+        );
+      }
+      if (typeof b.mahalle === 'string' && b.mahalle.length > TESLIMAT_BOLGE_MAX_METIN) {
+        throw new BadRequestException(
+          `Mahalle adı en fazla ${TESLIMAT_BOLGE_MAX_METIN} karakter olabilir (#${i + 1})`,
+        );
+      }
+    }
+
     // UCRET SINIRI BURADA DA: panel yolunda sinirlari DTO (class-validator)
     // uyguluyor, ama approval yolunda proposedData DTO'dan GECMEZ - Core'a
     // `unknown` olarak gelir. Ayni siniri burada tekrarlamak, iki yolun ayni

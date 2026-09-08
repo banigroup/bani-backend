@@ -462,3 +462,318 @@ describe('MarketService.teslimatBolgeleriYazTx — paylasilan domain primitive',
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
+
+// ------------------------------------------------------------------ AUDIT-001
+//
+// HEDEF MAGAZA KIMLIGI INVARIANT'I. Sozlesme magaza kimligini iki alanda tasiyor
+// (ChangeRequest.entityId ve context.storeId) ve esitligi SART KOSMUYOR. Ayrisma
+// halinde ApprovalService bagimsizligi talep.storeId'ye gore olcer ama apply
+// talep.entityId'ye gider - yani bir magaza sahibi kendi magazasinin talebini
+// onaylayabilirdi. Asagidaki testler ayrismanin HICBIR adapter yolundan
+// gecemedigini kanitliyor.
+
+/** Ikinci magaza - yalnizca ayrisma senaryosu icin. */
+const MAGAZA_B = 'store-2';
+
+describe('AUDIT-001 — entityId / context.storeId invariant', () => {
+  const veri: DeliveryZoneProposedData = {
+    beklenenRevision: 7,
+    bolgeler: [{ il: 'Diyarbakır', ilce: 'Kayapınar', mahalle: null, feeKurus: 100 }],
+  };
+
+  /** Fail-closed KANITI: hicbir okuma/yazma baslamadi, yanlis revision okunmadi. */
+  function dbyeHicGidilmedi(tx: SahteTx) {
+    expect(tx.store.findUnique).not.toHaveBeenCalled();
+    expect(tx.store.updateMany).not.toHaveBeenCalled();
+    expect(tx.platformHizmetBolgesi.findMany).not.toHaveBeenCalled();
+    expect(tx.magazaTeslimatBolgesi.findMany).not.toHaveBeenCalled();
+    expect(tx.magazaTeslimatBolgesi.deleteMany).not.toHaveBeenCalled();
+    expect(tx.magazaTeslimatBolgesi.createMany).not.toHaveBeenCalled();
+  }
+
+  // ---- A) entityId != context.storeId
+
+  it('A — buildBeforeData: ayrisma FAIL-CLOSED, DB\'ye HIC gidilmez', async () => {
+    const { tx, adapter } = kur();
+
+    await expect(
+      adapter.buildBeforeData(txAs(tx), MAGAZA, { ...BAGLAM, storeId: MAGAZA_B }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    dbyeHicGidilmedi(tx);
+  });
+
+  it('A — revalidateCurrentState: ayrisma FAIL-CLOSED', async () => {
+    const { tx, adapter } = kur();
+
+    await expect(
+      adapter.revalidateCurrentState(txAs(tx), MAGAZA, { ...BAGLAM, storeId: MAGAZA_B }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    dbyeHicGidilmedi(tx);
+  });
+
+  it('A — apply: ayrisma FAIL-CLOSED; paylasilan primitive HIC cagrilmaz', async () => {
+    const { tx, market, adapter } = kur();
+    const casus = jest.spyOn(market, 'teslimatBolgeleriYazTx');
+
+    await expect(
+      adapter.apply(txAs(tx), {
+        entityId: MAGAZA,
+        actionType: ChangeRequestAction.UPDATE,
+        proposedData: veri,
+        context: { ...BAGLAM, storeId: MAGAZA_B },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    // PRODUCTION MUTASYONU UYGULANMADI
+    expect(casus).not.toHaveBeenCalled();
+    dbyeHicGidilmedi(tx);
+  });
+
+  // ---- B) entityId null
+
+  it('B — apply: entityId null FAIL-CLOSED', async () => {
+    const { tx, market, adapter } = kur();
+    const casus = jest.spyOn(market, 'teslimatBolgeleriYazTx');
+
+    await expect(
+      adapter.apply(txAs(tx), {
+        entityId: null,
+        actionType: ChangeRequestAction.UPDATE,
+        proposedData: veri,
+        context: BAGLAM,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(casus).not.toHaveBeenCalled();
+    dbyeHicGidilmedi(tx);
+  });
+
+  it('B — revalidateCurrentState: entityId null FAIL-CLOSED', async () => {
+    const { tx, adapter } = kur();
+
+    await expect(
+      adapter.revalidateCurrentState(txAs(tx), null, BAGLAM),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    dbyeHicGidilmedi(tx);
+  });
+
+  // ---- C) context.storeId null
+
+  it('C — buildBeforeData: context.storeId null FAIL-CLOSED', async () => {
+    const { tx, adapter } = kur();
+
+    await expect(
+      adapter.buildBeforeData(txAs(tx), MAGAZA, { ...BAGLAM, storeId: null }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    dbyeHicGidilmedi(tx);
+  });
+
+  it('C — apply: context.storeId null FAIL-CLOSED', async () => {
+    const { tx, market, adapter } = kur();
+    const casus = jest.spyOn(market, 'teslimatBolgeleriYazTx');
+
+    await expect(
+      adapter.apply(txAs(tx), {
+        entityId: MAGAZA,
+        actionType: ChangeRequestAction.UPDATE,
+        proposedData: veri,
+        context: { ...BAGLAM, storeId: null },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(casus).not.toHaveBeenCalled();
+    dbyeHicGidilmedi(tx);
+  });
+
+  it('C — validateProposedData: context.storeId null FAIL-CLOSED (davranis korundu)', async () => {
+    const { tx, adapter } = kur();
+
+    await expect(
+      adapter.validateProposedData({ bolgeler: [] }, { ...BAGLAM, storeId: null }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    dbyeHicGidilmedi(tx);
+  });
+
+  // ---- D) entityId === context.storeId -> mutlu yol AYNEN calisir
+
+  it('D — esit kimliklerde mutlu yol DEGISMEDI (apply + snapshot)', async () => {
+    const { tx, market, adapter } = kur();
+    const casus = jest.spyOn(market, 'teslimatBolgeleriYazTx');
+
+    await adapter.apply(txAs(tx), {
+      entityId: MAGAZA,
+      actionType: ChangeRequestAction.UPDATE,
+      proposedData: veri,
+      context: BAGLAM,
+    });
+
+    expect(casus).toHaveBeenCalledTimes(1);
+    expect(casus.mock.calls[0][1]).toBe(MAGAZA);
+
+    const snapshot = (await adapter.buildBeforeData(
+      txAs(tx),
+      MAGAZA,
+      BAGLAM,
+    )) as DeliveryZoneSnapshot;
+    expect(snapshot.revision).toBe(7);
+  });
+});
+
+// ------------------------------------------------------------------ AUDIT-002
+//
+// BOYUT SINIRLARI PAYLASILAN DOGRULAYICIDA. Panel yolunda bu sinirlari DTO
+// uyguluyor (@ArrayMaxSize(500), @MaxLength(80)); approval yolunda proposedData
+// DTO'dan HIC gecmiyor. Testler ayni girdinin IKI yuzeyde de AYNI sonucu
+// verdigini kanitliyor.
+
+const IL_80 = 'A'.repeat(80);
+const ILCE_80 = 'B'.repeat(80);
+
+describe('AUDIT-002 — teslimat bolgesi boyut sinirlari', () => {
+  /** 80 karakterlik il/ilce'yi platform kapsamina ekler (uzunluk siniri ile kapsam kurali ayrisabilsin diye). */
+  function kapsamaUzunAdEkle(tx: SahteTx) {
+    tx.platformHizmetBolgesi.findMany.mockResolvedValue([
+      ...KAPSAM,
+      { il: IL_80, ilce: ILCE_80, mahalle: null },
+    ]);
+  }
+
+  const nSatir = (n: number) =>
+    Array.from({ length: n }, () => ({ il: 'Diyarbakır', ilce: 'Kayapınar' }));
+
+  it('1 — 500 satir KABUL edilir', async () => {
+    const { tx, market } = kur();
+
+    await expect(
+      market.teslimatBolgeleriYazTx(txAs(tx), MAGAZA, nSatir(500), 7),
+    ).resolves.toBeDefined();
+  });
+
+  it('2 — 501 satir REDDEDILIR (en ucuz kontrol; kapsam sorgusu hic acilmaz)', async () => {
+    const { tx, market } = kur();
+
+    await expect(
+      market.teslimatBolgeleriYazTx(txAs(tx), MAGAZA, nSatir(501), 7),
+    ).rejects.toThrow(/en fazla 500 satır/);
+
+    expect(tx.platformHizmetBolgesi.findMany).not.toHaveBeenCalled();
+    expect(tx.store.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('3+5 — il ve ilce 80 karakter KABUL edilir', async () => {
+    const { tx, market } = kur();
+    kapsamaUzunAdEkle(tx);
+
+    await expect(
+      market.teslimatBolgeleriYazTx(txAs(tx), MAGAZA, [{ il: IL_80, ilce: ILCE_80 }], 7),
+    ).resolves.toBeDefined();
+  });
+
+  it('4 — il 81 karakter REDDEDILIR (kapsam kontrolune bile gidilmez)', async () => {
+    const { tx, market } = kur();
+    kapsamaUzunAdEkle(tx);
+
+    await expect(
+      market.teslimatBolgeleriYazTx(txAs(tx), MAGAZA, [{ il: 'A'.repeat(81), ilce: ILCE_80 }], 7),
+    ).rejects.toThrow(/İl adı en fazla 80 karakter/);
+
+    expect(tx.platformHizmetBolgesi.findMany).not.toHaveBeenCalled();
+    expect(tx.store.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('6 — ilce 81 karakter REDDEDILIR', async () => {
+    const { tx, market } = kur();
+    kapsamaUzunAdEkle(tx);
+
+    await expect(
+      market.teslimatBolgeleriYazTx(txAs(tx), MAGAZA, [{ il: IL_80, ilce: 'B'.repeat(81) }], 7),
+    ).rejects.toThrow(/İlçe adı en fazla 80 karakter/);
+
+    expect(tx.store.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('7 — mahalle 80 karakter KABUL edilir', async () => {
+    const { tx, market } = kur();
+
+    await expect(
+      market.teslimatBolgeleriYazTx(
+        txAs(tx),
+        MAGAZA,
+        [{ il: 'Diyarbakır', ilce: 'Kayapınar', mahalle: 'C'.repeat(80) }],
+        7,
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('8 — mahalle 81 karakter REDDEDILIR', async () => {
+    const { tx, market } = kur();
+
+    await expect(
+      market.teslimatBolgeleriYazTx(
+        txAs(tx),
+        MAGAZA,
+        [{ il: 'Diyarbakır', ilce: 'Kayapınar', mahalle: 'C'.repeat(81) }],
+        7,
+      ),
+    ).rejects.toThrow(/Mahalle adı en fazla 80 karakter/);
+
+    expect(tx.store.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('9 — mahalle null: mevcut "ilcenin tamami" semantigi KORUNDU', async () => {
+    const { tx, market } = kur();
+
+    await market.teslimatBolgeleriYazTx(
+      txAs(tx),
+      MAGAZA,
+      [{ il: 'Diyarbakır', ilce: 'Kayapınar', mahalle: null }],
+      7,
+    );
+
+    expect(tx.magazaTeslimatBolgesi.createMany).toHaveBeenCalledWith({
+      data: [
+        { storeId: MAGAZA, il: 'Diyarbakır', ilce: 'Kayapınar', mahalle: null, feeKurus: null },
+      ],
+    });
+  });
+
+  it('10+11 — AYNI asiri girdi IKI yuzeyde de reddedilir (approval + paylasilan primitive)', async () => {
+    const asiriMahalle = 'C'.repeat(81);
+    const asiriGovde = {
+      bolgeler: [{ il: 'Diyarbakır', ilce: 'Kayapınar', mahalle: asiriMahalle }],
+    };
+
+    // 10 — approval yolu: proposedData DTO'dan GECMEZ
+    const a = kur();
+    await expect(
+      a.adapter.validateProposedData(asiriGovde, BAGLAM),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    // 11 — panel/paylasilan primitive yolu: AYNI kural, AYNI sonuc
+    const b = kur();
+    await expect(
+      b.market.teslimatBolgeleriYazTx(txAs(b.tx), MAGAZA, asiriGovde.bolgeler, 7),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(b.tx.store.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('10+11 — adet siniri da iki yuzeyde AYNI', async () => {
+    const govde = { bolgeler: nSatir(501) };
+
+    const a = kur();
+    await expect(a.adapter.validateProposedData(govde, BAGLAM)).rejects.toThrow(
+      /en fazla 500 satır/,
+    );
+
+    const b = kur();
+    await expect(
+      b.market.teslimatBolgeleriYazTx(txAs(b.tx), MAGAZA, govde.bolgeler, 7),
+    ).rejects.toThrow(/en fazla 500 satır/);
+  });
+});
