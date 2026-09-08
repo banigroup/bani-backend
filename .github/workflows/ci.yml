@@ -55,3 +55,79 @@ jobs:
       - run: pnpm test
 
       - run: pnpm run build
+
+  # =====================================================================
+  # D136 — GERCEK PostgreSQL ENTEGRASYON TESTLERI
+  #
+  # NEDEN AYRI JOB, build'e EK ADIM DEGIL:
+  #   · build job'i BYTE BYTE ayni kaldi; mevcut unit/typecheck/boundary
+  #     kapilarina hicbir sey eklenmedi, hicbiri DB'ye bagimli hale gelmedi.
+  #   · service konteyneri yalnizca ihtiyaci olan job'da ayaga kalkar.
+  #   · entegrasyon kirmizi olsa bile unit/build sinyali ayri okunur.
+  #
+  # DOCKERFILE'A DOKUNULMADI: production imaj build'i (D130 `pnpm test`) hala
+  # veritabani BAGIMSIZ. Entegrasyon testleri YALNIZ burada, PostgreSQL service
+  # konteyneri bulunan bu baglamda kosar.
+  #
+  # BU JOB'DA `pnpm run build` YOK: derleme kapisi build job'inin isi; burada
+  # tekrarlamak CI suresini iki katina cikarir, yeni bir sey kanitlamaz.
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: bani_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # HEALTH CHECK ZORUNLU: konteyner "started" oldugunda Postgres HENUZ
+        # baglanti kabul etmiyor olabilir. Bu olmadan migrate adimi yarista
+        # P1001 ile duser ve hata testlerde degil altyapida olur.
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bani_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # TEK ACIK TEST DB ADRESI. Production/development DATABASE_URL ile
+      # KARISTIRILMAZ: ad da farkli (INTEGRATION_DATABASE_URL), veritabani da
+      # (bani_test). Test dosyasi ayrica DB adini dogrular; 'bani_test' degilse
+      # hicbir yikici islem yapmadan durur.
+      INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/bani_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm exec prisma generate
+
+      # SEMA -> TEST DB. Migration orkestrasyonu WORKFLOW'un isidir; test dosyasi
+      # child_process ile migrate CALISTIRMAZ, hazir ve migrate edilmis bir
+      # bani_test varsayar.
+      #
+      # DATABASE_URL BURADA TEST DB'YE ISARET EDER: `prisma migrate deploy`
+      # datasource'u env("DATABASE_URL")'den okur. Deger repo secret'i DEGIL,
+      # yukaridaki job env'inden gelen yerel service adresidir - production'a
+      # yonelmesi mumkun degil.
+      - run: pnpm exec prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ env.INTEGRATION_DATABASE_URL }}
+
+      # GERCEK DB TESTLERI. Ayri runner (jest.integration.config.js), ayri script.
+      # `--passWithNoTests` BILEREK YOK: desen hicbir dosyayla eslesmezse bu adim
+      # KIRMIZI olmali, yoksa "entegrasyon gecti" sanilir.
+      - run: pnpm run test:int

@@ -15,6 +15,35 @@ import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/r
 import { DIKEY_DOMAIN } from '../common/domain/dikey-domain';
 
 /**
+ * Teslimat bolgesi yazma girdisinin DAR sekli (D124 Option A).
+ *
+ * Hem panel DTO satiri (TeslimatBolgeDto) hem de kanonik hale getirilmis satir
+ * bu sekle uyar; boylece teslimatBolgeleriYazTx tek imzayla iki cagirani da
+ * karsilar ve approval tarafi icin ayri bir tip/kural kopyasi dogmaz.
+ */
+export interface TeslimatBolgeGirdi {
+  il: string;
+  ilce: string;
+  mahalle?: string | null;
+  feeKurus?: number | null;
+}
+
+/**
+ * TESLIMAT BOLGESI BOYUT SINIRLARI (AUDIT-002).
+ *
+ * Degerler TeslimatBolgeleriDto / TeslimatBolgeDto'daki @ArrayMaxSize(500) ve
+ * @MaxLength(80) ile BILEREK ayni. DTO'nun class-validator dekoratorleri sabit
+ * ifade bekledigi icin oradan bu sabitler REFERANS ALINAMIYOR; deger iki yerde
+ * duruyor ve teslimatBolgeleriDogrulaTx testleri esligi koruyor.
+ *
+ * NEDEN BURADA DA GEREKLI: DTO yalnizca HTTP panel yolundadir. Approval
+ * yolunda proposedData Core'a `unknown` gelir ve DTO'dan HIC gecmez; sinir
+ * yalnizca DTO'da kalirsa o yol sinirsiz olur.
+ */
+const TESLIMAT_BOLGE_MAX_ADET = 500;
+const TESLIMAT_BOLGE_MAX_METIN = 80;
+
+/**
  * FAZ 1 / B2 — B2 UCLARINDAN ATANABILEN ROLLER. Kodda sabit, veride degil:
  * korundugumuz sey magaza yoneticisinin yanlis/kotu niyetli girdisi. Guard'daki
  * MAGAZA_ROLU_IZIN_BEYAZ_LISTESI ile ayni gerekce, ayni desen.
@@ -1451,36 +1480,133 @@ export class MarketService {
   }
 
   private async teslimatBolgeleriOku(storeId: string) {
-    const bolgeler = await this.prisma.magazaTeslimatBolgesi.findMany({
+    return this.teslimatBolgeleriOkuIc(this.prisma, storeId);
+  }
+
+  /**
+   * Bolge listesi okuma — PrismaService ya da TransactionClient ile calisir.
+   * (kullanici-rolleri.ts'teki PrismaBenzeri deseninin ayni gerekcesi: ayni
+   * sorgunun hem normal hem transaction baglaminda kullanilmasi.)
+   *
+   * SIRALAMA UYGULAMADA: DB'nin NULL siralamasina guvenilmez - snapshot
+   * karsilastirmasi (D116) deterministik olmak ZORUNDA. mahalle NULL satirlar
+   * once gelir, sonra alfabetik.
+   */
+  private async teslimatBolgeleriOkuIc(
+    db: PrismaService | Prisma.TransactionClient,
+    storeId: string,
+  ) {
+    const satirlar = await db.magazaTeslimatBolgesi.findMany({
       where: { storeId },
       select: { il: true, ilce: true, mahalle: true, feeKurus: true },
-      orderBy: [{ il: 'asc' }, { ilce: 'asc' }, { mahalle: 'asc' }],
     });
+    const bolgeler = [...satirlar].sort(
+      (a, b) =>
+        a.il.localeCompare(b.il, 'tr') ||
+        a.ilce.localeCompare(b.ilce, 'tr') ||
+        (a.mahalle ?? '').localeCompare(b.mahalle ?? '', 'tr'),
+    );
     return { storeId, kisitVar: bolgeler.length > 0, bolgeler };
   }
 
   /**
-   * TUM LISTEYI DEGISTIR (PUT). Bos dizi = kisit yok.
+   * APPROVAL SNAPSHOT (D116 + D134) — bolge listesi + eszamanlilik belirteci.
    *
-   * DOGRULAMA PLATFORM KAPSAMINA KARSI: gonderilen her satir
-   * platform_hizmet_bolgeleri'nde karsiligi olmali, yoksa 400. Satici
-   * platformun hizmet vermedigi bir ilceyi secip musteriye "buraya teslimat
-   * var" izlenimi veremez.
+   * Panel okuma ucunun (teslimatBolgeleri) yanit sekli BILEREK degistirilmedi;
+   * revision yalnizca approval katmaninin ihtiyaci olan bir alan oldugu icin
+   * AYRI bir snapshot metodunda dondurulur. Boylece HTTP sozlesmesi degismez.
    *
-   * KAYDEDILEN DEGER KANONIKTIR: saticinin gonderdigi metin degil, platform
-   * tablosundaki yazim yazilir. "kayapinar" gonderen satici da "Kayapınar"
-   * kaydeder; checkout karsilastirmasi tek yazim uzerinden yurur.
+   * revision SNAPSHOT'A DAHIL: ayni satir sayisi/farkli icerik ya da yalnizca
+   * feeKurus degisimi gibi vakalar liste karsilastirmasiyla da yakalanir, ama
+   * revision "arada birileri yazdi mi" sorusunu icerikten BAGIMSIZ cevaplar
+   * (A -> B -> A donusu dahil).
    */
-  async teslimatBolgeleriGuncelle(
-    storeId: string,
-    userId: string,
-    roles: Role[],
-    dto: TeslimatBolgeleriDto,
-    ip?: string,
-  ) {
-    await this.ownedOrAdmin(storeId, userId, roles);
+  async teslimatBolgeleriAnlikGoruntuTx(tx: Prisma.TransactionClient, storeId: string) {
+    const magaza = await tx.store.findUnique({
+      where: { id: storeId },
+      select: { deliveryZoneRevision: true },
+    });
+    if (!magaza) throw new NotFoundException('Mağaza bulunamadı');
+    const liste = await this.teslimatBolgeleriOkuIc(tx, storeId);
+    return {
+      storeId,
+      revision: magaza.deliveryZoneRevision,
+      kisitVar: liste.kisitVar,
+      bolgeler: liste.bolgeler,
+    };
+  }
 
-    const kapsam = await this.prisma.platformHizmetBolgesi.findMany({
+  /**
+   * DB-BAGIMLI DOGRULAMA (D135) — platform kapsami + kanonik esleme + tekillestirme.
+   *
+   * teslimatBolgeleriGuncelle'nin govdesinden AYNEN cikarildi; davranis
+   * degismedi. Ayri metod olmasinin tek sebebi: ayni kurallarin hem panel
+   * yazimi hem de approval APPLY aninda, hem de AYNI transaction icinde
+   * calistirilabilmesi. Kural kopyalanmadi - tek kaynak burasi.
+   *
+   * tx ZORUNLU: referans veri (platform_hizmet_bolgeleri) onay aninda tekrar
+   * okunur; submit sirasindaki dogrulama TEK BASINA yeterli degildir (D135).
+   */
+  async teslimatBolgeleriDogrulaTx(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    bolgeler: TeslimatBolgeGirdi[],
+  ): Promise<Prisma.MagazaTeslimatBolgesiCreateManyInput[]> {
+    // BOYUT SINIRLARI BURADA DA (AUDIT-002): ucret sinirinin ayni gerekcesi -
+    // panel yolunda @ArrayMaxSize(500) ve @MaxLength(80) DTO'da uygulaniyor, ama
+    // approval yolunda proposedData DTO'dan GECMEZ. Sinirlar yalnizca DTO'da
+    // kalirsa approval yolu SINIRSIZ olur: milyonlarca satirlik bir liste ya da
+    // 10 MB'lik bir mahalle metni tek createMany'ye giderdi.
+    //
+    // SIRA ONEMLI: once O(1) adet kontrolu, sonra metin uzunluklari, en son
+    // ucret ve kapsam. Boylece devasa girdi en ucuz kontrolde kesilir.
+    //
+    // Panel icin DAVRANIS DEGISMEZ: DTO zaten ayni degerleri reddediyor.
+    if (bolgeler.length > TESLIMAT_BOLGE_MAX_ADET) {
+      throw new BadRequestException(
+        `Teslimat bölgesi listesi en fazla ${TESLIMAT_BOLGE_MAX_ADET} satır olabilir (gelen: ${bolgeler.length})`,
+      );
+    }
+
+    // METIN UZUNLUKLARI: deger ECHO EDILMEZ - asiri uzun girdiyi hata mesajina
+    // koymak ayni sorunu log/yanit tarafina tasirdi; satir numarasi yeterli.
+    // mahalle YOKSA kontrol edilmez; bos metin ("") gecerlidir ve mevcut
+    // semantikte bosaCevir tarafindan "ilcenin tamami"na indirgenir.
+    for (let i = 0; i < bolgeler.length; i++) {
+      const b = bolgeler[i];
+      if (b.il.length > TESLIMAT_BOLGE_MAX_METIN) {
+        throw new BadRequestException(
+          `İl adı en fazla ${TESLIMAT_BOLGE_MAX_METIN} karakter olabilir (#${i + 1})`,
+        );
+      }
+      if (b.ilce.length > TESLIMAT_BOLGE_MAX_METIN) {
+        throw new BadRequestException(
+          `İlçe adı en fazla ${TESLIMAT_BOLGE_MAX_METIN} karakter olabilir (#${i + 1})`,
+        );
+      }
+      if (typeof b.mahalle === 'string' && b.mahalle.length > TESLIMAT_BOLGE_MAX_METIN) {
+        throw new BadRequestException(
+          `Mahalle adı en fazla ${TESLIMAT_BOLGE_MAX_METIN} karakter olabilir (#${i + 1})`,
+        );
+      }
+    }
+
+    // UCRET SINIRI BURADA DA: panel yolunda sinirlari DTO (class-validator)
+    // uyguluyor, ama approval yolunda proposedData DTO'dan GECMEZ - Core'a
+    // `unknown` olarak gelir. Ayni siniri burada tekrarlamak, iki yolun ayni
+    // kurala tabi olmasini garanti eder (panel icin davranis degismez, cunku
+    // DTO zaten ayni araligi reddediyor).
+    for (const b of bolgeler) {
+      const ucret = b.feeKurus;
+      if (ucret === undefined || ucret === null) continue;
+      if (!Number.isInteger(ucret) || ucret < 0 || ucret > 1_000_000) {
+        throw new BadRequestException(
+          `Teslimat ücreti 0 ile 1.000.000 kuruş arasında tam sayı olmalı: ${b.il} / ${b.ilce}`,
+        );
+      }
+    }
+
+    const kapsam = await tx.platformHizmetBolgesi.findMany({
       where: { isActive: true },
       select: { il: true, ilce: true, mahalle: true },
     });
@@ -1502,7 +1628,7 @@ export class MarketService {
     const satirlar: Prisma.MagazaTeslimatBolgesiCreateManyInput[] = [];
     const gorulen = new Set<string>();
 
-    for (const b of dto.bolgeler) {
+    for (const b of bolgeler) {
       const ilceKaydi = harita.get(this.bolgeAnahtar(b.il, b.ilce));
       if (!ilceKaydi) {
         throw new BadRequestException(
@@ -1559,14 +1685,106 @@ export class MarketService {
       });
     }
 
-    const once = await this.teslimatBolgeleriOku(storeId);
+    return satirlar;
+  }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.magazaTeslimatBolgesi.deleteMany({ where: { storeId } });
-      if (satirlar.length > 0) await tx.magazaTeslimatBolgesi.createMany({ data: satirlar });
+  /**
+   * TESLIMAT BOLGESI YAZMANIN TEK KAPISI (D124 Option A + D134 + D135).
+   *
+   * Panel yolu da approval apply yolu da BU metodu cagirir; ikinci bir yazma
+   * yolu YOKTUR. Boylece eszamanlilik protokolu atlanabilecek bir kapi birakmaz.
+   *
+   * KENDI TRANSACTION'INI ACMAZ, root prisma KULLANMAZ: her okuma/yazma
+   * disaridan verilen tx uzerinden yapilir (D117/D124).
+   *
+   * SIRA (D134 correctness):
+   *   1. DB-bagimli dogrulama (D135) — AYNI tx, guncel referans veriyle
+   *   2. once anlik goruntusu (yalnizca audit/diff icin; karar verici DEGIL)
+   *   3. CAS: tek ifadede hem karsilastirir hem +1 ilerletir
+   *        count !== 1 -> ConflictException
+   *   4. whole-list replace (deleteMany + createMany)
+   *   5. sonra anlik goruntusu
+   *
+   * NEDEN CAS REPLACE'DEN ONCE: basarili CAS stores satirinda yazma kilidi alir
+   * ve tx sonuna kadar tutar. Ayni protokole giren ikinci yazici kendi CAS'inde
+   * BEKLER; kilit birakilinca WHERE yeniden degerlendirilir, revision artik
+   * eslesmedigi icin 0 satir gunceller ve Conflict alir. Boylece karsilastirma
+   * ile yazim arasinda korumasiz pencere KALMAZ.
+   *
+   * ROLLBACK: CAS'ten sonraki herhangi bir hata (dogrulama, yazim, cagiranin
+   * audit'i) transaction'i geri sarar; revision artisi da geri gider.
+   */
+  async teslimatBolgeleriYazTx(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    bolgeler: TeslimatBolgeGirdi[],
+    beklenenRevision: number,
+  ) {
+    const satirlar = await this.teslimatBolgeleriDogrulaTx(tx, storeId, bolgeler);
+
+    const once = await this.teslimatBolgeleriOkuIc(tx, storeId);
+
+    const cas = await tx.store.updateMany({
+      where: { id: storeId, deliveryZoneRevision: beklenenRevision },
+      data: { deliveryZoneRevision: { increment: 1 } },
     });
+    if (cas.count !== 1) {
+      throw new ConflictException(
+        'Teslimat bölgeleri bu sırada başka bir işlem tarafından değiştirildi; lütfen sayfayı yenileyip tekrar deneyin',
+      );
+    }
 
-    const sonra = await this.teslimatBolgeleriOku(storeId);
+    await tx.magazaTeslimatBolgesi.deleteMany({ where: { storeId } });
+    if (satirlar.length > 0) await tx.magazaTeslimatBolgesi.createMany({ data: satirlar });
+
+    const sonra = await this.teslimatBolgeleriOkuIc(tx, storeId);
+    return { once, sonra, revision: beklenenRevision + 1 };
+  }
+
+  /**
+   * TUM LISTEYI DEGISTIR (PUT). Bos dizi = kisit yok.
+   *
+   * DOGRULAMA PLATFORM KAPSAMINA KARSI: gonderilen her satir
+   * platform_hizmet_bolgeleri'nde karsiligi olmali, yoksa 400. Satici
+   * platformun hizmet vermedigi bir ilceyi secip musteriye "buraya teslimat
+   * var" izlenimi veremez.
+   *
+   * KAYDEDILEN DEGER KANONIKTIR: saticinin gonderdigi metin degil, platform
+   * tablosundaki yazim yazilir. "kayapinar" gonderen satici da "Kayapınar"
+   * kaydeder; checkout karsilastirmasi tek yazim uzerinden yurur.
+   */
+  async teslimatBolgeleriGuncelle(
+    storeId: string,
+    userId: string,
+    roles: Role[],
+    dto: TeslimatBolgeleriDto,
+    ip?: string,
+  ) {
+    await this.ownedOrAdmin(storeId, userId, roles);
+
+    // TEK KAPI (D124 Option A): panel yolu da approval apply yolu da AYNI
+    // teslimatBolgeleriYazTx primitive'ini cagirir. Dogrulama, CAS ve liste
+    // degisimi o metodun icinde, TEK transaction'da.
+    //
+    // BEKLENEN REVISION NEREDEN: panelde istemci bir surum tasimiyor (DTO ve
+    // HTTP sozlesmesi DEGISMEDI). Bu yuzden guncel revision AYNI transaction
+    // icinde okunur ve CAS'e beklenen deger olarak verilir. Es zamanli iki
+    // panel yaziminda ikincisi CAS kilidinde bekler, kilit birakilinca WHERE
+    // yeniden degerlendirilir ve revision artik eslesmedigi icin Conflict alir
+    // - SESSIZ UZERINE YAZMA olmaz.
+    const { once, sonra } = await this.prisma.$transaction(async (tx) => {
+      const magaza = await tx.store.findUnique({
+        where: { id: storeId },
+        select: { deliveryZoneRevision: true },
+      });
+      if (!magaza) throw new NotFoundException('Mağaza bulunamadı');
+      return this.teslimatBolgeleriYazTx(
+        tx,
+        storeId,
+        dto.bolgeler,
+        magaza.deliveryZoneRevision,
+      );
+    });
 
     // AUDIT: tum listeyi iki kez yazmak yerine FARKI yaziyoruz (PR #22 deseni).
     // "Hangi bolge ne zaman acildi/kapandi" sorusunun cevabi bu.

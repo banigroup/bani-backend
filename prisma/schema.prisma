@@ -643,6 +643,28 @@ model Store {
   commissionRate Int          @default(1000) // binde (1000 = %10)
   minOrder       BigInt       @default(0)
   isActive       Boolean      @default(true)
+
+  // TESLIMAT BOLGESI OPTIMISTIC KILIDI (D134 / C3A-005).
+  //
+  // NEDEN PARENT'TA: teslimat bolgeleri BUTUN LISTE olarak degistiriliyor
+  // (deleteMany + createMany). Cocuk satirlarda "liste su an hangi halde"
+  // sorusunu cevaplayan bir belirtec yok; ayni satir sayisi/farkli icerik ya da
+  // yalnizca feeKurus degisimi cocuk-SAYIMIYLA fark edilemez. Bu yuzden
+  // belirtec listenin SAHIBINDE tutulur.
+  //
+  // NEDEN AYRI KOLON: Store.updatedAt bolge yaziminda DEGISMIYOR (yazim yalniz
+  // magaza_teslimat_bolgeleri'ne gidiyor); onu suni ilerletmek alanin "magaza
+  // kaydi ne zaman guncellendi" anlamini bozardi. Genel bir `version` de
+  // kullanilmadi: ilgisiz iki yuzey birbirini gereksiz yere catistirmasin diye
+  // her whole-list yuzeyi KENDI belirtecini alir.
+  //
+  // KULLANIM: MarketService.teslimatBolgeleriYazTx tek CAS ifadesiyle hem
+  // karsilastirir hem ilerletir:
+  //   updateMany({ where: { id, deliveryZoneRevision: beklenen },
+  //                data: { deliveryZoneRevision: { increment: 1 } } })
+  // count !== 1 -> ConflictException. Emsal: InventoryBalance.version (:2007).
+  deliveryZoneRevision Int @default(0)
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
