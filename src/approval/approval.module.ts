@@ -12,19 +12,35 @@
 // EK imports GEREKMEZ: PrismaModule ve AuditModule @Global (prisma.module.ts:4,
 // audit.module.ts:4); AdapterRegistry zaten bu modulde provide ediliyor.
 //
-// APPROVAL_ADAPTERS bos dizi ile saglanir: gercek adapter'lar ileriki paketlerde
-// tek tek eklenecek. Bos kume derlenebilir ve deterministiktir — registry bos
-// haldeyken her cozumleme talebinde yuksek sesle patlar.
+// ILK GERCEK ADAPTER (D124 Option A): DeliveryZoneAdapter kayitli. Adapter
+// kumesi artik bos DEGIL, ama modul HALA hicbir yerden import edilmiyor -
+// calisma zamani davranisi yine AKTIF DEGIL.
+//
+// MarketModule NEDEN IMPORT EDILIYOR: Option A geregi yazma tek kapidan
+// (MarketService.teslimatBolgeleriYazTx) gecer; adapter o servisi enjekte eder.
+// MarketModule onu export ediyor (market.module.ts:12) ve MarketModule
+// ApprovalModule'u import ETMIYOR -> dongusel bagimlilik YOK, forwardRef
+// gerekmiyor.
 import { Module } from '@nestjs/common';
+import { MarketModule } from '../market/market.module';
 import { AdapterRegistry, APPROVAL_ADAPTERS } from './adapter/adapter-registry';
 import { ApprovalAdapter } from './adapter/approval-adapter.interface';
+import { DeliveryZoneAdapter } from './adapter/delivery-zone.adapter';
 import { ApprovalService } from './approval.service';
 
-const ADAPTERS: readonly ApprovalAdapter[] = [];
-
 @Module({
+  imports: [MarketModule],
   providers: [
-    { provide: APPROVAL_ADAPTERS, useValue: ADAPTERS },
+    DeliveryZoneAdapter,
+    {
+      // useValue DEGIL useFactory: adapter artik DI ile kurulan bir sinif
+      // (PrismaService + MarketService bagimliliklari var).
+      provide: APPROVAL_ADAPTERS,
+      useFactory: (deliveryZone: DeliveryZoneAdapter): readonly ApprovalAdapter[] => [
+        deliveryZone,
+      ],
+      inject: [DeliveryZoneAdapter],
+    },
     AdapterRegistry,
     ApprovalService,
   ],
