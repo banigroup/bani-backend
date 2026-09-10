@@ -1,4 +1,5 @@
-// Bani Coffee backend mağazası + ürünler (TEK SEFERLİK, tekrar çalıştırılabilir).
+// Bani Coffee KATALOĞU (kategoriler + ürünler). Mağazayı YARATMAZ — demo-coffee
+// create-stores.js'in sorumluluğundadır. Tekrar çalıştırılabilir (idempotent).
 // Çalıştır:  cd "$HOME\Desktop\bani-backend"; node create-coffee.js
 const fs = require('fs');
 const path = require('path');
@@ -47,27 +48,21 @@ const DESSERTS = [
 ];
 
 async function main() {
-  const owner = await prisma.user.findUnique({ where: { phone: '+905111111111' } });
-  if (!owner) { console.error('HATA: Satıcı bulunamadı (+905111111111). Seed çalıştı mı?'); process.exit(1); }
-
-  let store = await prisma.store.findUnique({ where: { slug: 'demo-coffee' } });
-  if (store) {
-    console.log('demo-coffee zaten var:', store.id);
-  } else {
-    store = await prisma.store.create({
-      data: {
-        ownerId: owner.id,
-        name: 'Bani Coffee',
-        slug: 'demo-coffee',
-        type: 'CAFE',
-        businessUnit: 'COFFEE',
-        description: 'Anadolu\'nun kadim lezzeti — özel harman kahveler ve yöresel tatlılar',
-        isActive: true,
-        commissionRate: 1000,
-      },
-    });
-    console.log('demo-coffee OLUŞTURULDU:', store.id);
+  // MAGAZAYI YARATMAZ — demo-coffee'nin TEK sahibi create-stores.js'tir.
+  //
+  // NEDEN: iki script de ayni slug'i yaratabiliyordu ve FARKLI type veriyordu
+  // (burada CAFE, create-stores.js'te SHOP). Hangisinin once calistigina gore
+  // sonuc degisiyordu. Canli kayit SHOP (create-stores.js tarafindan
+  // yaratilmis); belirsizlik, yaratma sorumlulugu tek yere alinarak kapatildi.
+  // Type karari artik yalnizca create-stores.js'te yasiyor.
+  //
+  // Emsal: create-kervan.js de katalog script'idir ve demo-carsi'yi yaratmaz.
+  const store = await prisma.store.findUnique({ where: { slug: 'demo-coffee' } });
+  if (!store) {
+    console.log('⚠️ demo-coffee bulunamadi — once node create-stores.js. Coffee katalog atlandi.');
+    process.exit(0);
   }
+  console.log('demo-coffee:', store.id);
 
   // Kategoriler
   let catKahve = await prisma.category.findFirst({ where: { storeId: store.id, slug: 'kahveler' } });

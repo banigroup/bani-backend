@@ -60,9 +60,15 @@ async function main() {
 
   let store = await prisma.store.findUnique({ where: { slug: 'demo-carsi' } });
   if (!store) {
+    // Store.sellerId ZORUNLU (schema.prisma). Bos bir veritabaninda magaza
+    // ancak ana seed'in acdigi saticiya baglanarak yaratilabilir; satici
+    // BURADA YARATILMAZ - o ana seed'in isi (prisma/seed.ts). Ayni desen
+    // prisma/seed-yemek.ts'te de kullaniliyor.
+    const seller = await prisma.seller.findFirst({ where: { ownerUserId: owner.id, deletedAt: null } });
+    if (!seller) { console.error('⚠️ Satici kaydi (seller) bulunamadi. Once ana seed. Carsi seed atlandi.'); process.exit(0); }
     store = await prisma.store.create({
       data: {
-        ownerId: owner.id, name: 'Bani Carsi', slug: 'demo-carsi',
+        ownerId: owner.id, sellerId: seller.id, name: 'Bani Carsi', slug: 'demo-carsi',
         type: 'SHOP', businessUnit: 'CARSI',
         description: 'Anadolu ureticisinden el emegi urunler',
         isActive: true, commissionRate: 1000,
