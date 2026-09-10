@@ -24,6 +24,21 @@ export enum Permission {
   // duzenleyemez" kurali yazilmali, yoksa ADMIN kendine finance:read verebilir.
   PERMISSION_MANAGE = 'permission:manage',
 
+  // SATICI BASVURUSU — DAR IZIN, STORE_WRITE'IN YERINE GECMEZ.
+  //
+  // NEDEN AYRI: basvuru uclari bugun STORE_WRITE istiyor ve CUSTOMER'da o izin
+  // YOK, dolayisiyla yeni bir kullanici satici basvurusunu hic baslatamiyor.
+  // Cozum olarak CUSTOMER'a STORE_WRITE vermek, ona POST /market/stores'u da
+  // acardi - yani onaysiz magaza acma yolu. Bu izin YALNIZCA kendi basvurusunu
+  // olusturma/duzenleme/gonderme, belge yukleme ve sozlesme onaylama
+  // uclarinda kullanilir; magaza yaratma STORE_WRITE'ta KALIR.
+  //
+  // Emsal: permissions.guard.ts'teki store:settings:write notu — "ihtiyac
+  // dogarsa AYRI bir izin tanimlanir, store:write genisletilmez".
+  //
+  // Uclara baglanmasi S3'te; bu pakette yalnizca anahtar ve matris satirlari.
+  SELLER_APPLY = 'seller:apply',
+
   // Faz 2 — Market / Katalog
   STORE_READ = 'store:read',
   STORE_WRITE = 'store:write',

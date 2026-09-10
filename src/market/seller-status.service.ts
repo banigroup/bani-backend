@@ -19,6 +19,7 @@ export class SellerStatusService {
     ACTIVE: [SellerStatus.SUSPENDED, SellerStatus.CLOSED],
     SUSPENDED: [SellerStatus.ACTIVE, SellerStatus.CLOSED],
     CLOSED: [],
+    REJECTED: [], // Gecis kurali S4'te uygulanacak; OD-3 karari LOCKED.
   };
 
   /**
