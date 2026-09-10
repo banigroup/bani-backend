@@ -77,8 +77,17 @@ function gecerliDto(ustuneYaz: Partial<CreateSaticiDto> = {}): CreateSaticiDto {
   } as CreateSaticiDto;
 }
 
-/** Cagri kayitlarini tutan sahte prisma. */
-function sahtePrisma(mevcutSatici: { id: string } | null) {
+/**
+ * Cagri kayitlarini tutan sahte prisma.
+ *
+ * secenekler.createFirlat: create() bu hatayi FIRLATIR (yaris benzetimi).
+ * secenekler.yaristanSonraKayit: firlatma anindaki DB gercegi - yarisi
+ *   kazanan istek kaydi acmissa nesne, ilgisiz bir ihlalse null.
+ */
+function sahtePrisma(
+  mevcutSatici: { id: string } | null,
+  secenekler: { createFirlat?: unknown; yaristanSonraKayit?: { id: string } | null } = {},
+) {
   const cagrilar = { create: [] as any[], findFirst: [] as any[] };
   let kayit = mevcutSatici;
   const prisma = {
@@ -106,6 +115,12 @@ function sahtePrisma(mevcutSatici: { id: string } | null) {
       }),
       create: jest.fn(async (arg: any) => {
         cagrilar.create.push(arg);
+        if (secenekler.createFirlat !== undefined) {
+          // Firlatma anindaki DB gercegi: yarisi kazanan istek kaydi acmis
+          // olabilir (nesne) ya da olay hic yaris degildir (null).
+          kayit = secenekler.yaristanSonraKayit ?? null;
+          throw secenekler.createFirlat;
+        }
         kayit = { id: 'yeni-satici-id' };
         return { id: 'yeni-satici-id' };
       }),
@@ -114,8 +129,11 @@ function sahtePrisma(mevcutSatici: { id: string } | null) {
   return { prisma, cagrilar };
 }
 
-function servisKur(mevcutSatici: { id: string } | null) {
-  const { prisma, cagrilar } = sahtePrisma(mevcutSatici);
+function servisKur(
+  mevcutSatici: { id: string } | null,
+  secenekler: { createFirlat?: unknown; yaristanSonraKayit?: { id: string } | null } = {},
+) {
+  const { prisma, cagrilar } = sahtePrisma(mevcutSatici, secenekler);
   const market = new MarketService(
     prisma as unknown as PrismaService,
     {} as unknown as AuditService,
@@ -189,6 +207,64 @@ describe('T2/T3 — yan etki YOK', () => {
     expect((prisma as any).store).toBeUndefined();
     expect((prisma as any).userRole).toBeUndefined();
     expect((prisma as any).user).toBeUndefined();
+  });
+});
+
+describe('T6/T7 — P2002 yaris cozumu (sonuca bakilir, hatanin sekline DEGIL)', () => {
+  /**
+   * meta.target BILEREK BOS: eski surum index adini burada arıyordu ve gercek
+   * yarista bulamayip 500 uretiyordu. Bu nesne o kusuru sabitler - duzeltme
+   * meta.target'a bakmadigi icin testin gecmesi gerekir.
+   */
+  const p2002TargetSiz = { code: 'P2002', meta: {}, message: 'Unique constraint failed' };
+  /** meta.target DOLU ama YANILTICI: yine de karar sonuca gore verilmeli. */
+  const p2002YaniltciTarget = { code: 'P2002', meta: { target: ['baska_bir_kisit'] } };
+
+  it('T6: P2002 + yeniden sorguda AKTIF SATICI VAR -> idempotent yanit', async () => {
+    const { market, cagrilar } = servisKur(null, {
+      createFirlat: p2002TargetSiz,
+      yaristanSonraKayit: { id: 'kazanan-id' },
+    });
+
+    const sonuc = await market.saticiOlustur(KULLANICI, gecerliDto());
+
+    expect(cagrilar.create).toHaveLength(1); // create denendi ve dustu
+    expect(sonuc.id).toBe('kazanan-id');     // kazananin kaydi dondu
+  });
+
+  it('T6: meta.target YANILTICI olsa bile sonuc belirleyicidir', async () => {
+    const { market } = servisKur(null, {
+      createFirlat: p2002YaniltciTarget,
+      yaristanSonraKayit: { id: 'kazanan-id' },
+    });
+
+    await expect(market.saticiOlustur(KULLANICI, gecerliDto())).resolves.toMatchObject({
+      id: 'kazanan-id',
+    });
+  });
+
+  it('T7 NEGATIF: P2002 + yeniden sorguda AKTIF SATICI YOK -> ORIJINAL hata firlatilir', async () => {
+    const { market } = servisKur(null, {
+      createFirlat: p2002TargetSiz,
+      yaristanSonraKayit: null, // ilgisiz bir benzersizlik ihlali
+    });
+
+    // Sarmalanmadan, AYNI nesne olarak firlatilmali: cagiran tarafin gordugu
+    // sey Prisma'nin kendi tanisi olmali.
+    await expect(market.saticiOlustur(KULLANICI, gecerliDto())).rejects.toBe(p2002TargetSiz);
+  });
+
+  it('T7 NEGATIF: P2002 OLMAYAN hata yeniden sorgu YAPILMADAN firlatilir', async () => {
+    const baskaHata = { code: 'P2003', message: 'Foreign key constraint failed' };
+    const { market, cagrilar } = servisKur(null, {
+      createFirlat: baskaHata,
+      yaristanSonraKayit: { id: 'olmamali' },
+    });
+
+    await expect(market.saticiOlustur(KULLANICI, gecerliDto())).rejects.toBe(baskaHata);
+    // P2002 olmayan hatada yaris cozumu HIC calismamali: create oncesi tek
+    // varlik kontrolu disinda findFirst cagrilmamali.
+    expect(cagrilar.findFirst).toHaveLength(1);
   });
 });
 

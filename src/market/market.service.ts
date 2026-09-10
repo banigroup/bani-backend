@@ -512,18 +512,16 @@ export class MarketService {
     BusinessUnit.LOAD,
   ]);
 
-  /** Prisma benzersizlik ihlali. Emsal: approval.service.p2002Mi (D118 yarisi). */
-  private aktifSaticiCakismasiMi(e: unknown): boolean {
-    if (typeof e !== 'object' || e === null) return false;
-    const hata = e as { code?: unknown; meta?: { target?: unknown } };
-    if (hata.code !== 'P2002') return false;
-    // HANGI kisit oldugunu DOGRULA. Yalin "P2002 ise yut" yazsaydik, ileride
-    // sellers'a eklenecek BASKA bir unique kisitin ihlali de sessizce
-    // "mevcut kaydi don" davranisina duserdi - yani gercek bir hata gizlenirdi.
-    // Prisma raw SQL ile acilmis kismi index icin target'ta index ADINI verir.
-    const hedef = hata.meta?.target;
-    const metin = Array.isArray(hedef) ? hedef.join(',') : String(hedef ?? '');
-    return metin.includes('sellers_active_owner_key');
+  /**
+   * Prisma benzersizlik ihlali. Emsal: approval.service.p2002Mi (D118 kismi
+   * unique index yarisi) — ayrica load.service:952 ve evdeneve.service:317.
+   *
+   * YALNIZCA HATA KODUNA BAKAR. Hangi kisitin ihlal edildigi BURADAN
+   * anlasilmaya calisilmaz; o soru cagiran tarafta SONUCA bakilarak
+   * cevaplaniyor (bkz. saticiOlustur catch blogu).
+   */
+  private p2002Mi(e: unknown): boolean {
+    return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002';
   }
 
   /**
@@ -584,10 +582,26 @@ export class MarketService {
     try {
       await this.prisma.seller.create({ data, select: { id: true } });
     } catch (e) {
-      // YARIS: iki es zamanli istek. DB kisiti (sellers_active_owner_key, S1)
-      // ikincisini reddeder; kullaniciya ham Prisma hatasi gostermek yerine
-      // ayni idempotent cevabi veriyoruz - kazanan istegin actigi kayit doner.
-      if (!this.aktifSaticiCakismasiMi(e)) throw e;
+      // YARIS: iki es zamanli istek. S1'in kismi unique index'i ikincisini
+      // reddeder; kullaniciya ham Prisma hatasi gostermek yerine ayni
+      // idempotent cevabi veriyoruz - kazanan istegin actigi kayit doner.
+      //
+      // HATANIN SEKLINE DEGIL SONUCA BAKILIR. Onceki surum P2002'nin
+      // meta.target alaninda index ADININ bulunacagini varsayiyordu; o
+      // varsayim gercek yarista tutmadi ve kaybeden istek 500 aldi (stres
+      // testinde ~%8). Prisma'nin hata govdesinin sekli hakkinda hicbir iddiada
+      // BULUNULMUYOR artik: yarisi kaybettiysek kazananin actigi kayit SIMDI
+      // duruyor olmali - dogrudan ona bakiyoruz.
+      if (!this.p2002Mi(e)) throw e;
+      const kazanan = await this.prisma.seller.findFirst({
+        where: { ownerUserId: userId, deletedAt: null },
+        select: { id: true },
+      });
+      // ILGISIZ BIR BENZERSIZLIK IHLALI SESSIZCE YUTULMAZ: aktif satici yoksa
+      // bu yaris degildir, gercek bir hatadir. ORIJINAL hata aynen firlatilir -
+      // sarmalanmaz, cunku cagiran tarafin gordugu sey Prisma'nin kendi
+      // tanisi olmali.
+      if (!kazanan) throw e;
     }
     return this.saticim(userId);
   }
