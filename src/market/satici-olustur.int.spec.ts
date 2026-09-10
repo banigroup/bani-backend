@@ -12,7 +12,7 @@
 // FAIL-CLOSED: hedef veritabani 'bani_test' degilse HICBIR baglanti kurulmaz.
 // Desen delivery-zone.adapter.int.spec.ts'ten birebir alindi - ikinci bir
 // guvenlik kapisi yaklasimi icat edilmedi.
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { BusinessUnit, SellerType } from '@prisma/client';
 import { MarketService } from './market.service';
 import { CreateSaticiDto } from './dto/seller.dto';
@@ -55,6 +55,15 @@ function testVeritabaniUrl(): string {
 
 const KOSU = randomUUID().slice(0, 8);
 
+// TEST ORTAMI HERMETIK: VERGI_KIMLIK_ANAHTARI — gerekcenin tamami
+// satici-olustur.spec.ts'te yazili. Ozeti: sifreleme yolu anahtari ortamdan
+// okuyor; @prisma/client yerelde .env yukledigi icin testler yerelde yesil
+// CI'da kirmizi oluyordu. Anahtari testin kendisi uretir, atama KOSULSUZDUR
+// (`??=` degil - yoksa .env'e bagimlilik surerdi), sabit deger dosyaya
+// YAZILMAZ ve onceki deger sonunda geri yuklenir.
+const oncekiVergiKimlikAnahtari = process.env.VERGI_KIMLIK_ANAHTARI;
+let testAnahtari = '';
+
 let prisma: PrismaService;
 let market: MarketService;
 
@@ -87,6 +96,9 @@ async function aktifSaticiSayisi(userId: string): Promise<number> {
 // ==================================================================== kurulum
 
 beforeAll(async () => {
+  testAnahtari = randomBytes(32).toString('hex');
+  process.env.VERGI_KIMLIK_ANAHTARI = testAnahtari;
+
   const url = testVeritabaniUrl();
   prisma = new PrismaService({ datasources: { db: { url } } });
   await prisma.$connect();
@@ -111,6 +123,14 @@ afterAll(async () => {
     await prisma.user.deleteMany({ where: { id: { in: olusanKullanicilar } } });
   }
   await prisma.$disconnect();
+
+  if (oncekiVergiKimlikAnahtari === undefined) {
+    delete process.env.VERGI_KIMLIK_ANAHTARI;
+  } else {
+    process.env.VERGI_KIMLIK_ANAHTARI = oncekiVergiKimlikAnahtari;
+  }
+  // KANIT (B): geri yukleme gercekten oldu.
+  expect(process.env.VERGI_KIMLIK_ANAHTARI).toBe(oncekiVergiKimlikAnahtari);
 });
 
 // ===================================================================== testler
@@ -212,6 +232,17 @@ describe('T2/T3 — yan etki YOK (gercek DB)', () => {
 });
 
 describe('T11 — vergi kimligi gercek DB', () => {
+  it('sifreleme YEREL .env DEGERINI KULLANMIYOR (hermetiklik kaniti)', () => {
+    // KANIT (A): kullanilan anahtar bu paketin URETTIGI anahtardir; .env
+    // devrede degil, yani paket CI'daki gibi .env'siz ortamda da calisir.
+    expect(process.env.VERGI_KIMLIK_ANAHTARI).toBe(testAnahtari);
+    expect(testAnahtari).toHaveLength(64);
+    if (oncekiVergiKimlikAnahtari !== undefined) {
+      // Degerler RAPORLANMAZ, yalnizca FARKLI olduklari dogrulanir.
+      expect(testAnahtari).not.toBe(oncekiVergiKimlikAnahtari);
+    }
+  });
+
   it('kolonda ciphertext durur, yanit duz metni TASIMAZ', async () => {
     const userId = await kullaniciKur('vergi');
 

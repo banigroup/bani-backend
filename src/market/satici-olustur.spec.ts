@@ -9,6 +9,7 @@
 // Duz bir nesne bunu ek bir soyutlama katmani olmadan gosteriyor.
 import { BadRequestException } from '@nestjs/common';
 import { ValidationPipe } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { BusinessUnit, SellerStatus, SellerType, SellerVerification } from '@prisma/client';
 import { MarketService } from './market.service';
 import { CreateSaticiDto } from './dto/seller.dto';
@@ -19,6 +20,47 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const KULLANICI = '11111111-1111-1111-1111-111111111111';
 const BASKA_KULLANICI = '22222222-2222-2222-2222-222222222222';
+
+// ============================================================================
+// TEST ORTAMI HERMETIK: VERGI_KIMLIK_ANAHTARI
+// ----------------------------------------------------------------------------
+// Bu paket sifreleme yolunu (gizli-alan.sifrele) calistiriyor ve o yol anahtari
+// ORTAM DEGISKENINDEN okuyor. Anahtar yoksa uretim kodu BILEREK hata veriyor
+// ("sifreli sanilan ama duz duran" kolon en kotu sonuc olurdu) - bu davranis
+// DOGRU ve degistirilmiyor.
+//
+// SORUN: @prisma/client import edilirken yerel .env dosyasini YUKLUYOR (Prisma
+// DATABASE_URL'i cozmek icin). Dolayisiyla yerelde anahtar yan etkiyle ortama
+// giriyor ve testler yesil kaliyor; CI'da .env OLMADIGI icin ayni testler
+// kirmizi oluyordu. Yani test, gizli bir dis dosyaya bagimliydi.
+//
+// COZUM: anahtari testin KENDISI uretir. `??=` KULLANILMADI bilerek - yerelde
+// .env degeri varsa test yine dis ortama bagimli kalirdi. Atama KOSULSUZDUR,
+// yani .env ne tasirsa tasisin bu paket kendi anahtarini kullanir.
+//
+// SABIT TEST ANAHTARI YAZILMADI: deger her kosuda rastgele uretilir ve yalnizca
+// surecin belleginde yasar; hicbir dosyaya gizli bir deger girmez.
+//
+// ONCEKI DEGER GERI YUKLENIR: ayni Jest worker'inda kosan diger paketler
+// etkilenmesin (process.env dosya basina degil, SUREC basina paylasilir).
+const oncekiVergiKimlikAnahtari = process.env.VERGI_KIMLIK_ANAHTARI;
+let testAnahtari = '';
+
+beforeAll(() => {
+  testAnahtari = randomBytes(32).toString('hex');
+  process.env.VERGI_KIMLIK_ANAHTARI = testAnahtari;
+});
+
+afterAll(() => {
+  if (oncekiVergiKimlikAnahtari === undefined) {
+    delete process.env.VERGI_KIMLIK_ANAHTARI;
+  } else {
+    process.env.VERGI_KIMLIK_ANAHTARI = oncekiVergiKimlikAnahtari;
+  }
+  // KANIT (B): geri yukleme gercekten oldu. Hook icinde assert - bozulursa
+  // paket kirmizi olur, sessizce sizmaz.
+  expect(process.env.VERGI_KIMLIK_ANAHTARI).toBe(oncekiVergiKimlikAnahtari);
+});
 
 function gecerliDto(ustuneYaz: Partial<CreateSaticiDto> = {}): CreateSaticiDto {
   return {
@@ -199,6 +241,18 @@ describe('T9 — satici dikeyi beyaz listesi', () => {
 });
 
 describe('T10/T11 — vergi kimligi', () => {
+  it('sifreleme YEREL .env DEGERINI KULLANMIYOR (hermetiklik kaniti)', () => {
+    // KANIT (A): kullanilan anahtar bu paketin URETTIGI anahtardir. Yerelde
+    // .env bir deger tasisa bile o deger DEVREDE DEGIL - yani bu paket .env
+    // olmadan da (CI'daki gibi) ayni sekilde calisir.
+    expect(process.env.VERGI_KIMLIK_ANAHTARI).toBe(testAnahtari);
+    expect(testAnahtari).toHaveLength(64); // 32 bayt hex
+    if (oncekiVergiKimlikAnahtari !== undefined) {
+      // Degerler RAPORLANMAZ, yalnizca FARKLI olduklari dogrulanir.
+      expect(testAnahtari).not.toBe(oncekiVergiKimlikAnahtari);
+    }
+  });
+
   it('taxIdentifier YOKSA kayit acilir ve alan yazilmaz', async () => {
     const { market, cagrilar } = servisKur(null);
 
