@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req,
+  BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req,
   UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -11,7 +11,7 @@ import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PersonelEkleDto, PersonelDurumDto } from './dto/store-user.dto';
 import { RolAtaDto } from './dto/rol-ata.dto';
-import { SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
+import { CreateSaticiDto, SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
 import { SaticiSozlesmeOnaylaDto } from './dto/sozlesme.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { TeslimatBolgeleriDto } from './dto/teslimat-bolge.dto';
@@ -188,6 +188,31 @@ export class MarketController {
   @RequirePermissions(Permission.STORE_READ)
   saticim(@CurrentUser() user: AuthUser) {
     return this.market.saticim(user.id);
+  }
+
+  // BASVURU ACMA (S2). SELLER_APPLY, STORE_WRITE DEGIL: bu ucu kullanan
+  // kullanici henuz CUSTOMER'dir (owner karari D6 - MERCHANT onayda verilir) ve
+  // CUSTOMER'da store:write YOK. STORE_WRITE istenseydi basvuru hic
+  // baslatilamazdi; CUSTOMER'a store:write vermek ise ona POST /market/stores'u
+  // da acardi - onaysiz magaza acma yolu.
+  //
+  // IDEMPOTENT: mevcut basvuru varsa yeni kayit ACILMAZ, mevcut kayit doner
+  // (panelin resume akisi). Bu yuzden 201 degil 200 - yanit her iki durumda da
+  // "saticinin guncel hali", yeni kaynak yaratildiginin garantisi degil.
+  @Post('seller')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.SELLER_APPLY)
+  async saticiOlustur(@CurrentUser() user: AuthUser, @Body() dto: CreateSaticiDto, @Req() req: Request) {
+    const r = await this.market.saticiOlustur(user.id, dto);
+    // AUDIT TEK KAYNAK = CONTROLLER (CLAUDE.md k.7). metadata'ya vergi kimligi
+    // YAZILMAZ - saticiGuncelle'deki ayni disiplin; yalnizca hangi dikeyin
+    // talep edildigi ve kaydin id'si.
+    await this.audit.record({
+      actorId: user.id, action: 'seller.create', entity: 'Seller', entityId: r.id,
+      ip: req.ip, metadata: { dikey: dto.talepEdilenDikey, sellerType: dto.sellerType },
+    });
+    return r;
   }
 
   @Patch('seller')
