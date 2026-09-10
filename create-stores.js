@@ -23,7 +23,11 @@ async function ensure(def) {
     if (!owner) { console.error('HATA: Satıcı yok (+905111111111).'); process.exit(1); }
     let store = await prisma.store.findUnique({ where: { slug: def.slug } });
     if (!store) {
-        store = await prisma.store.create({ data: { ownerId: owner.id, name: def.name, slug: def.slug, type: def.type, businessUnit: def.businessUnit, description: def.desc, isActive: true, commissionRate: 1000 } });
+        // Store.sellerId ZORUNLU (schema.prisma). Satici BURADA YARATILMAZ -
+        // o ana seed'in isi (prisma/seed.ts); yoksa guvenle cikilir.
+        const seller = await prisma.seller.findFirst({ where: { ownerUserId: owner.id, deletedAt: null } });
+        if (!seller) { console.error('HATA: Satici kaydi (seller) yok. Once ana seed.'); process.exit(1); }
+        store = await prisma.store.create({ data: { ownerId: owner.id, sellerId: seller.id, name: def.name, slug: def.slug, type: def.type, businessUnit: def.businessUnit, description: def.desc, isActive: true, commissionRate: 1000 } });
         console.log(def.slug + ' OLUŞTURULDU:', store.id);
     } else console.log(def.slug + ' zaten var:', store.id);
     let cat = await prisma.category.findFirst({ where: { storeId: store.id, slug: def.catSlug } });
