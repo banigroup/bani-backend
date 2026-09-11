@@ -671,6 +671,35 @@ export class MarketService {
     dto: { sellerType?: any; legalName?: string; displayName?: string; taxIdentifier?: string },
   ) {
     const mevcut = await this.saticimHam(userId);
+
+    // OD-9 DURUM KILIDI: INCELEME SIRASINDA PROFIL DONDURULUR.
+    //
+    // NEDEN: UNDER_REVIEW, basvurunun BANI tarafindan incelendigi penceredir.
+    // Kapi olmadan satici bu pencerede unvanini/vergi kimligini degistirebilir
+    // ve admin, GORDUGUNDEN BASKA bir kaydi onaylamis olurdu.
+    //
+    // KARA LISTE, BEYAZ LISTE DEGIL (owner karari: BLACKLIST_ONLY). Yalnizca
+    // UNDER_REVIEW kapanir; DRAFT, NEEDS_FIX, ACTIVE, REJECTED, SUSPENDED ve
+    // CLOSED icin mevcut davranis AYNEN KORUNUR. Bunlarin ne olmasi gerektigi
+    // owner tarafindan henuz kararlastirilmadi; "DRAFT|NEEDS_FIX disi her sey
+    // 409" yazmak kilitlenmemis bes durum icin politika URETMEK olurdu.
+    // NEEDS_FIX bilerek acik: duzeltme akisinin ta kendisi oradan yuruyor.
+    //
+    // EK SORGU YOK: saticimHam select'siz calisiyor, yani satirin tamami -
+    // status dahil - zaten elde.
+    //
+    // GUARD DB YAZMASINDAN ONCE: bloke durumda prisma.seller.update HIC
+    // cagrilmaz, yani kismi yazma ya da bosa giden sifreleme olusmaz.
+    //
+    // ConflictException: repo emsali (market.service'teki dort 409 ve
+    // seller-status.service.gecis). Yeni bir exception mekanizmasi
+    // URETILMEDI.
+    if (mevcut.status === SellerStatus.UNDER_REVIEW) {
+      throw new ConflictException(
+        'Başvurunuz inceleniyor; bu sırada profil bilgileri değiştirilemez.',
+      );
+    }
+
     const data: any = {};
     if (dto.sellerType !== undefined) data.sellerType = dto.sellerType;
     if (dto.legalName !== undefined) data.legalName = dto.legalName;
