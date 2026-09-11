@@ -8,6 +8,7 @@ import { sifrele, son4 } from '../common/crypto/gizli-alan';
 import { slugify, randomSuffix } from '../common/util/slug';
 import { cloudinaryImzala } from '../common/upload/cloudinary.util';
 import { CreateStoreDto } from './dto/create-store.dto';
+import { CreateSaticiDto } from './dto/seller.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { TeslimatBolgeleriDto } from './dto/teslimat-bolge.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
@@ -485,6 +486,125 @@ export class MarketService {
   }
 
   // ---------------- SATICI (SELLER) ----------------
+
+  // ---------------- SATICI BASVURUSU ACMA (S2) ----------------
+
+  /**
+   * SATICI BASVURUSU DIKEYLERI. BusinessUnit'in TAMAMI degil.
+   *
+   * Disarida birakilanlar gecerli enum degerleridir ama satici basvurusu
+   * dikeyi DEGILDIR: PLATFORM cekirdek/holding defteri, COURIER kurye tarafi,
+   * SIGORTA ve DICLEFUL ayri is kollari. DTO'daki @IsEnum bunlari gecirirdi -
+   * "gecerli enum" ile "satici secebilir" ayni sey degil.
+   *
+   * KODDA, VERIDE DEGIL: emsal permissions.guard.MAGAZA_ROLU_IZIN_BEYAZ_LISTESI
+   * ve catalog.VITRIN_URUN_ALANLARI - sizmasi istenmeyen kume koda yazilir.
+   *
+   * sellerType <-> businessUnit eslemesi BILEREK YOK (owner karari OD-8):
+   * bugun kodda boyle bir kural yok ve eklemek canlidaki mevcut veriyi
+   * (MARKET tipli saticinin YEMEK magazasi) gecersiz kilabilirdi.
+   */
+  private readonly SATICI_DIKEYLERI: ReadonlySet<BusinessUnit> = new Set([
+    BusinessUnit.MARKET,
+    BusinessUnit.YEMEK,
+    BusinessUnit.CARSI,
+    BusinessUnit.COFFEE,
+    BusinessUnit.LOAD,
+  ]);
+
+  /**
+   * Prisma benzersizlik ihlali. Emsal: approval.service.p2002Mi (D118 kismi
+   * unique index yarisi) — ayrica load.service:952 ve evdeneve.service:317.
+   *
+   * YALNIZCA HATA KODUNA BAKAR. Hangi kisitin ihlal edildigi BURADAN
+   * anlasilmaya calisilmaz; o soru cagiran tarafta SONUCA bakilarak
+   * cevaplaniyor (bkz. saticiOlustur catch blogu).
+   */
+  private p2002Mi(e: unknown): boolean {
+    return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002';
+  }
+
+  /**
+   * BASVURU ACMA — Seller(DRAFT). Owner karari D4/D5.
+   *
+   * MAGAZA YARATMAZ: Store artik basvuru sirasinda degil, BANI onayindan SONRA
+   * "Magaza Yapilandirmasi" asamasinda aciliyor. Eski yol (store create ->
+   * saticiSaglaVeGetir -> Seller) bu paketle DEGISTIRILMEDI, yalnizca yeni
+   * onboarding'in ana yolu olmaktan cikti.
+   *
+   * ROL VERMEZ: kullanici basvuru boyunca CUSTOMER kalir (owner karari D6).
+   * MERCHANT onay asamasinda verilecek (S4).
+   *
+   * IDEMPOTENT: ayni kullanici ikinci kez cagirirsa YENI KAYIT ACILMAZ, mevcut
+   * kayit doner. 409 SECILMEDI - emsal SozlesmeService.onayla ("ayni surum
+   * ikinci kez onaylanirsa mevcut kayit doner") ve saticiSaglaVeGetir
+   * ("if (mevcut) return mevcut"). Panelin yarim kalmis basvuruyu kaldigi
+   * yerden surdurmesi (resume) boylece hata yolundan gecmek zorunda kalmiyor.
+   *
+   * MEVCUT ALANLAR EZILMEZ: govde farkli degerler tasisa bile guncelleme
+   * YAPILMAZ. Duzenleme PATCH /market/seller'in isidir; POST'un sessizce
+   * update'e donusmesi, resume cagrisinin kullanicinin onceki verisini
+   * silmesi demek olurdu.
+   */
+  async saticiOlustur(userId: string, dto: CreateSaticiDto) {
+    if (!this.SATICI_DIKEYLERI.has(dto.talepEdilenDikey)) {
+      throw new BadRequestException(
+        `Satıcı başvurusu için geçersiz dikey: ${dto.talepEdilenDikey}`,
+      );
+    }
+
+    const mevcut = await this.prisma.seller.findFirst({
+      where: { ownerUserId: userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (mevcut) return this.saticim(userId);
+
+    // E-POSTA NORMALIZASYONU BURADA, DTO'DA DEGIL: repoda @Transform emsali
+    // yok, yeni bir DTO davranis deseni icat edilmedi.
+    const data: Prisma.SellerUncheckedCreateInput = {
+      ownerUserId: userId, // JWT'den; govdeden ASLA alinmaz
+      yetkiliAdSoyad: dto.yetkiliAdSoyad.trim(),
+      basvuruEposta: dto.basvuruEposta.trim().toLowerCase(),
+      legalName: dto.legalName.trim(),
+      displayName: dto.displayName.trim(),
+      sellerType: dto.sellerType,
+      talepEdilenDikey: dto.talepEdilenDikey,
+    };
+    // status/verification YAZILMIYOR: sema varsayilanlari DRAFT / EKSIK.
+    // Kodda tekrar etmek, varsayilan degisince iki kaynagin ayrismasi demekti.
+    if (dto.taxIdentifier) {
+      // saticiGuncelle ile AYNI desen: duz metin yalnizca istekte gorunur.
+      data.taxIdentifier = sifrele(dto.taxIdentifier);
+      data.taxLast4 = son4(dto.taxIdentifier);
+      data.verification = SellerVerification.BEKLIYOR;
+    }
+
+    try {
+      await this.prisma.seller.create({ data, select: { id: true } });
+    } catch (e) {
+      // YARIS: iki es zamanli istek. S1'in kismi unique index'i ikincisini
+      // reddeder; kullaniciya ham Prisma hatasi gostermek yerine ayni
+      // idempotent cevabi veriyoruz - kazanan istegin actigi kayit doner.
+      //
+      // HATANIN SEKLINE DEGIL SONUCA BAKILIR. Onceki surum P2002'nin
+      // meta.target alaninda index ADININ bulunacagini varsayiyordu; o
+      // varsayim gercek yarista tutmadi ve kaybeden istek 500 aldi (stres
+      // testinde ~%8). Prisma'nin hata govdesinin sekli hakkinda hicbir iddiada
+      // BULUNULMUYOR artik: yarisi kaybettiysek kazananin actigi kayit SIMDI
+      // duruyor olmali - dogrudan ona bakiyoruz.
+      if (!this.p2002Mi(e)) throw e;
+      const kazanan = await this.prisma.seller.findFirst({
+        where: { ownerUserId: userId, deletedAt: null },
+        select: { id: true },
+      });
+      // ILGISIZ BIR BENZERSIZLIK IHLALI SESSIZCE YUTULMAZ: aktif satici yoksa
+      // bu yaris degildir, gercek bir hatadir. ORIJINAL hata aynen firlatilir -
+      // sarmalanmaz, cunku cagiran tarafin gordugu sey Prisma'nin kendi
+      // tanisi olmali.
+      if (!kazanan) throw e;
+    }
+    return this.saticim(userId);
+  }
 
   /**
    * Kullanicinin satici kaydi. taxIdentifier COZULMEZ - yalnizca son 4 hane doner.
