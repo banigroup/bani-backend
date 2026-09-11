@@ -231,6 +231,92 @@ describe('T2/T3 — yan etki YOK (gercek DB)', () => {
   });
 });
 
+describe('S2.1 / BULGU 49 — yanit projeksiyonu (gercek DB)', () => {
+  // GET /market/seller ucunun GOVDESI market.saticim()'dir (controller yalnizca
+  // onu cagirir), dolayisiyla servis seviyesinde okumak uc ile esdegerdir.
+  // Repoda HTTP harness yok; yeni bagimlilik eklenmedi.
+
+  it('T1-T4: GET yanitinda dort basvuru alani da doner', async () => {
+    const userId = await kullaniciKur('proj-get');
+    await market.saticiOlustur(
+      userId,
+      dto({ yetkiliAdSoyad: 'Zeynep Kaya', legalName: 'PROJ Unvan', talepEdilenDikey: BusinessUnit.YEMEK }),
+    );
+
+    const okunan = await market.saticim(userId);
+
+    expect(okunan.yetkiliAdSoyad).toBe('Zeynep Kaya');                       // T1
+    expect(okunan.basvuruEposta).toBe(`basvuru-${KOSU}@ornek.com`);          // T2
+    expect(okunan.talepEdilenDikey).toBe(BusinessUnit.YEMEK);                // T3
+    expect(okunan.redGerekce).toBeNull();                                    // T4 (henuz red yok)
+  });
+
+  it('T4: redGerekce DOLU oldugunda da doner', async () => {
+    const userId = await kullaniciKur('proj-red');
+    const olusan = await market.saticiOlustur(userId, dto());
+
+    // Admin red akisi S4'te; burada yalnizca PROJEKSIYONUN alani tasidigi
+    // olculuyor, is kurali CALISTIRILMIYOR.
+    await prisma.seller.update({
+      where: { id: olusan.id },
+      data: { redGerekce: 'Faaliyet alani uygun degil' },
+    });
+
+    const okunan = await market.saticim(userId);
+    expect(okunan.redGerekce).toBe('Faaliyet alani uygun degil');
+  });
+
+  it('T5: POST create yaniti alanlari tasir', async () => {
+    const userId = await kullaniciKur('proj-create');
+
+    const olusan = await market.saticiOlustur(
+      userId,
+      dto({ yetkiliAdSoyad: 'Mehmet Demir', talepEdilenDikey: BusinessUnit.CARSI }),
+    );
+
+    expect(olusan.yetkiliAdSoyad).toBe('Mehmet Demir');
+    expect(olusan.basvuruEposta).toBe(`basvuru-${KOSU}@ornek.com`);
+    expect(olusan.talepEdilenDikey).toBe(BusinessUnit.CARSI);
+  });
+
+  it('T6: POST idempotent resume yaniti AYNI projeksiyonu tasir', async () => {
+    const userId = await kullaniciKur('proj-resume');
+
+    const birinci = await market.saticiOlustur(userId, dto({ yetkiliAdSoyad: 'Ilk Yetkili' }));
+    const ikinci = await market.saticiOlustur(userId, dto({ yetkiliAdSoyad: 'Degistirilmek Istenen' }));
+
+    expect(ikinci.id).toBe(birinci.id);
+    // Resume yolu da ayni saticim() projeksiyonundan geciyor...
+    expect(Object.keys(ikinci).sort()).toEqual(Object.keys(birinci).sort());
+    // ...ve mevcut deger EZILMIYOR (S2 sozlesmesi korunuyor).
+    expect(ikinci.yetkiliAdSoyad).toBe('Ilk Yetkili');
+  });
+
+  it('T7/T8: yanit vergi kimligini NE duz metin NE ciphertext olarak tasir', async () => {
+    const userId = await kullaniciKur('proj-negatif');
+
+    const olusan = await market.saticiOlustur(userId, dto({ taxIdentifier: '1234567890' }));
+    const okunan = await market.saticim(userId);
+
+    for (const yanit of [olusan, okunan]) {
+      expect(yanit).not.toHaveProperty('taxIdentifier');       // T8: ciphertext alani YOK
+      const metin = JSON.stringify(yanit);
+      expect(metin).not.toContain('1234567890');               // T7: duz metin YOK
+      expect(metin).not.toContain('v1:');                      // T8: blob on eki YOK
+      // taxLast4 BILEREK duruyor: maskesiz son 4 hane ekranda gosterim icin.
+      expect(yanit.taxLast4).toBe('7890');
+    }
+
+    // Kolonda ciphertext GERCEKTEN duruyor - yani alan yaziliyor, yalnizca
+    // yanitta gorunmuyor.
+    const ham = await prisma.seller.findUniqueOrThrow({
+      where: { id: olusan.id },
+      select: { taxIdentifier: true },
+    });
+    expect(ham.taxIdentifier).toMatch(/^v1:/);
+  });
+});
+
 describe('T11 — vergi kimligi gercek DB', () => {
   it('sifreleme YEREL .env DEGERINI KULLANMIYOR (hermetiklik kaniti)', () => {
     // KANIT (A): kullanilan anahtar bu paketin URETTIGI anahtardir; .env
