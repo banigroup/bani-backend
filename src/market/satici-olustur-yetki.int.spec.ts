@@ -75,18 +75,36 @@ const HANDLER = MarketController.prototype.saticiOlustur;
 /**
  * Nest'in ExecutionContext'i. getHandler/getClass GERCEK sinif ve metodu
  * doner ki Reflector uctaki dekoratoru okuyabilsin.
+ *
+ * handler VARSAYILANLI: S3'te ayni harness dort basvuru ucu ve
+ * POST /market/stores icin de kullaniliyor; mevcut T12 testleri degismeden
+ * calismaya devam ediyor.
  */
-function ctxUret(user: unknown) {
+function ctxUret(user: unknown, handler: unknown = HANDLER) {
   return {
     switchToHttp: () => ({ getRequest: () => ({ user }) }),
-    getHandler: () => HANDLER,
+    getHandler: () => handler,
     getClass: () => MarketController,
   } as never;
 }
 
+/** Uctaki GERCEK dekorator metadata'sini okur (elle liste verilmez). */
+function ucunIstedigiIzinler(handler: unknown): Permission[] | undefined {
+  return new Reflector().getAllAndOverride<Permission[]>(PERMISSIONS_KEY, [
+    handler as never,
+    MarketController as never,
+  ]);
+}
+
+// SAYAC: ayni etiket birden fazla kez kullanilabiliyor (it.each dort ucu ayni
+// etiketle dolasiyor) ve users.phone UNIQUE. Etikete guvenmek yerine her cagri
+// kendi numarasini alir - boylece ileride eklenen testler de bu tuzaga dusmez.
+let kullaniciSayaci = 0;
+
 async function kullaniciKur(etiket: string, roller: Role[]): Promise<string> {
+  kullaniciSayaci += 1;
   const kullanici = await prisma.user.create({
-    data: { phone: `T12-${KOSU}-${etiket}`, name: `T12 ${etiket}` },
+    data: { phone: `T12-${KOSU}-${kullaniciSayaci}-${etiket}`, name: `T12 ${etiket}` },
   });
   olusanKullanicilar.push(kullanici.id);
   if (roller.length > 0) {
@@ -187,5 +205,89 @@ describe('T12 — POST /market/seller yetki kapisi', () => {
     await expect(
       pipe.transform(gecerliGovde(), { type: 'body', metatype: CreateSaticiDto }),
     ).resolves.toBeDefined();
+  });
+});
+
+// ============================================================================
+// S3 — BASVURU YAZMA UCLARININ IZNI: STORE_WRITE -> SELLER_APPLY
+// ----------------------------------------------------------------------------
+// NE OLCULUYOR: ucun UZERINDEKI dekorator + gercek PermissionsGuard + gercek
+// izin matrisi (role_permissions tablosu) birlikte hangi rolu geciriyor.
+//
+// Bu paket IS SONUCUNU degil YETKI KAPISINI olcer: guard, istegin uc govdesine
+// ulasmadan once gectigi TEK kapidir, dolayisiyla "403 doner" iddiasi burada
+// tam olarak kanitlanir. Govdelerin kendi davranisi (durum gecisi, belge
+// kaydi, sozlesme onayi) ilgili servis testlerinin isi.
+// ============================================================================
+
+/** S3 kapsamindaki dort basvuru YAZMA ucu. */
+const BASVURU_YAZMA_UCLARI = [
+  { ad: 'PATCH /market/seller', handler: MarketController.prototype.saticiGuncelle },
+  { ad: 'POST /market/seller/submit', handler: MarketController.prototype.saticiOnayaGonder },
+  { ad: 'POST /market/seller/belge', handler: MarketController.prototype.belgeYukle },
+  { ad: 'POST /market/seller/sozlesme/onayla', handler: MarketController.prototype.saticiSozlesmeOnayla },
+] as const;
+
+describe('S3 — basvuru yazma uclari SELLER_APPLY istiyor', () => {
+  it.each(BASVURU_YAZMA_UCLARI)('$ad dekoratoru SELLER_APPLY tasiyor', ({ handler }) => {
+    // Dekorator kaldirilsa undefined donerdi ve guard ucu SERBEST birakirdi;
+    // STORE_WRITE'a geri alinsa bu assert duserdi. Iki sessiz basarisizligi da
+    // yakalar.
+    expect(ucunIstedigiIzinler(handler)).toEqual([Permission.SELLER_APPLY]);
+  });
+
+  it.each(BASVURU_YAZMA_UCLARI)('$ad: CUSTOMER (seller:apply) GECER', async ({ handler }) => {
+    const userId = await kullaniciKur('s3-customer', [Role.CUSTOMER]);
+    await expect(
+      guard.canActivate(ctxUret({ id: userId, roles: [Role.CUSTOMER] }, handler)),
+    ).resolves.toBe(true);
+  });
+
+  it.each(BASVURU_YAZMA_UCLARI)('$ad: MERCHANT GECER (regresyon korumasi)', async ({ handler }) => {
+    // S1'de MERCHANT'a seller:apply satiri BU AN icin eklenmisti: izin
+    // STORE_WRITE'tan cevrilince mevcut saticilar kendi KYC/basvuru verilerini
+    // yonetemez hale gelecekti. Bu test o regresyonu kalici olarak kapatir.
+    const userId = await kullaniciKur('s3-merchant', [Role.MERCHANT]);
+    await expect(
+      guard.canActivate(ctxUret({ id: userId, roles: [Role.MERCHANT] }, handler)),
+    ).resolves.toBe(true);
+  });
+
+  it.each(BASVURU_YAZMA_UCLARI)('$ad: COURIER (seller:apply YOK) 403 alir', async ({ handler }) => {
+    // COURIER seciliyor: kimligi dogrulanmis GERCEK bir rol ama matriste ne
+    // seller:apply ne store:write var. Rolsuz kullaniciyla test etmek daha
+    // zayif olurdu - bu, izin eksikligini rolsuzlukten ayirir.
+    const userId = await kullaniciKur('s3-courier', [Role.COURIER]);
+    await expect(
+      guard.canActivate(ctxUret({ id: userId, roles: [Role.COURIER] }, handler)),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('S3 — GUVENLIK SINIRI: SELLER_APPLY magaza yonetimini ACMAZ', () => {
+  const magazaYarat = MarketController.prototype.create; // POST /market/stores
+
+  it('POST /market/stores dekoratoru STORE_WRITE tasimaya DEVAM ediyor', () => {
+    // S3 bu ucu DEGISTIRMEDI. Yanlislikla SELLER_APPLY'a cevrilse onaysiz
+    // kullaniciya magaza acma yolu acilirdi.
+    expect(ucunIstedigiIzinler(magazaYarat)).toEqual([Permission.STORE_WRITE]);
+  });
+
+  it('CUSTOMER, seller:apply SAHIBI olmasina ragmen POST /market/stores 403 alir', async () => {
+    // S3'UN EN KRITIK TESTI: basvuru yuzeyini acmak magaza yonetimini
+    // ACMAMALI. CUSTOMER'da store:write YOK; dolayisiyla dort basvuru ucunu
+    // gecen ayni kullanici bu ucta durdurulur.
+    const userId = await kullaniciKur('s3-sinir', [Role.CUSTOMER]);
+
+    await expect(
+      guard.canActivate(ctxUret({ id: userId, roles: [Role.CUSTOMER] }, magazaYarat)),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('MERCHANT POST /market/stores gecer (mevcut yetki bozulmadi)', async () => {
+    const userId = await kullaniciKur('s3-sinir-merchant', [Role.MERCHANT]);
+    await expect(
+      guard.canActivate(ctxUret({ id: userId, roles: [Role.MERCHANT] }, magazaYarat)),
+    ).resolves.toBe(true);
   });
 });

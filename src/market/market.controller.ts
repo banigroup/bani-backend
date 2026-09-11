@@ -217,7 +217,7 @@ export class MarketController {
 
   @Patch('seller')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.STORE_WRITE)
+  @RequirePermissions(Permission.SELLER_APPLY)
   async saticiGuncelle(@CurrentUser() user: AuthUser, @Body() dto: SaticiGuncelleDto, @Req() req: Request) {
     const r = await this.market.saticiGuncelle(user.id, dto);
     // metadata'ya vergi kimligi YAZILMAZ; yalnizca hangi alanlarin degistigi.
@@ -227,7 +227,7 @@ export class MarketController {
 
   @Post('seller/submit')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.STORE_WRITE)
+  @RequirePermissions(Permission.SELLER_APPLY)
   async saticiOnayaGonder(@CurrentUser() user: AuthUser, @Req() req: Request) {
     const r = await this.market.saticiOnayaGonder(user.id);
     await this.audit.record({ actorId: user.id, action: 'seller.submit', entity: 'Seller', entityId: r.id, ip: req.ip });
@@ -285,7 +285,7 @@ export class MarketController {
   // foto/PDF'i icin fazlasiyla yeterli; parts = 1 dosya + 'tip' alani + pay.
   @Post('seller/belge')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.STORE_WRITE)
+  @RequirePermissions(Permission.SELLER_APPLY)
   @UseInterceptors(
     FileInterceptor('dosya', {
       limits: { fileSize: 10 * 1024 * 1024, fields: 10, parts: 12 },
@@ -370,7 +370,7 @@ export class MarketController {
 
   @Post('seller/sozlesme/onayla')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @RequirePermissions(Permission.STORE_WRITE)
+  @RequirePermissions(Permission.SELLER_APPLY)
   async saticiSozlesmeOnayla(@CurrentUser() user: AuthUser, @Body() dto: SaticiSozlesmeOnaylaDto, @Req() req: Request) {
     // IP ve cihaz KANITTIR: istemciden degil sunucudan alinir
     // (load.controller'daki sozlesme onayiyla ayni desen).
