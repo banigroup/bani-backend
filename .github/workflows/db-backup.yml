@@ -70,3 +70,30 @@ jobs:
           path: ${{ env.OUT }}
           retention-days: 14
           if-no-files-found: error
+      - name: R2'ye off-site yedek yükle
+        env:
+          AWS_REGION: auto
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || \
+             [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || \
+             [ -z "${R2_ENDPOINT:-}" ] || \
+             [ -z "${R2_BUCKET_NAME:-}" ]; then
+            echo "HATA: R2 yedekleme secret'larindan biri tanimli degil."
+            exit 1
+          fi
+
+          aws s3 cp "${OUT}" \
+            "s3://${R2_BUCKET_NAME}/${OUT}" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --no-progress
+
+          aws s3api head-object \
+            --bucket "${R2_BUCKET_NAME}" \
+            --key "${OUT}" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --query '{Size:ContentLength,ETag:ETag}'
