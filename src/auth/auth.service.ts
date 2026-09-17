@@ -6,6 +6,7 @@ import { OtpService } from './otp/otp.service';
 import { TokenService } from './tokens/token.service';
 import { originDikey } from '../common/domain/dikey-domain';
 import { rolleriOku, rolleriYaz } from '../common/rbac/kullanici-rolleri';
+import { TestTelefonKayit } from './dev-otp/test-telefon-kayit.service';
 
 interface ReqMeta { ip?: string; userAgent?: string }
 
@@ -15,12 +16,35 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly otp: OtpService,
     private readonly tokens: TokenService,
+    private readonly testTelefonlar: TestTelefonKayit,
   ) { }
 
   async requestOtp(phone: string) {
     const code = await this.otp.issue(phone);
-    const devCode = (process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_CODE === 'true') ? code : undefined;
+    const devCode = (await this.devCodeIzinli(phone)) ? code : undefined;
     return { sent: true, devCode };
+  }
+
+  /**
+   * devCode YANITTA GORUNSUN MU?
+   *
+   * PRODUCTION'DA UC KOSUL BIRDEN: NODE_ENV=production + ALLOW_DEV_CODE=true +
+   * numaranin gecici test kayit defterinde olmasi. Once yalnizca bayrak vardi
+   * ve bayrak acikken uc HER numaraya kodu donuyordu - yani canli veritabanindaki
+   * her hesap (ADMIN/SUPER_ADMIN dahil) numarasini bilen herkese aciliyordu.
+   * Kayit defteri o pencereyi yalnizca persona ureticinin yazdigi sentetik
+   * numaralara daraltiyor.
+   *
+   * PRODUCTION DISINDA DAVRANIS AYNEN KORUNDU: yerelde/test'te kod yine doner,
+   * kayit defteri sorulmaz - gelistirici Redis ayaga kaldirmak zorunda kalmasin.
+   *
+   * SIRA ONEMLI: bayrak kapaliyken Redis'e hic gidilmez (kapali sistemde
+   * gereksiz cagri yok).
+   */
+  private async devCodeIzinli(phone: string): Promise<boolean> {
+    if (process.env.NODE_ENV !== 'production') return true;
+    if (process.env.ALLOW_DEV_CODE !== 'true') return false;
+    return this.testTelefonlar.kayitliMi(phone);
   }
 
   async verifyOtp(phone: string, code: string, meta: ReqMeta, roller?: string[]) {
