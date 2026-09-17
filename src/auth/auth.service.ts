@@ -6,6 +6,7 @@ import { OtpService } from './otp/otp.service';
 import { TokenService } from './tokens/token.service';
 import { originDikey } from '../common/domain/dikey-domain';
 import { rolleriOku, rolleriYaz } from '../common/rbac/kullanici-rolleri';
+import { TestTelefonKayit } from './dev-otp/test-telefon-kayit.service';
 
 interface ReqMeta { ip?: string; userAgent?: string }
 
@@ -15,12 +16,34 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly otp: OtpService,
     private readonly tokens: TokenService,
+    private readonly testTelefonlar: TestTelefonKayit,
   ) { }
 
   async requestOtp(phone: string) {
     const code = await this.otp.issue(phone);
-    const devCode = (process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_CODE === 'true') ? code : undefined;
+    const devCode = (await this.devCodeIzinli(phone)) ? code : undefined;
     return { sent: true, devCode };
+  }
+
+  /**
+   * devCode YANITTA GORUNSUN MU?
+   *
+   * PRODUCTION'DA TEK OLCUT: numara gecici test kayit defterinde mi. Kayit
+   * yalnizca persona ureticinin (scripts/create-test-seller-persona.js) yazdigi
+   * sentetik numaralar icin olusur ve TTL dolunca kendiliginden duser.
+   *
+   * ALLOW_DEV_CODE ARTIK OKUNMUYOR (owner karari): eskiden production'daki tek
+   * kapi oydu ve acikken uc HER numaraya kodu donuyordu - canli veritabanindaki
+   * her hesap (ADMIN/SUPER_ADMIN dahil) numarasini bilen herkese aciliyordu.
+   * Test icin bayragi acip kapatmak da o pencereyi her seferinde yeniden
+   * aciyordu. Bayrak canlida false kaliyor; kapsam artik numara bazli.
+   *
+   * PRODUCTION DISINDA DAVRANIS AYNEN KORUNDU: yerelde/test'te kod yine doner ve
+   * kayit defteri sorulmaz - gelistirici Redis ayaga kaldirmak zorunda kalmasin.
+   */
+  private async devCodeIzinli(phone: string): Promise<boolean> {
+    if (process.env.NODE_ENV !== 'production') return true;
+    return this.testTelefonlar.kayitliMi(phone);
   }
 
   async verifyOtp(phone: string, code: string, meta: ReqMeta, roller?: string[]) {

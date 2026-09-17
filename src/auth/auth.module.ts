@@ -6,6 +6,7 @@ import { AuthService } from "./auth.service";
 import { OtpService } from "./otp/otp.service";
 import { TokenService } from "./tokens/token.service";
 import { JwtStrategy } from "./strategies/jwt.strategy";
+import { TestTelefonKayit } from "./dev-otp/test-telefon-kayit.service";
 import { SMS_PROVIDER } from "../bildirim/sms/sms-provider.interface";
 import { ConsoleSmsProvider } from "../bildirim/sms/console-sms.provider";
 import { IletiMerkeziSmsProvider } from "../bildirim/sms/iletimerkezi-sms.provider";
@@ -19,6 +20,9 @@ new Logger("AuthModule").log(`SMS provider v2: ${smsAktif ? "ILETI MERKEZI" : "C
     OtpService,
     TokenService,
     JwtStrategy,
+    // CACHE_MANAGER'i AppModule'deki CacheModule GLOBAL veriyor; burada ayrica
+    // import EDILMIYOR ve ikinci bir Redis baglantisi ACILMIYOR.
+    TestTelefonKayit,
     {
       provide: SMS_PROVIDER,
       useClass: process.env.SMS_AKTIF === "true" ? IletiMerkeziSmsProvider : ConsoleSmsProvider,
