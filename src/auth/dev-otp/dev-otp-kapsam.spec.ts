@@ -1,8 +1,8 @@
-// PRODUCTION devCode KAPSAMI — bayrak + kayit defteri matrisi.
+// PRODUCTION devCode KAPSAMI — tek olcut: gecici test telefonu kayit defteri.
 //
-// Kabul kriteri (gate): production'da ALLOW_DEV_CODE=true olsa BILE kayit
-// defterinde olmayan bir numaraya devCode DONMEZ. Asagidaki 2 numarali test
-// tam olarak bunu kilitliyor.
+// Kabul kriteri (gate): production'da kayit defterinde OLMAYAN bir numaraya
+// devCode DONMEZ; ALLOW_DEV_CODE'un degeri ne olursa olsun bu degismez.
+// Asagidaki 2 ve 2b numarali testler tam olarak bunu kilitliyor.
 //
 // @nestjs/testing KULLANILMIYOR (D132 emsali): bagimliliklar konumsal
 // constructor parametreleri oldugu icin dogrudan `new` yeterli.
@@ -39,17 +39,20 @@ describe('production devCode kapsami', () => {
     process.env.NODE_ENV = 'production';
   });
 
-  it('1. bayrak false + kayit VAR -> devCode YOK (kayit tek basina yetmez)', async () => {
-    process.env.ALLOW_DEV_CODE = 'false';
+  // ALLOW_DEV_CODE ARTIK KOSUL DEGIL: canlida false kaliyor ve kod onu hic
+  // okumuyor. Asagidaki uc test, bayragin her degerinde sonucun YALNIZ kayit
+  // defterine bagli oldugunu gosteriyor.
+  it.each(['false', 'true', undefined])('1. bayrak=%p + kayit VAR -> devCode VAR', async (bayrak) => {
+    if (bayrak === undefined) delete process.env.ALLOW_DEV_CODE;
+    else process.env.ALLOW_DEV_CODE = bayrak;
     const { auth, kayitliMi } = authKur(jest.fn().mockResolvedValue(true));
     const y = await auth.requestOtp(TELEFON);
-    expect(y).toEqual({ sent: true, devCode: undefined });
-    // Bayrak kapaliyken kayit defterine hic gidilmez.
-    expect(kayitliMi).not.toHaveBeenCalled();
+    expect(y).toEqual({ sent: true, devCode: KOD });
+    expect(kayitliMi).toHaveBeenCalledWith(TELEFON);
   });
 
-  it('2. bayrak true + kayit YOK -> devCode YOK (ANA KABUL KRITERI)', async () => {
-    process.env.ALLOW_DEV_CODE = 'true';
+  it('2. kayit YOK -> devCode YOK (ANA KABUL KRITERI)', async () => {
+    delete process.env.ALLOW_DEV_CODE;
     const { auth, kayitliMi } = authKur(jest.fn().mockResolvedValue(false));
     const y = await auth.requestOtp(TELEFON);
     expect(y.devCode).toBeUndefined();
@@ -57,14 +60,13 @@ describe('production devCode kapsami', () => {
     expect(kayitliMi).toHaveBeenCalledWith(TELEFON);
   });
 
-  it('3. bayrak true + kayit VAR -> devCode VAR', async () => {
+  it('2b. bayrak true + kayit YOK -> devCode YOK (bayrak tek basina yetki VERMEZ)', async () => {
     process.env.ALLOW_DEV_CODE = 'true';
-    const { auth } = authKur(jest.fn().mockResolvedValue(true));
-    const y = await auth.requestOtp(TELEFON);
-    expect(y).toEqual({ sent: true, devCode: KOD });
+    const { auth } = authKur(jest.fn().mockResolvedValue(false));
+    expect((await auth.requestOtp(TELEFON)).devCode).toBeUndefined();
   });
 
-  it('4. bayrak true + Redis hatasi -> devCode YOK ama OTP istegi normal biter', async () => {
+  it('4. Redis hatasi -> devCode YOK ama OTP istegi normal biter', async () => {
     process.env.ALLOW_DEV_CODE = 'true';
     // Gercek servis: cache.get firlatiyor, kayitliMi false'a dusuyor (kapali basarisiz).
     const patlayanCache = { get: jest.fn().mockRejectedValue(new Error('redis down')) } as any;
@@ -78,8 +80,7 @@ describe('production devCode kapsami', () => {
     expect(otp.issue).toHaveBeenCalledWith(TELEFON); // kod yine uretildi
   });
 
-  it('5. bayrak true + kayit VAR: her istekte YENIDEN sorulur (kod tek seferlik yetki degil)', async () => {
-    process.env.ALLOW_DEV_CODE = 'true';
+  it('5. yetki her istekte YENIDEN sorulur: TTL dolunca sonraki istekte kod gelmez', async () => {
     const kayitliMi = jest.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     const { auth } = authKur(kayitliMi);
     expect((await auth.requestOtp(TELEFON)).devCode).toBe(KOD);

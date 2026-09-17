@@ -28,22 +28,21 @@ export class AuthService {
   /**
    * devCode YANITTA GORUNSUN MU?
    *
-   * PRODUCTION'DA UC KOSUL BIRDEN: NODE_ENV=production + ALLOW_DEV_CODE=true +
-   * numaranin gecici test kayit defterinde olmasi. Once yalnizca bayrak vardi
-   * ve bayrak acikken uc HER numaraya kodu donuyordu - yani canli veritabanindaki
+   * PRODUCTION'DA TEK OLCUT: numara gecici test kayit defterinde mi. Kayit
+   * yalnizca persona ureticinin (scripts/create-test-seller-persona.js) yazdigi
+   * sentetik numaralar icin olusur ve TTL dolunca kendiliginden duser.
+   *
+   * ALLOW_DEV_CODE ARTIK OKUNMUYOR (owner karari): eskiden production'daki tek
+   * kapi oydu ve acikken uc HER numaraya kodu donuyordu - canli veritabanindaki
    * her hesap (ADMIN/SUPER_ADMIN dahil) numarasini bilen herkese aciliyordu.
-   * Kayit defteri o pencereyi yalnizca persona ureticinin yazdigi sentetik
-   * numaralara daraltiyor.
+   * Test icin bayragi acip kapatmak da o pencereyi her seferinde yeniden
+   * aciyordu. Bayrak canlida false kaliyor; kapsam artik numara bazli.
    *
-   * PRODUCTION DISINDA DAVRANIS AYNEN KORUNDU: yerelde/test'te kod yine doner,
+   * PRODUCTION DISINDA DAVRANIS AYNEN KORUNDU: yerelde/test'te kod yine doner ve
    * kayit defteri sorulmaz - gelistirici Redis ayaga kaldirmak zorunda kalmasin.
-   *
-   * SIRA ONEMLI: bayrak kapaliyken Redis'e hic gidilmez (kapali sistemde
-   * gereksiz cagri yok).
    */
   private async devCodeIzinli(phone: string): Promise<boolean> {
     if (process.env.NODE_ENV !== 'production') return true;
-    if (process.env.ALLOW_DEV_CODE !== 'true') return false;
     return this.testTelefonlar.kayitliMi(phone);
   }
 
