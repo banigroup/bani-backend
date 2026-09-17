@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { BildirimDurum, BildirimKanal } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SMS_PROVIDER, SmsProvider } from './sms/sms-provider.interface';
+import { telefonMaskele } from '../common/pii/telefon-maskele';
 
 // CEKIRDEK BILDIRIM SERVISI (Faz 1): tek kapi, sablonlu, kanal-bagimsiz.
 // Sablonlar simdilik kodda; sayi buyuyunce DB'ye tasinir.
@@ -44,7 +45,7 @@ export class BildirimService {
     } catch (e: any) {
       durum = BildirimDurum.HATA;
       hataMesaji = e?.message ?? String(e);
-      this.logger.error(`Bildirim gonderilemedi: ${sablonKodu} -> ${alici}: ${hataMesaji}`);
+      this.logger.error(`Bildirim gonderilemedi: ${sablonKodu} -> ${telefonMaskele(alici)}: ${hataMesaji}`);
     }
     try {
       await this.prisma.bildirimKayit.create({

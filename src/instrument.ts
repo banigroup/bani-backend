@@ -1,6 +1,5 @@
 ﻿import * as Sentry from "@sentry/nestjs";
+import { sentrySecenekleri } from "./common/sentry/sentry-guvenlik";
 
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV || "production",
-});
+// Govde yakalama kapali + auth header/cookie/PII temizligi: bkz. sentry-guvenlik.ts
+Sentry.init(sentrySecenekleri());

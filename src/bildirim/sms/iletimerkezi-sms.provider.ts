@@ -1,5 +1,14 @@
 ﻿import { Injectable, Logger } from "@nestjs/common";
 import { SmsProvider } from "./sms-provider.interface";
+import { telefonMaskele } from "../../common/pii/telefon-maskele";
+
+// YALNIZ METADATA LOGLANIR: saglayici yanit govdesi ham yazilmaz (mesaj metnini
+// ya da numarayi geri yansitma ihtimaline karsi). Durum mesaji saglayicinin sabit
+// hata metnidir ve teshis icin gerekli (orn. gonderici adi onaysiz); icindeki uzun
+// rakam dizileri yine de gizlenir. Hata yutma davranisi DEGISMEDI (F2 ayri is).
+function guvenliMesaj(s: string): string {
+  return s.replace(/\d{7,}/g, "[numara]").slice(0, 200);
+}
 
 @Injectable()
 export class IletiMerkeziSmsProvider implements SmsProvider {
@@ -36,7 +45,7 @@ export class IletiMerkeziSmsProvider implements SmsProvider {
       });
       const txt = await res.text();
       if (!res.ok) {
-        this.logger.error(`Ileti Merkezi SMS HTTP hata (${res.status}): ${txt}`);
+        this.logger.error(`Ileti Merkezi SMS HTTP hata (${res.status}) -> ${telefonMaskele(numara)}, yanit ${txt.length} karakter`);
         return;
       }
       // HTTP 200 gelse bile govdedeki status.code 200 degilse gonderim BASARISIZ.
@@ -49,14 +58,14 @@ export class IletiMerkeziSmsProvider implements SmsProvider {
         mesaj = String(j?.response?.status?.message ?? "");
         orderId = String(j?.response?.order?.id ?? "");
       } catch {
-        this.logger.error(`Ileti Merkezi SMS yaniti ayristirilamadi: ${txt}`);
+        this.logger.error(`Ileti Merkezi SMS yaniti ayristirilamadi -> ${telefonMaskele(numara)}, yanit ${txt.length} karakter`);
         return;
       }
       if (code !== "200") {
-        this.logger.error(`Ileti Merkezi SMS reddedildi (code=${code}): ${mesaj}`);
+        this.logger.error(`Ileti Merkezi SMS reddedildi (code=${guvenliMesaj(code)}) -> ${telefonMaskele(numara)}: ${guvenliMesaj(mesaj)}`);
         return;
       }
-      this.logger.log(`SMS gonderildi -> ${numara} (orderId=${orderId})`);
+      this.logger.log(`SMS gonderildi -> ${telefonMaskele(numara)} (orderId=${orderId})`);
     } catch (e: any) {
       this.logger.error(`Ileti Merkezi SMS istisna: ${e?.message || e}`);
     }
