@@ -7,7 +7,7 @@
 // SAHTE PRISMA, MOCK KUTUPHANESI DEGIL: cagrilan yuzey kucuk (seller.findFirst
 // + seller.create) ve testin okumak istedigi sey "create'e HANGI data gitti".
 // Duz bir nesne bunu ek bir soyutlama katmani olmadan gosteriyor.
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ValidationPipe } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { BusinessUnit, SellerStatus, SellerType, SellerVerification } from '@prisma/client';
@@ -480,5 +480,131 @@ describe('T7/T8 — DTO dogrulamasi', () => {
     await expect(
       pipe.transform(gecerliDto({ taxIdentifier: '123' }), meta),
     ).rejects.toBeDefined();
+  });
+});
+
+// ============================================================================
+// S3.1 / OD-9 — PATCH /market/seller DURUM KILIDI
+// ----------------------------------------------------------------------------
+// KILITLI KARAR (owner): BLACKLIST_ONLY. Yalnizca UNDER_REVIEW kapanir; diger
+// ALTI durumun mevcut davranisi AYNEN KORUNUR. Bu paket iki seyi birden
+// kanitlar: kapatilanin kapandigini VE kapatilmayanlarin kapanmadigini.
+//
+// AYRI FAKE: yukaridaki sahtePrisma saticiOlustur icin sekillendirilmis
+// (create + findFirst) ve 29 test ona bagli. saticiGuncelle farkli bir yuzey
+// kullaniyor - saticimHam select'siz findFirst, ardindan seller.update - bu
+// yuzden mevcut fake genisletilmek yerine bu blok kendi dar fake'ini kuruyor.
+// Mevcut testlerin sekli boylece hic degismiyor.
+// ============================================================================
+
+/** saticiGuncelle yuzeyine sekillendirilmis fake: findFirst (iki sekil) + update. */
+function guncellemeFakei(status: SellerStatus) {
+  const cagrilar = { update: [] as any[], findFirst: [] as any[] };
+  const prisma = {
+    seller: {
+      findFirst: jest.fn(async (arg: any) => {
+        cagrilar.findFirst.push(arg);
+        // saticim() zengin select ile cagiriyor; saticimHam select'SIZ.
+        if (arg?.select?.stores) {
+          return {
+            id: 'satici-1', sellerType: SellerType.MARKET,
+            legalName: 'UNVAN', displayName: 'AD', taxLast4: null,
+            status, verification: SellerVerification.EKSIK,
+            verificationExpiresAt: null, createdAt: new Date(),
+            yetkiliAdSoyad: null, basvuruEposta: null,
+            talepEdilenDikey: null, redGerekce: null, stores: [],
+          };
+        }
+        // saticimHam: HAM SATIR - status burada geliyor, guard bunu okuyor.
+        return { id: 'satici-1', status, legalName: 'UNVAN' };
+      }),
+      update: jest.fn(async (arg: any) => {
+        cagrilar.update.push(arg);
+        return { id: 'satici-1' };
+      }),
+    },
+  };
+  const market = new MarketService(
+    prisma as unknown as PrismaService,
+    {} as unknown as AuditService,
+    {} as unknown as SellerStatusService,
+    {} as unknown as SozlesmeService,
+  );
+  return { market, cagrilar };
+}
+
+describe('S3.1 / OD-9 — UNDER_REVIEW profil kilidi', () => {
+  it('UNDER_REVIEW -> ConflictException (409)', async () => {
+    const { market } = guncellemeFakei(SellerStatus.UNDER_REVIEW);
+
+    await expect(
+      market.saticiGuncelle(KULLANICI, { legalName: 'YENI UNVAN' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('UNDER_REVIEW -> prisma.seller.update HIC CAGRILMAZ', async () => {
+    const { market, cagrilar } = guncellemeFakei(SellerStatus.UNDER_REVIEW);
+
+    await expect(
+      market.saticiGuncelle(KULLANICI, { legalName: 'YENI UNVAN' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    // Guard DB yazmasindan ONCE duruyor: kismi yazma ya da bosa giden
+    // sifreleme olusmaz.
+    expect(cagrilar.update).toHaveLength(0);
+  });
+
+  it('UNDER_REVIEW -> taxIdentifier verilse bile update YOK', async () => {
+    const { market, cagrilar } = guncellemeFakei(SellerStatus.UNDER_REVIEW);
+
+    await expect(
+      market.saticiGuncelle(KULLANICI, { taxIdentifier: '1234567890' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(cagrilar.update).toHaveLength(0);
+  });
+});
+
+describe('S3.1 / OD-9 — BLACKLIST_ONLY: diger durumlar KORUNUYOR', () => {
+  // Bu blok kilitli kararin ikinci yarisini kanitlar. Beyaz listeye kayilsa
+  // (DRAFT|NEEDS_FIX disi her sey 409) asagidaki dort durum duserdi.
+  it.each([
+    SellerStatus.DRAFT,
+    SellerStatus.NEEDS_FIX,
+    SellerStatus.ACTIVE,
+    SellerStatus.REJECTED,
+    SellerStatus.SUSPENDED,
+    SellerStatus.CLOSED,
+  ])('%s -> update IZINLI (mevcut davranis korunuyor)', async (status) => {
+    const { market, cagrilar } = guncellemeFakei(status);
+
+    await market.saticiGuncelle(KULLANICI, { legalName: 'YENI UNVAN' });
+
+    expect(cagrilar.update).toHaveLength(1);
+    expect(cagrilar.update[0].data.legalName).toBe('YENI UNVAN');
+  });
+});
+
+describe('S3.1 — mevcut guncelleme davranisi REGRESYONA UGRAMADI', () => {
+  it('taxIdentifier sifrelenir ve dogrulama BEKLIYOR a duser', async () => {
+    const { market, cagrilar } = guncellemeFakei(SellerStatus.DRAFT);
+
+    await market.saticiGuncelle(KULLANICI, { taxIdentifier: '1234567890' });
+
+    const data = cagrilar.update[0].data;
+    expect(data.taxIdentifier).not.toBe('1234567890');
+    expect(String(data.taxIdentifier)).toMatch(/^v1:/); // gizli-alan blob bicimi
+    expect(data.taxLast4).toBe('7890');
+    expect(data.verification).toBe('BEKLIYOR');
+    expect(data.verificationExpiresAt).toBeNull();
+  });
+
+  it('verilmeyen alanlar data ya YAZILMAZ', async () => {
+    const { market, cagrilar } = guncellemeFakei(SellerStatus.DRAFT);
+
+    await market.saticiGuncelle(KULLANICI, { legalName: 'YALNIZ UNVAN' });
+
+    const data = cagrilar.update[0].data;
+    expect(data).toEqual({ legalName: 'YALNIZ UNVAN' });
   });
 });
