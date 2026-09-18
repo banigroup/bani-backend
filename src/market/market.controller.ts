@@ -251,6 +251,17 @@ export class MarketController {
     return this.market.saticiListele(user.roles, status, Number(skip) || 0, Number(take) || 50);
   }
 
+  // S4.1 — admin satici detayi (tek basvurunun inceleme ekrani). Yetki
+  // listeyle AYNI: STORE_MANAGE_ALL + serviste platform yoneticisi kontrolu.
+  // Iki segmentli yol; 'sellers/belgeler/bekleyenler' (uc segment) ile
+  // cakismaz. Salt okuma oldugu icin audit YOK (mevcut GET uclariyla ayni).
+  @Get('sellers/:id')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_MANAGE_ALL)
+  saticiDetay(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
+    return this.market.saticiDetay(user.roles, id);
+  }
+
   @Patch('sellers/:id/status')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)

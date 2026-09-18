@@ -802,64 +802,134 @@ export class MarketService {
       }),
     ]);
 
-    // HESAPLANMIS UYARI ALANLARI — SORGU ZAMANINDA, SALT OKUMA.
-    // Hicbir kayit guncellenmez, hicbir otomatik aksiyon tetiklenmez; bu uc
-    // alan yalnizca admin kuyrugunda "once hangisine bakmali" sorusuna yardim
-    // eder. Saticinin gordugu hicbir uc bu hesaptan etkilenmez.
     const simdi = new Date();
 
     return {
       durum,
       toplam,
-      kayitlar: kayitlar.map((k) => {
-        // SURE HESABI DEPOLANAN DURUMA DEGIL CANLI TARIHE BAKAR.
-        // verification alani "gecerli mi" sorusunun GUVENILIR cevabi degil:
-        // tarihi gecmis bir kayit hala ONAYLANDI olarak duruyor olabilir
-        // (asagidaki durumTutarsiz tam olarak bunu yakalar). Dogru olan
-        // her istekte tarihi simdiyle karsilastirmak.
-        const suresiGecti = !!k.verificationExpiresAt && k.verificationExpiresAt < simdi;
-        return {
-          ...k,
-          // BELGE SURESI: satici_belgeleri'nde BELGE BASINA bitis tarihi ALANI
-          // YOK (tip/dosyaUrl/durum/redGerekce + zaman damgalari). Platformda
-          // "gecerlilik" tek yerde tutuluyor: Seller.verificationExpiresAt,
-          // yani belgelerin onayiyla verilen dogrulamanin bitis tarihi. Bu alan
-          // onu olcer. Belge basina son kullanma istenirse once semaya alan
-          // eklenmeli.
-          belgeSuresiGecti: suresiGecti,
+      kayitlar: kayitlar.map((k) => ({ ...k, ...this.incelemeMeta(k, simdi) })),
+    };
+  }
 
-          // DURUM TUTARSIZLIGI — OLU GECIS MANTIGININ IZI.
-          // Depolanan dogrulama ONAYLANDI ("gecerli") diyor ama bitis tarihi
-          // gecmis. Bu, kaydi SURESI_DOLDU'ya cekmesi gereken mekanizmanin ya
-          // hic olmadigini ya da calismadigini gosterir. Alan bunu GORUNUR
-          // kilar, hicbir seyi duzeltmez; degeri true olan kayit birikiyorsa
-          // sorun mekanizmadadir, veride degil.
-          //
-          // BURADA SellerVerification.SURESI_DOLDU YAZILMIYOR — BILINCLI.
-          // Bu bir GET ucu; salt okuma. Bir listeleme isteginin veriyi
-          // duzeltmesi, admin listesini acan herkesin sessizce durum
-          // degistirmesi demek olurdu (ve "kim degistirdi" sorusunun cevabi
-          // olmazdi). Otomatik gecis AYRI bir karardir ve bu turun kapsami
-          // disindadir.
-          durumTutarsiz:
-            k.verification === SellerVerification.ONAYLANDI && suresiGecti,
+  /**
+   * HESAPLANMIS UYARI ALANLARI — SORGU ZAMANINDA, SALT OKUMA.
+   * Hicbir kayit guncellenmez, hicbir otomatik aksiyon tetiklenmez; bu uc
+   * alan yalnizca admin kuyrugunda "once hangisine bakmali" sorusuna yardim
+   * eder. Saticinin gordugu hicbir uc bu hesaptan etkilenmez.
+   *
+   * TEK KAYNAK (S4.1): liste (saticiListele) ve detay (saticiDetay) ayni
+   * hesabi kullanir; iki kopya zamanla ayrisip ayni satici icin iki ekranda
+   * farkli uyari gosterirdi.
+   */
+  private incelemeMeta(
+    k: { status: SellerStatus; verification: SellerVerification; verificationExpiresAt: Date | null; updatedAt: Date },
+    simdi: Date,
+  ) {
+    // SURE HESABI DEPOLANAN DURUMA DEGIL CANLI TARIHE BAKAR.
+    // verification alani "gecerli mi" sorusunun GUVENILIR cevabi degil:
+    // tarihi gecmis bir kayit hala ONAYLANDI olarak duruyor olabilir
+    // (asagidaki durumTutarsiz tam olarak bunu yakalar). Dogru olan
+    // her istekte tarihi simdiyle karsilastirmak.
+    const suresiGecti = !!k.verificationExpiresAt && k.verificationExpiresAt < simdi;
+    return {
+      // BELGE SURESI: satici_belgeleri'nde BELGE BASINA bitis tarihi ALANI
+      // YOK (tip/dosyaUrl/durum/redGerekce + zaman damgalari). Platformda
+      // "gecerlilik" tek yerde tutuluyor: Seller.verificationExpiresAt,
+      // yani belgelerin onayiyla verilen dogrulamanin bitis tarihi. Bu alan
+      // onu olcer. Belge basina son kullanma istenirse once semaya alan
+      // eklenmeli.
+      belgeSuresiGecti: suresiGecti,
 
-          // BEKLEME SURESI — KAYNAK updatedAt.
-          //
-          // SINIRLAMA ACIKCA BILINIYOR: Seller'da "UNDER_REVIEW'a gecti"
-          // damgasi YOK, updatedAt ise HER yazmada tazeleniyor. Yani kayda
-          // dokunan herhangi bir islem (belge onayi/reddi, unvan duzeltmesi,
-          // dogrulama sonucu, admin durum degisikligi) sayaci SIFIRLAR ve
-          // bekleme suresi OLDUGUNDAN KISA gorunur. Sayi "EN AZ bu kadar"
-          // diye okunmalidir, kesin bekleme suresi degildir.
-          //
-          // Kesin olcum ancak ayri bir damga (or. incelemeyeGirdiAt) ya da
-          // audit'teki seller.submit / seller.status kayitlarindan turetmekle
-          // olur; ikisi de bu turun kapsami disinda.
-          bekleyenGunSayisi:
-            k.status === SellerStatus.UNDER_REVIEW ? gunFarki(k.updatedAt, simdi) : null,
-        };
-      }),
+      // DURUM TUTARSIZLIGI — OLU GECIS MANTIGININ IZI.
+      // Depolanan dogrulama ONAYLANDI ("gecerli") diyor ama bitis tarihi
+      // gecmis. Bu, kaydi SURESI_DOLDU'ya cekmesi gereken mekanizmanin ya
+      // hic olmadigini ya da calismadigini gosterir. Alan bunu GORUNUR
+      // kilar, hicbir seyi duzeltmez; degeri true olan kayit birikiyorsa
+      // sorun mekanizmadadir, veride degil.
+      //
+      // BURADA SellerVerification.SURESI_DOLDU YAZILMIYOR — BILINCLI.
+      // Bu bir GET ucu; salt okuma. Bir listeleme isteginin veriyi
+      // duzeltmesi, admin listesini acan herkesin sessizce durum
+      // degistirmesi demek olurdu (ve "kim degistirdi" sorusunun cevabi
+      // olmazdi). Otomatik gecis AYRI bir karardir ve bu turun kapsami
+      // disindadir.
+      durumTutarsiz:
+        k.verification === SellerVerification.ONAYLANDI && suresiGecti,
+
+      // BEKLEME SURESI — KAYNAK updatedAt.
+      //
+      // SINIRLAMA ACIKCA BILINIYOR: Seller'da "UNDER_REVIEW'a gecti"
+      // damgasi YOK, updatedAt ise HER yazmada tazeleniyor. Yani kayda
+      // dokunan herhangi bir islem (belge onayi/reddi, unvan duzeltmesi,
+      // dogrulama sonucu, admin durum degisikligi) sayaci SIFIRLAR ve
+      // bekleme suresi OLDUGUNDAN KISA gorunur. Sayi "EN AZ bu kadar"
+      // diye okunmalidir, kesin bekleme suresi degildir.
+      //
+      // Kesin olcum ancak ayri bir damga (or. incelemeyeGirdiAt) ya da
+      // audit'teki seller.submit / seller.status kayitlarindan turetmekle
+      // olur; ikisi de bu turun kapsami disinda.
+      bekleyenGunSayisi:
+        k.status === SellerStatus.UNDER_REVIEW ? gunFarki(k.updatedAt, simdi) : null,
+    };
+  }
+
+  /**
+   * S4.1 — ADMIN SATICI DETAYI (tek basvurunun tam inceleme ekrani). SALT OKUMA.
+   *
+   * IZIN LISTESI PROJEKSIYONU: repoda yanit DTO'su/serializer yok, yani yanit
+   * sekli = select. Her alan burada ACIKCA yazilidir; taxIdentifier (sifreli
+   * blob), ownerUserId, deletedAt ve User'in guvenlik alanlari/iliskileri
+   * (passwordHash, otpRequests, refreshTokens...) DB'den HIC CEKILMEZ.
+   * Telefon TAM doner (owner karari): admin basvuru sahibine ulasabilmeli.
+   *
+   * SOZLESME ONAYLARI DOGRUDAN OKUNUR: SozlesmeService.durum/onayliMi aktif
+   * surum yoksa 503 atar ve canlida SATICI_KOMISYON'un aktif surumu yok -
+   * onlarla kurulsaydi detay ucu 503'e duserdi. Onay kaydi User'a bagli
+   * (kullaniciId), satici tipleriyle suzulur; ip/cihaz kanit verisidir,
+   * inceleme ekraninda isi yok.
+   *
+   * MAGAZA DONMEZ: basvuru asamasinda magaza yok; kurulum S4.4'un isi.
+   * Soft-delete edilmis satici 404 (liste ucunun deletedAt: null suzgeciyle
+   * tutarli); yasayan her durum (CLOSED dahil) okunabilir.
+   * Salt okuma oldugu icin audit YOK (mevcut GET uclariyla ayni).
+   */
+  async saticiDetay(roles: Role[], sellerId: string) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Satıcı detayı için admin yetkisi gerekli');
+    }
+    const s = await this.prisma.seller.findFirst({
+      where: { id: sellerId, deletedAt: null },
+      select: {
+        id: true, sellerType: true, legalName: true, displayName: true, taxLast4: true,
+        status: true, verification: true, verificationExpiresAt: true,
+        yetkiliAdSoyad: true, basvuruEposta: true, talepEdilenDikey: true, redGerekce: true,
+        createdAt: true, updatedAt: true,
+        owner: { select: { id: true, phone: true, name: true, surname: true, status: true } },
+        belgeler: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true, tip: true, dosyaUrl: true, durum: true, redGerekce: true,
+            createdAt: true, updatedAt: true,
+          },
+        },
+      },
+    });
+    if (!s) throw new NotFoundException('Satıcı bulunamadı');
+
+    const sozlesmeOnaylari = await this.prisma.sozlesmeOnay.findMany({
+      where: { kullaniciId: s.owner.id, sozlesmeTipi: { in: this.SATICI_SOZLESMELERI } },
+      orderBy: { onayTarihi: 'desc' },
+      select: { sozlesmeTipi: true, surum: true, metinHash: true, onayTarihi: true },
+    });
+
+    const { owner, belgeler, ...seller } = s;
+    return {
+      seller,
+      owner,
+      belgeler,
+      sozlesmeOnaylari,
+      inceleme: this.incelemeMeta(seller, new Date()),
     };
   }
 
