@@ -625,6 +625,16 @@ export class MarketService {
       select: {
         id: true, sellerType: true, legalName: true, displayName: true, taxLast4: true,
         status: true, verification: true, verificationExpiresAt: true, createdAt: true,
+        // BASVURU ALANLARI (S1'de eklendi, S2.1'de yanita baglandi). Panel
+        // yarim kalmis basvuruyu KALDIGI YERDEN surdurebilmek icin ne
+        // doldurulmus oldugunu gormeli; redGerekce de NEEDS_FIX/REJECTED
+        // ekraninin "neden" sorusunun tek cevabidir.
+        //
+        // PROJEKSIYON GENISLETILDI, KALDIRILMADI: select bir IZIN LISTESIDIR.
+        // taxIdentifier bu listede YOK - yani sifreli blob DB'den hic
+        // CEKILMIYOR. Bu, cektikten sonra silmekten daha guclu bir korumadir:
+        // yeni bir alan eklemek icin bu listeye ACIKCA yazmak gerekir.
+        yetkiliAdSoyad: true, basvuruEposta: true, talepEdilenDikey: true, redGerekce: true,
         stores: { select: { id: true, name: true, slug: true, businessUnit: true, parentId: true } },
       },
     });

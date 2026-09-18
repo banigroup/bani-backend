@@ -108,6 +108,11 @@ function sahtePrisma(
             verification: SellerVerification.EKSIK,
             verificationExpiresAt: null,
             createdAt: new Date(),
+            // S2.1 — basvuru alanlari projeksiyona eklendi.
+            yetkiliAdSoyad: 'MEVCUT YETKILI',
+            basvuruEposta: 'mevcut@ornek.com',
+            talepEdilenDikey: BusinessUnit.MARKET,
+            redGerekce: null,
             stores: [],
           };
         }
@@ -265,6 +270,36 @@ describe('T6/T7 — P2002 yaris cozumu (sonuca bakilir, hatanin sekline DEGIL)',
     // P2002 olmayan hatada yaris cozumu HIC calismamali: create oncesi tek
     // varlik kontrolu disinda findFirst cagrilmamali.
     expect(cagrilar.findFirst).toHaveLength(1);
+  });
+});
+
+describe('S2.1 / BULGU 49 — yanit projeksiyonu (birim)', () => {
+  it('projeksiyon dort basvuru alanini ISTIYOR', async () => {
+    const { market, cagrilar } = servisKur(null);
+
+    await market.saticiOlustur(KULLANICI, gecerliDto());
+
+    // Sahte prisma'nin NE DONDURDUGUNE degil, servisin NE ISTEDIGINE bakiyoruz.
+    // Bu, projeksiyonun gercekten genisletildiginin kanitidir - fake'in
+    // sekli degistirilerek taklit edilemez.
+    const saticimCagrisi = cagrilar.findFirst.find((a: any) => a?.select?.stores);
+    expect(saticimCagrisi).toBeDefined();
+    expect(saticimCagrisi.select.yetkiliAdSoyad).toBe(true);
+    expect(saticimCagrisi.select.basvuruEposta).toBe(true);
+    expect(saticimCagrisi.select.talepEdilenDikey).toBe(true);
+    expect(saticimCagrisi.select.redGerekce).toBe(true);
+  });
+
+  it('projeksiyon taxIdentifier ISTEMIYOR (izin listesi korundu)', async () => {
+    const { market, cagrilar } = servisKur(null);
+
+    await market.saticiOlustur(KULLANICI, gecerliDto({ taxIdentifier: '1234567890' }));
+
+    const saticimCagrisi = cagrilar.findFirst.find((a: any) => a?.select?.stores);
+    // select bir IZIN LISTESI: taxIdentifier orada olmadigi icin sifreli blob
+    // DB'den hic cekilmiyor. taxLast4 (maskesiz son 4) bilerek duruyor.
+    expect(saticimCagrisi.select).not.toHaveProperty('taxIdentifier');
+    expect(saticimCagrisi.select.taxLast4).toBe(true);
   });
 });
 
