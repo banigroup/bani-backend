@@ -380,6 +380,17 @@ enum SellerStatus {
   NEEDS_FIX
   SUSPENDED
   CLOSED
+
+  // BASVURU REDDI. NEEDS_FIX'ten AYRI: NEEDS_FIX "duzelt ve tekrar gonder"
+  // demek, REJECTED ise inceleme sonucu OLUMSUZ demek. Ikisi tek degere
+  // sikistirilsaydi reddedilen basvuru sahibi ile duzeltme isteneni ayirt
+  // edilemez, panel de ikisine ayni ekrani gosterirdi.
+  //
+  // TERMINAL DEGIL (owner karari OD-3): ayni Seller kaydi uzerinden ileride
+  // "Yeniden Basvur" ile REJECTED -> DRAFT donusu yapilacak, YENI Seller
+  // ACILMAYACAK. Gecis kurali S4'te seller-status.service'e yazilir; bu
+  // pakette YALNIZCA enum degeri ekleniyor, harita degistirilmiyor.
+  REJECTED
 }
 
 enum SellerVerification {
@@ -404,6 +415,31 @@ model Seller {
   sellerType  SellerType
   legalName   String // ticari unvan
   displayName String // platformda gorunen ad
+
+  // ---------------- BASVURU ALANLARI ----------------
+  //
+  // NEDEN SELLER'DA, USER'DA DEGIL (owner karari D7): isletmenin yetkilisi ile
+  // hesabin sahibi ayni kisi olmak zorunda degil. User.email ayrica @unique ve
+  // KIMLIK alanidir; basvuru e-postasi ise ILETISIM alanidir - danisman ya da
+  // grup sirketi ayni adresi birden fazla isletmede mesru olarak kullanabilir.
+  // Bu yuzden basvuruEposta UNIQUE DEGIL (OD-4). Sonradan eklemek kolay,
+  // kaldirmak migration ister.
+  //
+  // HEPSI NULLABLE: canlida mevcut Seller satirlari var; backfill gerektirmesin.
+  yetkiliAdSoyad String? // isletme yetkilisi (basvuruyu yapan kisi)
+  basvuruEposta  String? // basvuru iletisim e-postasi (kimlik degil)
+
+  // BASVURU DUZEYI RED GEREKCESI — SaticiBelge.redGerekce ile AYNI AD, FARKLI
+  // KAPSAM: o tek bir belgenin reddini, bu BASVURUNUN TAMAMININ reddini
+  // aciklar. Ikisi ayri kalir cunku bir basvuru butun belgeleri onayliyken de
+  // reddedilebilir (or. faaliyet alani uygun degil).
+  redGerekce String?
+
+  // BASVURUDA BEYAN EDILEN DIKEY (owner karari OD-1: ilk basvuruda TEK dikey).
+  // "secilen" degil "talep edilen": onay oncesi bir BEYANDIR, BANI incelemede
+  // baska bir dikeye yonlendirebilir. Kesinlesen dikey Store.businessUnit'te
+  // yasar - bu alan onun yerine GECMEZ.
+  talepEdilenDikey BusinessUnit?
 
   // VERGI KIMLIGI SIFRELI SAKLANIR (AES-256-GCM, uygulama katmani).
   // Kolonda duz metin DEGIL, "v1:iv:tag:ciphertext" bicimli sifreli blob durur;
