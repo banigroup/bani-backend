@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { UserStatus, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,6 +12,13 @@ interface ReqMeta { ip?: string; userAgent?: string }
 
 @Injectable()
 export class AuthService {
+  /** OTP ile GIRIS YAPAMAYAN durumlar (AUTH-HIGH-001, owner politikasi). */
+  private static readonly GIRIS_KAPALI: ReadonlySet<UserStatus> = new Set<UserStatus>([
+    UserStatus.SUSPENDED,
+    UserStatus.BANNED,
+    UserStatus.DELETED,
+  ]);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly otp: OtpService,
@@ -46,13 +53,46 @@ export class AuthService {
     return this.testTelefonlar.kayitliMi(phone);
   }
 
+  /** Yaptirimli hesap OTP ile giris yapamaz: 403, yan etki YOK. */
+  private girisKapisi(status: UserStatus): void {
+    if (AuthService.GIRIS_KAPALI.has(status)) {
+      throw new ForbiddenException('Hesabınız kullanıma kapalı.');
+    }
+  }
+
   async verifyOtp(phone: string, code: string, meta: ReqMeta, roller?: string[]) {
     await this.otp.verify(phone, code);
-    const user = await this.prisma.user.upsert({
+    // AUTH-HIGH-001: OTP dogrulamasi IDARI YAPTIRIMI KALDIRMAZ. Eskiden update
+    // dali status'u kosulsuz ACTIVE yapiyordu; SUSPENDED/BANNED/DELETED bir
+    // kullanici yeniden giris yaparak yaptirimi sessizce siliyordu. Artik
+    // mevcut kullanicida yalnizca phoneVerified yazilir (numarayi gercekten
+    // dogruladi); status'a dokunulmaz. Yeni kullanici eskisi gibi ACTIVE acilir.
+    let user = await this.prisma.user.upsert({
       where: { phone },
-      update: { phoneVerified: true, status: UserStatus.ACTIVE },
+      update: { phoneVerified: true },
       create: { phone, phoneVerified: true, status: UserStatus.ACTIVE },
     });
+    // Rol yazimindan ve token uretiminden ONCE: yaptirimli hesaba hicbir yan
+    // etki (rol satiri, refresh token) birakilmaz. JwtStrategy'deki liste ile
+    // AYNI kume - biri giris kapisi, digeri mevcut oturum kapisi.
+    this.girisKapisi(user.status);
+    // PENDING -> ACTIVE: tek mesru "dogrulama ile aktiflesme" gecisi. KOSULLU
+    // yazim: okuma ile yazma arasinda admin durumu degistirdiyse (or. askiya
+    // aldiysa) bu satir onu EZMEZ, 0 satir gunceller. O durumda guncel durum
+    // yeniden okunur ve kapi TEKRAR uygulanir - es zamanli bir baska dogrulama
+    // hesabi zaten ACTIVE yaptiysa mesru giris reddedilmez.
+    if (user.status === UserStatus.PENDING) {
+      const { count } = await this.prisma.user.updateMany({
+        where: { id: user.id, status: UserStatus.PENDING },
+        data: { status: UserStatus.ACTIVE },
+      });
+      if (count === 1) {
+        user = { ...user, status: UserStatus.ACTIVE };
+      } else {
+        user = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+        this.girisKapisi(user.status);
+      }
+    }
     // ROL ARTIK AYRI TABLODA, upsert'in create daliyla verilemiyor. Eski
     // davranis KORUNUYOR: roller yalnizca YENI kullaniciya atanir, mevcut
     // kullanicininkiler ellenmez (upsert'te create.roles tam bunu yapiyordu).
