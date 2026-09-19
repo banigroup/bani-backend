@@ -714,7 +714,11 @@ export class MarketService {
     return this.saticim(userId);
   }
 
-  /** DRAFT | NEEDS_FIX -> UNDER_REVIEW. Zorunlu alanlar dolu degilse reddedilir. */
+  /**
+   * DRAFT | NEEDS_FIX -> UNDER_REVIEW. Zorunlu alanlar dolu degilse reddedilir.
+   * redGerekce ayni kosullu yazimda temizlenir (S4.2): duzeltip yeniden
+   * gonderen saticiya eski NEEDS_FIX gerekcesi gorunmeye devam etmemeli.
+   */
   async saticiOnayaGonder(userId: string) {
     const s = await this.saticimHam(userId);
     if (!s.taxIdentifier) throw new ConflictException('Vergi kimliği olmadan onaya gönderilemez');
@@ -722,6 +726,7 @@ export class MarketService {
     await this.prisma.$transaction((tx) =>
       this.saticiDurum.gecis(tx, s.id, [SellerStatus.DRAFT, SellerStatus.NEEDS_FIX], {
         status: SellerStatus.UNDER_REVIEW,
+        redGerekce: null,
       }),
     );
     return this.saticim(userId);
@@ -731,6 +736,11 @@ export class MarketService {
   async saticiDurumDegistir(roles: Role[], sellerId: string, hedef: SellerStatus) {
     if (!this.platformYoneticisi(roles)) {
       throw new ForbiddenException('Satıcı durumu için admin yetkisi gerekli');
+    }
+    // S4.2: NEEDS_FIX ve REJECTED gerekce ister; gerekcesiz yazilabilecekleri
+    // bu genel uc onlar icin KAPALI. Tek yol saticiKarar (PATCH sellers/:id/karar).
+    if (hedef === SellerStatus.NEEDS_FIX || hedef === SellerStatus.REJECTED) {
+      throw new BadRequestException(`${hedef} kararı yalnızca gerekçeli karar ucundan verilir`);
     }
     const s = await this.prisma.seller.findUnique({ where: { id: sellerId } });
     if (!s) throw new NotFoundException('Satıcı bulunamadı');
@@ -745,6 +755,58 @@ export class MarketService {
     return this.prisma.seller.findUnique({
       where: { id: sellerId },
       select: { id: true, status: true, verification: true, displayName: true },
+    });
+  }
+
+  /**
+   * S4.2 — ADMIN BASVURU KARARI: UNDER_REVIEW -> NEEDS_FIX | REJECTED, gerekceyle.
+   *
+   * TEK TRANSACTION: durum + redGerekce kosullu yazimla (gecis/updateMany CAS),
+   * audit AYNI transaction'da recordWithTx ile. Audit yazilamazsa karar da geri
+   * sarilir - izsiz karar olusamaz. Eszamanli iki kararda ikincisi satir
+   * kilidinde bekler, commit sonrasi status artik UNDER_REVIEW olmadigi icin
+   * 0 satir gunceller -> 409 ve audit'e hic ulasmaz (tek kayit).
+   *
+   * AUDIT NEDEN BURADA, CONTROLLER'DA DEGIL: "karar + iz birlikte ya da hic"
+   * sarti controller'dan saglanamaz (ApprovalService emsali). Bu uc icin
+   * controller audit YAZMAZ - kayit tek.
+   *
+   * ONBELLEK TEMIZLENMEZ: vitrin yalniz ACTIVE saticiyi gosterir; UNDER_REVIEW
+   * -> NEEDS_FIX/REJECTED vitrini degistirmez.
+   */
+  async saticiKarar(
+    roles: Role[],
+    sellerId: string,
+    karar: 'NEEDS_FIX' | 'REJECTED',
+    gerekce: string,
+    aktor: { id: string; ip?: string | null },
+  ) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Satıcı kararı için admin yetkisi gerekli');
+    }
+    const temiz = gerekce.trim();
+    // DTO zaten reddeder; servis dogrudan cagrilirsa diye ikinci kapi.
+    if (!temiz) throw new BadRequestException('Gerekçe boş olamaz');
+
+    const s = await this.prisma.seller.findFirst({ where: { id: sellerId, deletedAt: null }, select: { id: true } });
+    if (!s) throw new NotFoundException('Satıcı bulunamadı');
+
+    const hedef = karar === 'NEEDS_FIX' ? SellerStatus.NEEDS_FIX : SellerStatus.REJECTED;
+    await this.prisma.$transaction(async (tx) => {
+      await this.saticiDurum.gecis(tx, sellerId, [SellerStatus.UNDER_REVIEW], { status: hedef, redGerekce: temiz });
+      await this.audit.recordWithTx(tx, {
+        actorId: aktor.id,
+        action: hedef === SellerStatus.NEEDS_FIX ? 'seller.needs_fix' : 'seller.reject',
+        entity: 'Seller',
+        entityId: sellerId,
+        ip: aktor.ip ?? null,
+        metadata: { from: SellerStatus.UNDER_REVIEW, to: hedef, gerekce: temiz },
+      });
+    });
+    // ALLOW-LIST: taxIdentifier/ownerUserId DB'den hic cekilmez.
+    return this.prisma.seller.findUnique({
+      where: { id: sellerId },
+      select: { id: true, status: true, verification: true, displayName: true, redGerekce: true },
     });
   }
 

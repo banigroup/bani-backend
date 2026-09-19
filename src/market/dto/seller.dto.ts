@@ -59,6 +59,25 @@ export class SaticiDurumDto {
   @IsEnum(SellerStatus) status!: SellerStatus;
 }
 
+/**
+ * S4.2 — ADMIN BASVURU KARARI. Yalniz UNDER_REVIEW satici icin; ACTIVE onayi
+ * S4.3'un isi, burada YOK. CLOSED bilerek listede degil: CLOSED != REJECTED.
+ *
+ * GEREKCE ZORUNLU: saticiya gorunur (Seller.redGerekce) ve NEEDS_FIX/REJECTED
+ * ekraninin "neden" sorusunun tek cevabidir. @Matches(/\S/) yalniz bosluktan
+ * olusan metni reddeder; kirpma serviste (repoda @Transform emsali yok).
+ * MaxLength BelgeReddetDto ile ayni (500).
+ */
+export class SaticiKararDto {
+  @IsIn([SellerStatus.NEEDS_FIX, SellerStatus.REJECTED])
+  karar!: 'NEEDS_FIX' | 'REJECTED';
+
+  @IsString()
+  @MaxLength(500)
+  @Matches(/\S/, { message: 'Gerekçe boş olamaz' })
+  gerekce!: string;
+}
+
 export class SaticiDogrulamaDto {
   @IsIn(['ONAYLANDI', 'REDDEDILDI']) sonuc!: 'ONAYLANDI' | 'REDDEDILDI';
   // Onayda bitis tarihi verilir; tarih gecince kayit SURESI_DOLDU'ya duser.
