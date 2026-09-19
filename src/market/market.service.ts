@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
-import { BusinessUnit, Prisma, Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi, OrderStatus } from '@prisma/client';
+import { BusinessUnit, Prisma, Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi, OrderStatus, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { SozlesmeService } from '../sozlesme/sozlesme.service';
@@ -744,6 +744,12 @@ export class MarketService {
     }
     const s = await this.prisma.seller.findUnique({ where: { id: sellerId } });
     if (!s) throw new NotFoundException('Satıcı bulunamadı');
+    // S4.3: basvuru onayi (UNDER_REVIEW -> ACTIVE) MERCHANT rolu + audit ile
+    // birlikte tek transaction'da yalniz saticiOnayla'dan yapilir. Map'teki gecis
+    // o uc icin duruyor; SUSPENDED -> ACTIVE bu uctan acik kalir.
+    if (s.status === SellerStatus.UNDER_REVIEW && hedef === SellerStatus.ACTIVE) {
+      throw new ConflictException('Başvuru onayı yalnızca satıcı onay ucundan (PATCH sellers/:id/onay) yapılabilir');
+    }
     if (!this.saticiDurum.gecerliMi(s.status, hedef)) {
       throw new ConflictException(`Geçersiz satıcı durum geçişi: ${s.status} -> ${hedef}`);
     }
@@ -807,6 +813,90 @@ export class MarketService {
     return this.prisma.seller.findUnique({
       where: { id: sellerId },
       select: { id: true, status: true, verification: true, displayName: true, redGerekce: true },
+    });
+  }
+
+  /**
+   * S4.3 — ADMIN BASVURU ONAYI: UNDER_REVIEW -> ACTIVE + owner'a MERCHANT.
+   *
+   * TEK TRANSACTION, SIRA ONEMLI:
+   *   A. satici tx icinde okunur (yok/silik 404; yanlis durum/dogrulama 409)
+   *   B. owner tx icinde okunur (deletedAt null + ACTIVE degilse 409) - satici
+   *      ACTIVE yapilmadan ONCE, yani red durumunda hicbir yazma olmaz
+   *   C. CAS: status + verification + deletedAt AYNI WHERE'de. Dogrulama eski bir
+   *      okumaya birakilmaz: araya bir belge reddi girerse Postgres kilidi
+   *      bekledikten sonra WHERE'i guncel satirda yeniden degerlendirir -> 0
+   *      satir -> 409. Eszamanli ikinci onay da ayni yoldan 409 alir ve rol/audit
+   *      adimina hic ulasmaz.
+   *   D. MERCHANT ADDITIVE: rolleriYaz KULLANILMAZ (replace-all, BF-1). Yalniz
+   *      yoksa create; mevcut platform ve magaza rollerine dokunulmaz. NULL
+   *      storeId'de unique koruma yok (sema notu); tekrari C'deki CAS ile
+   *      sellers_active_owner_key (owner basina tek canli satici) onler.
+   *   E. audit recordWithTx - hata yutulmaz, her sey geri sarilir.
+   * Controller bu uc icin audit YAZMAZ (tek kayit).
+   */
+  async saticiOnayla(roles: Role[], sellerId: string, aktor: { id: string; ip?: string | null }) {
+    if (!this.platformYoneticisi(roles)) {
+      throw new ForbiddenException('Satıcı onayı için admin yetkisi gerekli');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const s = await tx.seller.findFirst({
+        where: { id: sellerId, deletedAt: null },
+        select: { ownerUserId: true, status: true, verification: true },
+      });
+      if (!s) throw new NotFoundException('Satıcı bulunamadı');
+      if (s.status !== SellerStatus.UNDER_REVIEW) {
+        throw new ConflictException(`Satıcı durumu onay için uygun değil (güncel: ${s.status}; beklenen: UNDER_REVIEW)`);
+      }
+      if (s.verification !== SellerVerification.ONAYLANDI) {
+        throw new ConflictException('Doğrulaması onaylanmamış satıcı aktifleştirilemez');
+      }
+
+      const owner = await tx.user.findUnique({
+        where: { id: s.ownerUserId },
+        select: { status: true, deletedAt: true },
+      });
+      if (!owner || owner.deletedAt !== null || owner.status !== UserStatus.ACTIVE) {
+        throw new ConflictException('Satıcı hesabının sahibi aktif değil; başvuru onaylanamaz');
+      }
+
+      const { count } = await tx.seller.updateMany({
+        where: {
+          id: sellerId, deletedAt: null,
+          status: SellerStatus.UNDER_REVIEW, verification: SellerVerification.ONAYLANDI,
+        },
+        data: { status: SellerStatus.ACTIVE },
+      });
+      if (count === 0) {
+        const guncel = await tx.seller.findUnique({ where: { id: sellerId }, select: { status: true, verification: true } });
+        throw new ConflictException(
+          `Satıcı onay için artık uygun değil (güncel: ${guncel?.status ?? 'bulunamadı'} / ${guncel?.verification ?? '-'})`,
+        );
+      }
+
+      const mevcutMerchant = await tx.userRole.findFirst({
+        where: { userId: s.ownerUserId, role: Role.MERCHANT, storeId: null },
+        select: { id: true },
+      });
+      if (!mevcutMerchant) {
+        await tx.userRole.create({ data: { userId: s.ownerUserId, role: Role.MERCHANT, storeId: null } });
+      }
+
+      await this.audit.recordWithTx(tx, {
+        actorId: aktor.id,
+        action: 'seller.approve',
+        entity: 'Seller',
+        entityId: sellerId,
+        ip: aktor.ip ?? null,
+        metadata: { from: SellerStatus.UNDER_REVIEW, to: SellerStatus.ACTIVE, roleAdded: mevcutMerchant ? null : Role.MERCHANT },
+      });
+
+      // ALLOW-LIST: ownerUserId/taxIdentifier ve owner verisi yanita cikmaz.
+      const sonuc = await tx.seller.findUniqueOrThrow({
+        where: { id: sellerId },
+        select: { id: true, status: true, verification: true, displayName: true },
+      });
+      return { ...sonuc, merchantRolu: mevcutMerchant ? ('ZATEN_VARDI' as const) : ('EKLENDI' as const) };
     });
   }
 

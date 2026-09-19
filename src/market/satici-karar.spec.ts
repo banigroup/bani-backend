@@ -217,11 +217,14 @@ describe('S4.2 — genel durum ucu (saticiDurumDegistir) bypass kapisi', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('REGRESYON: UNDER_REVIEW -> ACTIVE (dogrulama ONAYLANDI) hala calisir', async () => {
-    const { market, tx } = kur({ satir: tamSatir({ verification: SellerVerification.ONAYLANDI }) });
+  // S4.3 (owner karari D6): UNDER_REVIEW -> ACTIVE bu uctan kapandi, onay
+  // saticiOnayla'nin isi (bkz. satici-onay.spec.ts). Mesru ACTIVE yolu artik
+  // SUSPENDED -> ACTIVE.
+  it('REGRESYON: SUSPENDED -> ACTIVE (dogrulama ONAYLANDI) hala calisir', async () => {
+    const { market, tx } = kur({ satir: tamSatir({ status: SellerStatus.SUSPENDED, verification: SellerVerification.ONAYLANDI }) });
     await expect(market.saticiDurumDegistir([Role.ADMIN], SATICI_ID, SellerStatus.ACTIVE)).resolves.toMatchObject({ status: SellerStatus.ACTIVE });
     expect(tx.seller.updateMany).toHaveBeenCalledWith({
-      where: { id: SATICI_ID, status: { in: [SellerStatus.UNDER_REVIEW] } },
+      where: { id: SATICI_ID, status: { in: [SellerStatus.SUSPENDED] } },
       data: { status: SellerStatus.ACTIVE },
     });
   });

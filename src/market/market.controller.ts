@@ -288,6 +288,21 @@ export class MarketController {
     return this.market.saticiKarar(user.roles, id, dto.karar, dto.gerekce, { id: user.id, ip: req.ip });
   }
 
+  // S4.3 — basvuru onayi: UNDER_REVIEW -> ACTIVE + owner'a MERCHANT. Govde YOK.
+  // Yetki genel durum ucuyla AYNI. AUDIT BURADA YAZILMAZ: onay, rol ve iz ayni
+  // transaction'da, serviste (saticiOnayla). ONBELLEK commit SONRASI temizlenir:
+  // eski yoldan (POST stores) magazasi olan satici ACTIVE olunca vitrine girer -
+  // genel uctaki ACTIVE gecisiyle ayni gerekce.
+  @Patch('sellers/:id/onay')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_MANAGE_ALL)
+  async saticiOnayla(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
+    const r = await this.market.saticiOnayla(user.roles, id, { id: user.id, ip: req.ip });
+    await this.onbellek.magazaListesiniTemizle();
+    await this.onbellek.tumUrunOnbelleginiTemizle();
+    return r;
+  }
+
   @Patch('sellers/:id/verification')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_MANAGE_ALL)
