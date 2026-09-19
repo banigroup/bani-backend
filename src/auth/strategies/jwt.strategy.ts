@@ -33,7 +33,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       where: { id: payload.sub },
       include: { rolAtamalari: { select: { role: true, storeId: true } } },
     });
-    if (!user || user.status === 'BANNED' || user.status === 'DELETED') {
+    // AUTH-HIGH-001: SUSPENDED da reddedilir. Eskiden yalnizca BANNED/DELETED
+    // vardi; askiya alinan kullanici mevcut oturumuyla her seye erismeye devam
+    // ediyordu, yani askiya alma fiilen hicbir seyi engellemiyordu. Rol gibi
+    // durum da HER ISTEKTE DB'den okundugu icin yaptirim aninda etkili olur;
+    // refresh/transfer-code ile uretilen token'lar da burada durur.
+    if (!user || user.status === 'SUSPENDED' || user.status === 'BANNED' || user.status === 'DELETED') {
       throw new UnauthorizedException();
     }
     // Tekillestirme rolleriAyir icinde: bkz. schema UserRole nullable-unique notu.
