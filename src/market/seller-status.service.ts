@@ -8,18 +8,23 @@ import { Prisma, SellerStatus } from '@prisma/client';
 @Injectable()
 export class SellerStatusService {
   // DRAFT -> UNDER_REVIEW -> ACTIVE
-  //            |               |
-  //            v               v
-  //         NEEDS_FIX       SUSPENDED -> ACTIVE
-  // CLOSED her durumdan gidilebilir ve DONUSU YOKTUR.
+  //            |      |        |
+  //            v      v        v
+  //     NEEDS_FIX  REJECTED  SUSPENDED -> ACTIVE
+  // CLOSED, UNDER_REVIEW DISINDAKI yasayan durumlardan gidilebilir ve DONUSU
+  // YOKTUR. S4.2 (owner karari): CLOSED != REJECTED - basvuru reddi yalniz
+  // REJECTED ile yapilir, bu yuzden UNDER_REVIEW -> CLOSED kaldirildi.
+  // REJECTED terminal; yeniden basvuru bu kapsamda YOK.
+  // NEEDS_FIX ve REJECTED gerekce ister: yalniz karar ucundan (saticiKarar)
+  // yazilir, genel durum ucu bu iki hedefi reddeder.
   readonly NEXT_STATUS: Record<SellerStatus, SellerStatus[]> = {
     DRAFT: [SellerStatus.UNDER_REVIEW, SellerStatus.CLOSED],
-    UNDER_REVIEW: [SellerStatus.ACTIVE, SellerStatus.NEEDS_FIX, SellerStatus.CLOSED],
+    UNDER_REVIEW: [SellerStatus.ACTIVE, SellerStatus.NEEDS_FIX, SellerStatus.REJECTED],
     NEEDS_FIX: [SellerStatus.UNDER_REVIEW, SellerStatus.CLOSED],
     ACTIVE: [SellerStatus.SUSPENDED, SellerStatus.CLOSED],
     SUSPENDED: [SellerStatus.ACTIVE, SellerStatus.CLOSED],
     CLOSED: [],
-    REJECTED: [], // Gecis kurali S4'te uygulanacak; OD-3 karari LOCKED.
+    REJECTED: [],
   };
 
   /**

@@ -11,7 +11,7 @@ import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PersonelEkleDto, PersonelDurumDto } from './dto/store-user.dto';
 import { RolAtaDto } from './dto/rol-ata.dto';
-import { CreateSaticiDto, SaticiGuncelleDto, SaticiDurumDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
+import { CreateSaticiDto, SaticiGuncelleDto, SaticiDurumDto, SaticiKararDto, SaticiDogrulamaDto, BelgeReddetDto } from './dto/seller.dto';
 import { SaticiSozlesmeOnaylaDto } from './dto/sozlesme.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { TeslimatBolgeleriDto } from './dto/teslimat-bolge.dto';
@@ -275,6 +275,17 @@ export class MarketController {
     await this.onbellek.magazaListesiniTemizle();
     await this.onbellek.tumUrunOnbelleginiTemizle();
     return r;
+  }
+
+  // S4.2 — basvuru karari: UNDER_REVIEW -> NEEDS_FIX | REJECTED, gerekce ZORUNLU.
+  // Yetki genel durum ucuyla AYNI. AUDIT BURADA YAZILMAZ: karar ve iz ayni
+  // transaction'da, serviste (saticiKarar) - cift kayit olmasin diye tek kaynak.
+  // Onbellek temizlenmez: UNDER_REVIEW satici zaten vitrinde degil.
+  @Patch('sellers/:id/karar')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_MANAGE_ALL)
+  saticiKarar(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: SaticiKararDto, @Req() req: Request) {
+    return this.market.saticiKarar(user.roles, id, dto.karar, dto.gerekce, { id: user.id, ip: req.ip });
   }
 
   @Patch('sellers/:id/verification')
