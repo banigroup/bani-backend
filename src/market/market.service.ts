@@ -154,47 +154,96 @@ export class MarketService {
     });
   }
 
+  /** S4.4 — ilk magaza kurulabilen dikeyler (Seller Panel: BaniMarket, BaniYemek, Kervan). */
+  private readonly MAGAZA_KURULUM_DIKEYLERI: ReadonlySet<BusinessUnit> = new Set([
+    BusinessUnit.MARKET,
+    BusinessUnit.YEMEK,
+    BusinessUnit.CARSI,
+  ]);
+
   /**
-   * Magaza yaratirken satici kaydi ZORUNLU (stores.sellerId NOT NULL).
-   * Kullanicinin saticisi yoksa DRAFT bir kayit acilir - boylece mevcut
-   * "magaza olustur" akisi kirilmaz. DRAFT satici ACTIVE olmadigi icin magaza
-   * vitrinde gorunmez ve urun yayina alinamaz (BR-001); satici once profilini
-   * doldurup onaya gonderir.
+   * S4.4 — ILK MAGAZA KURULUMU (POST /market/stores).
+   *
+   * ESKI DAVRANIS KALDIRILDI: saticisi olmayan kullanici icin otomatik DRAFT
+   * Seller yaratiliyordu (ADMIN dahil) ve satici durumuna hic bakilmiyordu;
+   * businessUnit hep sema varsayilani MARKET'ti. Artik:
+   *   · satici ACTIVE + silinmemis, sahibi ACTIVE + silinmemis olmali (409);
+   *     MERCHANT/store:write tek basina yetmez;
+   *   · businessUnit YALNIZ Seller.talepEdilenDikey'den gelir (govdede yok);
+   *     bos ya da MARKET/YEMEK/CARSI disi -> 409;
+   *   · yalniz ILK magaza: saticinin canli magazasi varsa 409.
+   *
+   * TEK TRANSACTION + SATIR KILIDI: satici satiri FOR UPDATE ile kilitlenir,
+   * kontroller kilitten SONRA okunur. Ayni saticinin eszamanli ikinci istegi
+   * kilitte bekler, birincinin commit ettigi magazayi gorur -> 409. Sessiz
+   * idempotent basari YOK (owner karari). Slug unique yarisi (P2002) da 409.
+   *
+   * ROL YAZILMAZ: sahiplik Store.ownerId'dir; STORE_* rolleri personel icindir.
+   * AUDIT tx icinde (recordWithTx); controller onbellegi commit SONRASI temizler.
    */
-  private async saticiSaglaVeGetir(ownerId: string) {
-    const mevcut = await this.prisma.seller.findFirst({ where: { ownerUserId: ownerId, deletedAt: null } });
-    if (mevcut) return mevcut;
-    const u = await this.prisma.user.findUnique({ where: { id: ownerId }, select: { name: true, surname: true } });
-    const ad = [u?.name, u?.surname].filter(Boolean).join(' ').trim() || `Satici ${ownerId.slice(0, 8)}`;
-    return this.prisma.seller.create({
-      data: { ownerUserId: ownerId, sellerType: 'MARKET', legalName: ad, displayName: ad },
-    });
-  }
-
   async create(ownerId: string, dto: CreateStoreDto, ip?: string) {
-    const satici = await this.saticiSaglaVeGetir(ownerId);
-    const baseSlug = slugify(dto.name) || 'magaza';
-    const exists = await this.prisma.store.findUnique({ where: { slug: baseSlug } });
-    const slug = exists ? `${baseSlug}-${randomSuffix()}` : baseSlug;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const aday = await tx.seller.findFirst({ where: { ownerUserId: ownerId, deletedAt: null }, select: { id: true } });
+        if (!aday) throw new ConflictException('Mağaza kurmak için onaylanmış (ACTIVE) bir satıcı kaydı gerekli');
+        await tx.$queryRaw`SELECT id FROM "sellers" WHERE id = ${aday.id}::uuid FOR UPDATE`;
 
-    const store = await this.prisma.store.create({
-      data: {
-        ownerId,
-        sellerId: satici.id,
-        name: dto.name,
-        slug,
-        type: dto.type,
-        description: dto.description,
-        logoUrl: dto.logoUrl,
-        phone: dto.phone,
-        city: dto.city,
-        district: dto.district,
-        line1: dto.line1,
-        minOrder: dto.minOrder ? BigInt(dto.minOrder) : 0n,
-      },
-    });
-    await this.audit.record({ actorId: ownerId, action: 'store.create', entity: 'Store', entityId: store.id, ip });
-    return store;
+        const s = await tx.seller.findUniqueOrThrow({
+          where: { id: aday.id },
+          select: { id: true, status: true, deletedAt: true, talepEdilenDikey: true },
+        });
+        if (s.deletedAt !== null || s.status !== SellerStatus.ACTIVE) {
+          throw new ConflictException(`Mağaza kurmak için satıcı onaylanmış olmalı (güncel: ${s.status})`);
+        }
+        const owner = await tx.user.findUnique({ where: { id: ownerId }, select: { status: true, deletedAt: true } });
+        if (!owner || owner.deletedAt !== null || owner.status !== UserStatus.ACTIVE) {
+          throw new ConflictException('Hesap aktif değil; mağaza kurulamaz');
+        }
+        const dikey = s.talepEdilenDikey;
+        if (!dikey || !this.MAGAZA_KURULUM_DIKEYLERI.has(dikey)) {
+          throw new ConflictException(`Satıcının başvuru dikeyi mağaza kurulumuna uygun değil (${dikey ?? 'yok'})`);
+        }
+        const mevcut = await tx.store.count({ where: { sellerId: s.id, deletedAt: null } });
+        if (mevcut > 0) throw new ConflictException('Satıcının ilk mağazası zaten kurulmuş');
+
+        const baseSlug = slugify(dto.name) || 'magaza';
+        const exists = await tx.store.findUnique({ where: { slug: baseSlug }, select: { id: true } });
+        const slug = exists ? `${baseSlug}-${randomSuffix()}` : baseSlug;
+
+        const store = await tx.store.create({
+          data: {
+            ownerId,
+            sellerId: s.id,
+            businessUnit: dikey,
+            isActive: true,
+            name: dto.name,
+            slug,
+            type: dto.type,
+            description: dto.description,
+            logoUrl: dto.logoUrl,
+            phone: dto.phone,
+            city: dto.city,
+            district: dto.district,
+            line1: dto.line1,
+            minOrder: dto.minOrder ? BigInt(dto.minOrder) : 0n,
+          },
+          // ALLOW-LIST: ownerId/sellerId/commissionRate/deletedAt/revision donmez.
+          select: {
+            id: true, name: true, slug: true, type: true, businessUnit: true, isActive: true,
+            description: true, logoUrl: true, phone: true, city: true, district: true, line1: true,
+            minOrder: true, createdAt: true,
+          },
+        });
+        await this.audit.recordWithTx(tx, {
+          actorId: ownerId, action: 'store.create', entity: 'Store', entityId: store.id, ip: ip ?? null,
+          metadata: { sellerId: s.id, businessUnit: dikey, ilkMagaza: true },
+        });
+        return store;
+      });
+    } catch (e) {
+      if (this.p2002Mi(e)) throw new ConflictException('Mağaza adresi (slug) çakıştı; lütfen tekrar deneyin');
+      throw e;
+    }
   }
 
   // Tanim TEK KAYNAKTA: common/rbac/rol-kontrol. Eskiden burada yerel kopya
@@ -528,17 +577,15 @@ export class MarketService {
    * BASVURU ACMA — Seller(DRAFT). Owner karari D4/D5.
    *
    * MAGAZA YARATMAZ: Store artik basvuru sirasinda degil, BANI onayindan SONRA
-   * "Magaza Yapilandirmasi" asamasinda aciliyor. Eski yol (store create ->
-   * saticiSaglaVeGetir -> Seller) bu paketle DEGISTIRILMEDI, yalnizca yeni
-   * onboarding'in ana yolu olmaktan cikti.
+   * "Magaza Yapilandirmasi" asamasinda aciliyor (S4.4: create, yalniz ACTIVE
+   * satici; magaza yolunun otomatik DRAFT Seller yaratmasi kaldirildi).
    *
    * ROL VERMEZ: kullanici basvuru boyunca CUSTOMER kalir (owner karari D6).
    * MERCHANT onay asamasinda verilecek (S4).
    *
    * IDEMPOTENT: ayni kullanici ikinci kez cagirirsa YENI KAYIT ACILMAZ, mevcut
    * kayit doner. 409 SECILMEDI - emsal SozlesmeService.onayla ("ayni surum
-   * ikinci kez onaylanirsa mevcut kayit doner") ve saticiSaglaVeGetir
-   * ("if (mevcut) return mevcut"). Panelin yarim kalmis basvuruyu kaldigi
+   * ikinci kez onaylanirsa mevcut kayit doner"). Panelin yarim kalmis basvuruyu kaldigi
    * yerden surdurmesi (resume) boylece hata yolundan gecmek zorunda kalmiyor.
    *
    * MEVCUT ALANLAR EZILMEZ: govde farkli degerler tasisa bile guncelleme
