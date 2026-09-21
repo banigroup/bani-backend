@@ -31,6 +31,13 @@
 -- bugun SATICI_KOMISYON tipinde baska satir yok ve ileride elle eklenmis bir
 -- satiri sessizce kapatmak bu migration'in isi degil.
 
-INSERT INTO "sozlesme_versiyonlari" ("tip", "surum", "metinHash", "aktif") VALUES
-('SATICI_KOMISYON', 'v1.0-2026-09-21', '3bcfaf329154b94acc67b29214ac2e0fbc157bbc2af084158ad053fbf6c23e29', true)
+-- ID ACIKCA VERILIR: bu tabloda id'nin VERITABANI DEFAULT'U YOK.
+-- 20260720063339 tablo'yu DEFAULT gen_random_uuid() ile yaratmisti, ama hemen
+-- ardindaki 20260720063454 onu dusurdu ("ALTER COLUMN id DROP DEFAULT") -
+-- Prisma'nin @default(uuid())'si ISTEMCI tarafinda uretilir, sema ile DB
+-- boylece hizalandi. Dolayisiyla ham SQL ile yazan taraf id'yi kendisi
+-- vermek zorunda; gen_random_uuid() PostgreSQL 13+ cekirdeginde mevcut ve
+-- faz1 migration'inda da kullanilmisti.
+INSERT INTO "sozlesme_versiyonlari" ("id", "tip", "surum", "metinHash", "aktif") VALUES
+(gen_random_uuid(), 'SATICI_KOMISYON', 'v1.0-2026-09-21', '3bcfaf329154b94acc67b29214ac2e0fbc157bbc2af084158ad053fbf6c23e29', true)
 ON CONFLICT ("tip", "surum") DO NOTHING;

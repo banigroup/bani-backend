@@ -79,6 +79,12 @@ describe('EK-4 metin <-> migration hash bagi', () => {
     expect(migration).not.toMatch(/^\s*(UPDATE|DELETE|ALTER|DROP)\b/im);
   });
 
+  it('id ACIKCA veriliyor (bu tabloda DB default\'u yok, bkz. 20260720063454)', () => {
+    // CI kaniti: id kolonsuz INSERT, migrate deploy'da 23502 ile duser.
+    expect(migration).toMatch(/INSERT INTO "sozlesme_versiyonlari" \("id",/);
+    expect(migration).toContain('gen_random_uuid()');
+  });
+
   it('hash kanoniklestirmeye BAGIMLI degil (CRLF ile ayni sonucu verir)', () => {
     const crlf = kanonikMetin(metin).replace(/\n/g, '\r\n');
     expect(ozet(crlf)).toBe(ozet(metin));
