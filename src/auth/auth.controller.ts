@@ -29,8 +29,16 @@ export class AuthController {
   @Post('otp/verify')
   @HttpCode(200)
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
-  verifyOtp(@Body() dto: VerifyOtpDto, @Req() req: Request) {
-    return this.auth.verifyOtp(dto.phone, dto.code, meta(req), dto.roller);
+  async verifyOtp(@Body() dto: VerifyOtpDto, @Req() req: Request) {
+    const r = await this.auth.verifyOtp(dto.phone, dto.code, meta(req), dto.roller);
+    // OWNER KABUL TESTI girisi ayri iz birakir; kod metadata'ya YAZILMAZ.
+    if (this.auth.ownerTestMi(dto.phone)) {
+      await this.audit.record({
+        actorId: r.user.id, action: 'auth.otp.ownerTest', entity: 'User', entityId: r.user.id, ip: req.ip,
+        metadata: { kaynak: 'OWNER_TEST' },
+      });
+    }
+    return r;
   }
 
   @Post('guest-session')

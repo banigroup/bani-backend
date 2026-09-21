@@ -1,12 +1,15 @@
-import { Injectable, Inject, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomInt } from 'crypto';
 import { OtpPurpose } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SMS_PROVIDER, SmsProvider } from '../../bildirim/sms/sms-provider.interface';
+import { ownerTestKodu } from './owner-test-otp';
 
 @Injectable()
 export class OtpService {
+  private readonly logger = new Logger(OtpService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -23,6 +26,20 @@ export class OtpService {
     return randomInt(0, max).toString().padStart(len, '0');
   }
 
+  /** Owner kabul testi numarasiysa sabit kod, degilse null (bkz. owner-test-otp.ts). */
+  private ownerTestKodu(phone: string): string | null {
+    return ownerTestKodu(
+      phone,
+      { phone: this.config.get<string>('otp.ownerTestPhone'), code: this.config.get<string>('otp.ownerTestCode') },
+      this.config.get<number>('otp.length', 6),
+    );
+  }
+
+  /** Numara, config'deki owner kabul testi numarasi mi? (audit ayrimi icin) */
+  ownerTestMi(phone: string): boolean {
+    return this.ownerTestKodu(phone) !== null;
+  }
+
   async issue(phone: string, purpose: OtpPurpose = OtpPurpose.LOGIN): Promise<string> {
     const cooldown = this.config.get<number>('otp.resendCooldownSeconds', 60);
     const recent = await this.prisma.otpRequest.findFirst({
@@ -31,12 +48,20 @@ export class OtpService {
     });
     if (recent) throw new BadRequestException('Çok sık istek. Lütfen bekleyin.');
 
-    const code = this.generateCode();
+    // OWNER KABUL TESTI: rastgele kod yerine sabit kod AYNI satira yazilir;
+    // cooldown yukarida, TTL/deneme sayaci/tek kullanim verify'da aynen gecerli.
+    const ownerKod = this.ownerTestKodu(phone);
+    const code = ownerKod ?? this.generateCode();
     const ttl = this.config.get<number>('otp.ttlSeconds', 180);
     await this.prisma.otpRequest.create({
       data: { phone, purpose, codeHash: this.hash(code), expiresAt: new Date(Date.now() + ttl * 1000) },
     });
-    await this.sms.send(phone, `Bani Group doğrulama kodunuz: ${code}`);
+    if (ownerKod !== null) {
+      // SMS YOK: kod owner'da zaten var. Log'a kod ve numara YAZILMAZ.
+      this.logger.log('OWNER_TEST OTP uretildi (SMS gonderilmedi)');
+    } else {
+      await this.sms.send(phone, `Bani Group doğrulama kodunuz: ${code}`);
+    }
     return code;
   }
 
