@@ -312,13 +312,25 @@ describe('S4.1 — gercek DB projeksiyonu ve kapsam', () => {
   });
 
   it('aktif SATICI_KOMISYON surumu YOKKEN detay basarili (503 tuzagi yok)', async () => {
-    // On kosul: bu test DB'sinde aktif surum yok - gercek SozlesmeService
-    // cagrilsaydi 503 atardi.
-    expect(await prisma.sozlesmeVersiyon.count({
-      where: { tip: SozlesmeTipi.SATICI_KOMISYON, aktif: true },
-    })).toBe(0);
+    // ON KOSUL ARTIK KURULUYOR, VARSAYILMIYOR: 02'de EK-4 komisyon tarifesi
+    // migration ile yayinlandi, yani migrate edilmis bir DB'de aktif surum
+    // ARTIK VAR. Testin korudugu davranis (detay ucu SozlesmeService'in
+    // 503'une takilmamali) degismedi; iddia GEVSETILMEDI - yokluk gecici
+    // olarak yaratilip sonunda aynen geri aliniyor.
+    const aktifler = await prisma.sozlesmeVersiyon.findMany({
+      where: { tip: SozlesmeTipi.SATICI_KOMISYON, aktif: true }, select: { id: true },
+    });
+    const idler = aktifler.map((v) => v.id);
+    await prisma.sozlesmeVersiyon.updateMany({ where: { id: { in: idler } }, data: { aktif: false } });
+    try {
+      expect(await prisma.sozlesmeVersiyon.count({
+        where: { tip: SozlesmeTipi.SATICI_KOMISYON, aktif: true },
+      })).toBe(0);
 
-    await expect(market.saticiDetay([Role.ADMIN], saticiA)).resolves.toBeDefined();
+      await expect(market.saticiDetay([Role.ADMIN], saticiA)).resolves.toBeDefined();
+    } finally {
+      await prisma.sozlesmeVersiyon.updateMany({ where: { id: { in: idler } }, data: { aktif: true } });
+    }
   });
 
   it('0 belge / 0 sozlesme -> bos diziler', async () => {
