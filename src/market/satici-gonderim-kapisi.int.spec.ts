@@ -111,8 +111,22 @@ async function levhaEkle(sellerId: string, durum: SaticiBelgeDurum = SaticiBelge
   });
 }
 
+/**
+ * Bu paketin PASIFE CEKTIGI (kendisine ait OLMAYAN) surumler.
+ *
+ * Migration'in yayinladigi EK-4 surumu (SATICI_KOMISYON v1.0-2026-09-21)
+ * gercek bir kayittir; burada gecici olarak kapatilip afterAll'da AYNEN geri
+ * acilir. Geri acilmasaydi ayni kosuda daha sonra calisan paketler (or.
+ * sozlesme/ek4-komisyon-surumu.int.spec.ts) aktif surum bulamazdi.
+ */
+const pasifeCekilen: string[] = [];
+
 /** Tipe YENI ve tek aktif surum yayinlar; oncekileri pasife ceker. */
 async function surumYayinla(tip: SozlesmeTipi, etiket: string, ileriSaniye: number) {
+  const oncekiler = await prisma.sozlesmeVersiyon.findMany({
+    where: { tip, aktif: true }, select: { id: true },
+  });
+  pasifeCekilen.push(...oncekiler.map((v) => v.id));
   await prisma.sozlesmeVersiyon.updateMany({ where: { tip, aktif: true }, data: { aktif: false } });
   return prisma.sozlesmeVersiyon.create({
     data: {
@@ -160,6 +174,12 @@ afterAll(async () => {
   }
   // BU KOSUNUN yayinladigi surumler: yalnizca kendi onekimizi sileriz.
   await prisma.sozlesmeVersiyon.deleteMany({ where: { surum: { startsWith: SURUM_ONEKI } } });
+  // SONRA pasife cektiklerimizi geri ac. Silme ONCE yapilir: aradaki kendi
+  // surumlerimiz zaten gitmis olur, geriye yalnizca bize ait OLMAYAN
+  // (migration'in yazdigi) satirlar kalir.
+  if (pasifeCekilen.length > 0) {
+    await prisma.sozlesmeVersiyon.updateMany({ where: { id: { in: pasifeCekilen } }, data: { aktif: true } });
+  }
   await prisma.$disconnect();
 });
 
