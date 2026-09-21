@@ -25,7 +25,7 @@ import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { randomUUID } from 'node:crypto';
-import { Role, SellerStatus, SellerType, SellerVerification } from '@prisma/client';
+import { Role, SaticiBelgeTipi, SellerStatus, SellerType, SellerVerification, SozlesmeTipi } from '@prisma/client';
 import { MarketController } from './market.controller';
 import { MarketService } from './market.service';
 import { SellerStatusService } from './seller-status.service';
@@ -152,6 +152,9 @@ afterAll(async () => {
     });
     const saticiIdleri = saticilar.map((s) => s.id);
     await prisma.auditLog.deleteMany({ where: { entity: 'Seller', entityId: { in: saticiIdleri } } });
+    // 02: gonderim kapisi icin yazilan belge ve sozlesme onaylari.
+    await prisma.saticiBelge.deleteMany({ where: { sellerId: { in: saticiIdleri } } });
+    await prisma.sozlesmeOnay.deleteMany({ where: { kullaniciId: { in: olusanKullanicilar } } });
     await prisma.seller.deleteMany({ where: { id: { in: saticiIdleri } } });
     await prisma.userRole.deleteMany({ where: { userId: { in: olusanKullanicilar } } });
     await prisma.user.deleteMany({ where: { id: { in: olusanKullanicilar } } });
@@ -377,8 +380,46 @@ describe('S4.2 — audit hatasi -> ROLLBACK (gercek DB hatasi)', () => {
 });
 
 describe('S4.2 — yeniden gonderim gerekceyi temizler', () => {
+  // 02 GONDERIM KAPISI: submit artik yuklenmis vergi levhasi + AKTIF SATICI ve
+  // SATICI_KOMISYON sozlesmelerinin onayini da ariyor. BU TESTIN KONUSU O DEGIL
+  // (NEEDS_FIX donusunde gerekcenin temizlenmesi), bu yuzden sartlar burada
+  // gercek satirlarla saglanir. Kapinin kendisi satici-gonderim-kapisi.int.spec.ts'te.
+  const SURUM = `S42-${KOSU}`;
+  const SOZLESMELER = [SozlesmeTipi.SATICI, SozlesmeTipi.SATICI_KOMISYON];
+  const pasiflestirilenler: string[] = [];
+
+  beforeAll(async () => {
+    const aktifler = await prisma.sozlesmeVersiyon.findMany({
+      where: { tip: { in: SOZLESMELER }, aktif: true }, select: { id: true },
+    });
+    pasiflestirilenler.push(...aktifler.map((v) => v.id));
+    await prisma.sozlesmeVersiyon.updateMany({ where: { id: { in: pasiflestirilenler } }, data: { aktif: false } });
+    await prisma.sozlesmeVersiyon.createMany({
+      data: SOZLESMELER.map((tip) => ({ tip, surum: SURUM, metinHash: `hash-${SURUM}`, aktif: true })),
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.sozlesmeVersiyon.deleteMany({ where: { surum: SURUM } });
+    if (pasiflestirilenler.length > 0) {
+      await prisma.sozlesmeVersiyon.updateMany({ where: { id: { in: pasiflestirilenler } }, data: { aktif: true } });
+    }
+  });
+
   it('UNDER_REVIEW -> NEEDS_FIX -> (satici) submit -> UNDER_REVIEW, redGerekce null', async () => {
     const { sellerId, sahip } = await saticiKur();
+    await prisma.saticiBelge.create({
+      data: {
+        sellerId,
+        tip: SaticiBelgeTipi.VERGI_LEVHASI,
+        dosyaUrl: `https://res.cloudinary.com/demo/image/authenticated/v1/test/${KOSU}.pdf`,
+      },
+    });
+    await prisma.sozlesmeOnay.createMany({
+      data: SOZLESMELER.map((tip) => ({
+        kullaniciId: sahip, sozlesmeTipi: tip, surum: SURUM, metinHash: `hash-${SURUM}`,
+      })),
+    });
     await market.saticiKarar([Role.ADMIN], sellerId, 'NEEDS_FIX', 'Unvan hatali', { id: adminId });
     expect(await satirOku(sellerId)).toMatchObject({ status: SellerStatus.NEEDS_FIX, redGerekce: 'Unvan hatali' });
 
