@@ -63,6 +63,8 @@ function kur(opts: { satir?: Record<string, unknown> | null; guncellenen?: numbe
       findFirst: jest.fn(async ({ select }: { select?: Record<string, unknown> }) => (satir ? secileniDondur(satir, select) : null)),
       findUnique: jest.fn(async ({ select }: { select?: Record<string, unknown> }) => (satir ? secileniDondur(satir, select) : null)),
     },
+    // 02 gonderim kapisinin okudugu belge kaydi; bu pakette hep "var".
+    saticiBelge: { findFirst: jest.fn(async () => ({ id: 'belge-id' })) },
   };
   const audit = {
     recordWithTx: jest.fn(async () => {
@@ -74,7 +76,8 @@ function kur(opts: { satir?: Record<string, unknown> | null; guncellenen?: numbe
     prisma as unknown as PrismaService,
     audit as unknown as AuditService,
     new SellerStatusService(),
-    {} as unknown as SozlesmeService,
+    // 02: gonderim kapisi iki sozlesme tipini soruyor; bu pakette ikisi de onayli.
+    { onayliMi: jest.fn(async () => true) } as unknown as SozlesmeService,
   );
   return { market, prisma, tx, audit };
 }
@@ -237,6 +240,10 @@ describe('S4.2 — genel durum ucu (saticiDurumDegistir) bypass kapisi', () => {
 
 describe('S4.2 — yeniden gonderim (saticiOnayaGonder)', () => {
   it('NEEDS_FIX -> UNDER_REVIEW ayni kosullu yazimda redGerekce = null', async () => {
+    // 02: gonderim kapisi artik belge + iki sozlesme onayi da ariyor. BU TESTIN
+    // KONUSU O DEGIL (kosullu yazimin sekli) - sartlar saglanmis kabul edilip
+    // sahte bagimliliklar besleniyor. Kapinin kendisi:
+    // satici-gonderim-kapisi.spec.ts.
     const { market, tx } = kur({ satir: tamSatir({ status: SellerStatus.NEEDS_FIX, redGerekce: 'Eski gerekce' }) });
     // saticim() sonrasi okuma bu testin konusu degil.
     jest.spyOn(market, 'saticim').mockResolvedValue({} as never);

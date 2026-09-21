@@ -328,7 +328,7 @@ describe('T4/T13 — idempotent resume', () => {
 });
 
 describe('T9 — satici dikeyi beyaz listesi', () => {
-  it.each([BusinessUnit.MARKET, BusinessUnit.YEMEK, BusinessUnit.CARSI, BusinessUnit.COFFEE, BusinessUnit.LOAD])(
+  it.each([BusinessUnit.MARKET, BusinessUnit.YEMEK, BusinessUnit.CARSI])(
     '%s kabul edilir',
     async (dikey) => {
       const { market, cagrilar } = servisKur(null);
@@ -337,7 +337,17 @@ describe('T9 — satici dikeyi beyaz listesi', () => {
     },
   );
 
-  it.each([BusinessUnit.PLATFORM, BusinessUnit.COURIER, BusinessUnit.SIGORTA, BusinessUnit.DICLEFUL])(
+  // COFFEE ve LOAD 02'de listeden CIKARILDI: basvuru kabul edip magaza
+  // kurulumunda 409 vermek (MAGAZA_KURULUM_DIKEYLERI) olu bir uctu. Iki liste
+  // artik ayni: MARKET / YEMEK / CARSI.
+  it.each([
+    BusinessUnit.COFFEE,
+    BusinessUnit.LOAD,
+    BusinessUnit.PLATFORM,
+    BusinessUnit.COURIER,
+    BusinessUnit.SIGORTA,
+    BusinessUnit.DICLEFUL,
+  ])(
     '%s 400 ile reddedilir (gecerli enum ama satici dikeyi degil)',
     async (dikey) => {
       const { market, cagrilar } = servisKur(null);
