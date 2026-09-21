@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { BusinessUnit, Prisma, Role, SellerStatus, SellerVerification, SaticiBelgeTipi, SaticiBelgeDurum, SozlesmeTipi, OrderStatus, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -6,7 +6,7 @@ import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { SellerStatusService } from './seller-status.service';
 import { sifrele, son4 } from '../common/crypto/gizli-alan';
 import { slugify, randomSuffix } from '../common/util/slug';
-import { cloudinaryImzala } from '../common/upload/cloudinary.util';
+import { cloudinaryImzala, kycImzaliUrl } from '../common/upload/cloudinary.util';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { CreateSaticiDto } from './dto/seller.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
@@ -552,13 +552,17 @@ export class MarketService {
    * sellerType <-> businessUnit eslemesi BILEREK YOK (owner karari OD-8):
    * bugun kodda boyle bir kural yok ve eklemek canlidaki mevcut veriyi
    * (MARKET tipli saticinin YEMEK magazasi) gecersiz kilabilirdi.
+   *
+   * COFFEE ve LOAD CIKARILDI (02): basvuru bu iki dikeyi kabul ediyordu ama
+   * MAGAZA_KURULUM_DIKEYLERI etmiyor - yani basvuru onaylansa bile satici ilk
+   * magazasini KURAMIYOR, 409 aliyordu. Iki liste artik AYNI kumeyi tasiyor
+   * (BaniMarket / BaniYemek / Kervan); panelin sundugu dikeyler de bunlar.
+   * Canlida COFFEE/LOAD talep eden satici YOK, mevcut veri etkilenmiyor.
    */
   private readonly SATICI_DIKEYLERI: ReadonlySet<BusinessUnit> = new Set([
     BusinessUnit.MARKET,
     BusinessUnit.YEMEK,
     BusinessUnit.CARSI,
-    BusinessUnit.COFFEE,
-    BusinessUnit.LOAD,
   ]);
 
   /**
@@ -762,14 +766,113 @@ export class MarketService {
   }
 
   /**
-   * DRAFT | NEEDS_FIX -> UNDER_REVIEW. Zorunlu alanlar dolu degilse reddedilir.
+   * BASVURU GONDERIM KAPISI (02) — eksik olan her sart icin makine okunur kod.
+   *
+   * Mesajlar panelde dogrudan gosterilebilecek sekilde Turkce; `kod` ise
+   * panelin hangi adima geri gonderecegini bilmesi icin. Ikisi birlikte
+   * dondugu icin panel ne metni parse etmek ne de sirayi tahmin etmek zorunda.
+   */
+  private static readonly SUBMIT_EKSIK = {
+    VERGI_KIMLIGI: 'Vergi bilgileri eksik',
+    TICARI_UNVAN: 'Ticari unvan eksik',
+    VERGI_LEVHASI: 'Vergi levhası eksik',
+    SOZLESME_SATICI: 'SATICI sözleşmesi onaylanmamış',
+    SOZLESME_SATICI_KOMISYON: 'SATICI_KOMISYON sözleşmesi onaylanmamış',
+  } as const;
+
+  /**
+   * Aktif surum onayli mi? Uc durumlu: aktif surum YOKSA 'YAYIN_YOK'.
+   *
+   * SozlesmeService.onayliMi, aktif surum tanimli degilse 503 firlatir. O
+   * istisnayi "onaylanmamis" saymak YANLIS olurdu: satici hicbir sey yaparak
+   * duzeltemeyecegi bir eksigi kendi hatasi sanirdi. Ayri bir deger olarak
+   * geri dondurulup cagiran tarafta 503'e cevriliyor.
+   *
+   * AKTIF SURUM ESAS (owner kurali): onayliMi zaten o anki aktif surumun
+   * `surum` degeriyle bakiyor - eski surume verilmis onay yeni aktif surumun
+   * yerine GECMEZ. Burada ek bir kural yazilmadi, mevcut davranis kullanildi.
+   */
+  private async sozlesmeDurumuUcDegerli(
+    userId: string,
+    tip: SozlesmeTipi,
+  ): Promise<'ONAYLI' | 'ONAYSIZ' | 'YAYIN_YOK'> {
+    try {
+      return (await this.sozlesme.onayliMi(userId, tip)) ? 'ONAYLI' : 'ONAYSIZ';
+    } catch (e) {
+      if (e instanceof ServiceUnavailableException) return 'YAYIN_YOK';
+      throw e;
+    }
+  }
+
+  /**
+   * DRAFT | NEEDS_FIX -> UNDER_REVIEW. Bes sart birden saglanmadan gecilmez:
+   * vergi kimligi, ticari unvan, YUKLENMIS vergi levhasi, aktif SATICI ve
+   * aktif SATICI_KOMISYON sozlesmelerinin onayi.
+   *
+   * BELGE ICIN "ONAY" DEGIL "VARLIK" ARANIR (owner karari): admin belgeyi
+   * UNDER_REVIEW'den SONRA inceler. Onay sarti konsaydi zincir kilitlenirdi -
+   * admin incelemeye dusmeyen bir basvurunun belgesini onaylamaz. REDDEDILDI
+   * belge sayilmaz: reddedilmis bir levha "yuklenmis" degil, "geri cevrilmis"
+   * demektir; yenisini yuklemeden yeniden gonderim anlamsiz olurdu.
+   *
+   * KONTROLLER TRANSACTION'IN DISINDA, DURUM GECISI ICINDE: mevcut yapi
+   * korundu (taxIdentifier kontrolu de once boyleydi). Tek yazma islemi
+   * kosullu gecistir ve onun CAS korumasi AYNEN duruyor - es zamanli iki
+   * gonderimden yalnizca biri UNDER_REVIEW yazar, digeri 409 alir.
+   *
    * redGerekce ayni kosullu yazimda temizlenir (S4.2): duzeltip yeniden
    * gonderen saticiya eski NEEDS_FIX gerekcesi gorunmeye devam etmemeli.
    */
   async saticiOnayaGonder(userId: string) {
     const s = await this.saticimHam(userId);
-    if (!s.taxIdentifier) throw new ConflictException('Vergi kimliği olmadan onaya gönderilemez');
-    if (!s.legalName?.trim()) throw new ConflictException('Ticari unvan zorunlu');
+    const eksikler: { kod: string; mesaj: string }[] = [];
+    const ekle = (kod: keyof typeof MarketService.SUBMIT_EKSIK) =>
+      eksikler.push({ kod, mesaj: MarketService.SUBMIT_EKSIK[kod] });
+
+    if (!s.taxIdentifier) ekle('VERGI_KIMLIGI');
+    if (!s.legalName?.trim()) ekle('TICARI_UNVAN');
+
+    const levha = await this.prisma.saticiBelge.findFirst({
+      where: {
+        sellerId: s.id,
+        deletedAt: null,
+        tip: SaticiBelgeTipi.VERGI_LEVHASI,
+        durum: { in: [SaticiBelgeDurum.BEKLIYOR, SaticiBelgeDurum.ONAYLANDI] },
+      },
+      select: { id: true },
+    });
+    if (!levha) ekle('VERGI_LEVHASI');
+
+    const [saticiSozlesme, komisyonSozlesme] = await Promise.all([
+      this.sozlesmeDurumuUcDegerli(userId, SozlesmeTipi.SATICI),
+      this.sozlesmeDurumuUcDegerli(userId, SozlesmeTipi.SATICI_KOMISYON),
+    ]);
+
+    // YAYINLANMAMIS SOZLESME ONCE: saticinin duzeltemeyecegi bir eksik,
+    // duzeltebilecegi eksiklerin arasina karistirilmaz. 503, sozlesme durum
+    // ucunun zaten dondurdugu kodun aynisi.
+    const yayinlanmamis = [
+      saticiSozlesme === 'YAYIN_YOK' ? SozlesmeTipi.SATICI : null,
+      komisyonSozlesme === 'YAYIN_YOK' ? SozlesmeTipi.SATICI_KOMISYON : null,
+    ].filter(Boolean);
+    if (yayinlanmamis.length) {
+      throw new ServiceUnavailableException(
+        `Başvuru şu an gönderilemiyor: sözleşme metni henüz yayınlanmadı (${yayinlanmamis.join(', ')}). Lütfen daha sonra tekrar deneyin.`,
+      );
+    }
+
+    if (saticiSozlesme === 'ONAYSIZ') ekle('SOZLESME_SATICI');
+    if (komisyonSozlesme === 'ONAYSIZ') ekle('SOZLESME_SATICI_KOMISYON');
+
+    if (eksikler.length) {
+      throw new ConflictException({
+        // message DUZ METIN KALIYOR: panel bugun ApiHata.message'i dogrudan
+        // gosteriyor; obje verilseydi ekranda "[object Object]" cikardi.
+        message: `Başvuru onaya gönderilemedi. Eksikler: ${eksikler.map((e) => e.mesaj).join(', ')}.`,
+        eksikler,
+      });
+    }
+
     await this.prisma.$transaction((tx) =>
       this.saticiDurum.gecis(tx, s.id, [SellerStatus.DRAFT, SellerStatus.NEEDS_FIX], {
         status: SellerStatus.UNDER_REVIEW,
@@ -1126,7 +1229,7 @@ export class MarketService {
     return {
       seller,
       owner,
-      belgeler,
+      belgeler: belgeler.map((b) => this.belgeyiSun(b)),
       sozlesmeOnaylari,
       inceleme: this.incelemeMeta(seller, new Date()),
     };
@@ -1186,6 +1289,24 @@ export class MarketService {
     });
   }
 
+  /**
+   * BELGE ADRESI YANITA IMZALI CIKAR (02 / KYC).
+   *
+   * DB'de duran adres artik 'authenticated' tipinde; imzasiz cagrildiginda
+   * Cloudinary 401 doner. Yanitta onun yerine KISA OMURLU imzali adres
+   * verilir. Boylece:
+   *   · adres bir yere yapistirilsa bile dakikalar icinde olur,
+   *   · yetkisiz kisi adrese hic ulasamaz (bu uclar zaten kimlik + yetki
+   *     istiyor: satici kendi belgeleri, admin inceleme uclari).
+   *
+   * SEMA DEGISMEDI: alan adi (dosyaUrl) ve tipi ayni kaldi - panelin mevcut
+   * baglantisi calismaya devam eder. Eski (public) adresler cozulemedigi icin
+   * oldugu gibi doner.
+   */
+  private belgeyiSun<T extends { dosyaUrl: string }>(belge: T): T {
+    return { ...belge, dosyaUrl: kycImzaliUrl(belge.dosyaUrl) };
+  }
+
   /** Satici kendi belgesini yukler. Dosya zaten Cloudinary'e gitmis, burada URL saklanir. */
   async belgeEkle(userId: string, tip: string, dosyaUrl: string) {
     const s = await this.saticimHam(userId);
@@ -1194,16 +1315,17 @@ export class MarketService {
       data: { sellerId: s.id, tip: tip as SaticiBelgeTipi, dosyaUrl },
     });
     await this.dogrulamaVerisiniTazele(s.id);
-    return belge;
+    return this.belgeyiSun(belge);
   }
 
   /** Saticinin kendi belgeleri. */
   async belgelerim(userId: string) {
     const s = await this.saticimHam(userId);
-    return this.prisma.saticiBelge.findMany({
+    const belgeler = await this.prisma.saticiBelge.findMany({
       where: { sellerId: s.id, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
+    return belgeler.map((b) => this.belgeyiSun(b));
   }
 
   // ---------------- SATICI SIPARIS OZETI ----------------
@@ -1396,7 +1518,7 @@ export class MarketService {
         take: Math.min(Math.max(1, take), 100),
       }),
     ]);
-    return { toplam, kayitlar };
+    return { toplam, kayitlar: kayitlar.map((k) => this.belgeyiSun(k)) };
   }
 
   /** Admin: belge onayi. Sonrasinda saticinin dogrulama durumu yeniden hesaplanir. */
@@ -1432,7 +1554,7 @@ export class MarketService {
       },
     });
     const satici = await this.dogrulamaVerisiniTazele(belge.sellerId);
-    return { belge: guncel, satici };
+    return { belge: this.belgeyiSun(guncel), satici };
   }
 
   // ---------------- SATICI SOZLESMELERI ----------------

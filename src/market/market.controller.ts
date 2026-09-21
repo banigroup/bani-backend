@@ -1,10 +1,11 @@
 import {
-  BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req,
+  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Req,
   UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Public } from '../common/decorators/public.decorator';
-import { cloudinaryUpload } from '../common/upload/cloudinary.util';
+import { cloudinaryOzelYukle } from '../common/upload/cloudinary.util';
+import { kycDosyasiniDogrula } from '../common/upload/kyc-dosya';
 import type { Request } from 'express';
 import { MarketService } from './market.service';
 import { CreateStoreDto } from './dto/create-store.dto';
@@ -334,8 +335,13 @@ export class MarketController {
     @Body('tip') tip: string,
     @Req() req: Request,
   ) {
-    if (!dosya) throw new BadRequestException('Dosya gerekli');
-    const url = await cloudinaryUpload(dosya.buffer, `banimarket/satici/${user.id}`);
+    // TUR KAPISI (02): boyut siniri yukaridaki multer limitinde, ICERIK TURU
+    // burada. Ikisi ayri kapi; biri digerinin yerine gecmez.
+    kycDosyasiniDogrula(dosya);
+    // OZEL YUKLEME: KYC belgesi herkese acik bir adreste durmaz
+    // (cloudinaryOzelYukle -> type 'authenticated'). Okuma uclari adresi
+    // kisa omurlu imzayla sunuyor (MarketService.belgeyiSun).
+    const url = await cloudinaryOzelYukle(dosya.buffer, `banimarket/satici/${user.id}`);
     const r = await this.market.belgeEkle(user.id, tip, url);
     // metadata'ya dosya URL'i YAZILMAZ; yalnizca hangi tip belge yuklendigi.
     await this.audit.record({ actorId: user.id, action: 'seller.belge.yukle', entity: 'SaticiBelge', entityId: r.id, ip: req.ip, metadata: { tip } });
