@@ -11,6 +11,9 @@ export default () => ({
     length: parseInt(process.env.OTP_LENGTH ?? '6', 10),
     maxAttempts: parseInt(process.env.OTP_MAX_ATTEMPTS ?? '5', 10),
     resendCooldownSeconds: parseInt(process.env.OTP_RESEND_COOLDOWN_SECONDS ?? '60', 10),
+    // Owner kabul testi: TEK numara icin sabit kod. Ikisi birden yoksa kapali.
+    ownerTestPhone: process.env.OWNER_TEST_PHONE,
+    ownerTestCode: process.env.OWNER_TEST_OTP,
   },
   sms: { provider: process.env.SMS_PROVIDER ?? 'console' },
 });

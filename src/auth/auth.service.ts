@@ -53,6 +53,11 @@ export class AuthService {
     return this.testTelefonlar.kayitliMi(phone);
   }
 
+  /** Owner kabul testi numarasi mi? Audit'te OWNER_TEST ayrimi icin. */
+  ownerTestMi(phone: string): boolean {
+    return this.otp.ownerTestMi(phone);
+  }
+
   /** Yaptirimli hesap OTP ile giris yapamaz: 403, yan etki YOK. */
   private girisKapisi(status: UserStatus): void {
     if (AuthService.GIRIS_KAPALI.has(status)) {
