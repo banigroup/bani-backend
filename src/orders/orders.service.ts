@@ -12,6 +12,7 @@ import { LedgerService } from '../finance/services/ledger.service';
 import { WalletService } from '../finance/services/wallet.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { platformYoneticisi } from '../common/rbac/rol-kontrol';
+import { Permission } from '../common/rbac/permissions.enum';
 import { CheckoutDto } from './dto/checkout.dto';
 import { OrderStatusService } from './order-status.service';
 import { checkoutOriginUygun, dikeyCoz } from '../common/domain/dikey-domain';
@@ -487,7 +488,7 @@ export class OrdersService {
     });
   }
 
-  async getOne(user: AuthUser, id: string) {
+  async getOne(user: AuthUser, id: string, dikey: BusinessUnit | null) {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
@@ -500,8 +501,9 @@ export class OrdersService {
     const isOwner = order.userId === user.id;
     // Magaza tarafi: sahip, AKTIF personel ya da platform yoneticisi (tek kaynak:
     // market.service.erisebilir). Magaza zaten okundu, tekrar sorgu acilmiyor.
-    const magazaYetkisi = await this.market.erisebilir(order.store, user.id, user.roles ?? []);
-    if (!isOwner && !magazaYetkisi) {
+    // VERT-01: magaza yolu YALNIZCA sahip degilse sorulur - musteri kendi
+    // siparisini dikey basligi olmadan gorur.
+    if (!isOwner && !(await this.market.erisebilir(order.store, user.id, user.roles ?? [], dikey, null))) {
       throw new ForbiddenException('Bu siparişi görme yetkiniz yok');
     }
     // Teslim kodunu YALNIZCA sipariş sahibi görür. Bu uç satıcıya ve süper admine
@@ -512,10 +514,10 @@ export class OrdersService {
     return order;
   }
 
-  async storeOrders(user: AuthUser, storeId: string, status?: string) {
+  async storeOrders(user: AuthUser, storeId: string, dikey: BusinessUnit | null, status?: string) {
     const store = await this.prisma.store.findUnique({ where: { id: storeId } });
     if (!store) throw new NotFoundException('Mağaza bulunamadı');
-    if (!(await this.market.erisebilir(store, user.id, user.roles ?? []))) {
+    if (!(await this.market.erisebilir(store, user.id, user.roles ?? [], dikey, Permission.ORDER_MANAGE))) {
       throw new ForbiddenException('Bu mağazanın siparişlerini görme yetkiniz yok');
     }
     const where: Prisma.OrderWhereInput = { storeId };
@@ -532,7 +534,7 @@ export class OrdersService {
   }
 
   // ============================ DURUM İLERLETME ============================
-  async updateStatus(user: AuthUser, id: string, next: OrderStatus) {
+  async updateStatus(user: AuthUser, id: string, next: OrderStatus, dikey: BusinessUnit | null) {
     // Guard okuması, koşullu yazma ve dönüş okuması ARTIK TEK TRANSACTION içinde.
     //
     // Doğruluğu sağlayan hâlâ koşullu yazım (E-1): `where: { id, status: order.status }`
@@ -552,7 +554,7 @@ export class OrdersService {
       if (!order) throw new NotFoundException('Sipariş bulunamadı');
       // Uyelik okumasi transaction DISINDAKI istemciyle yapiliyor: yaris konusu
       // olan sey siparis durumu, personel listesi degil.
-      if (!(await this.market.erisebilir(order.store, user.id, user.roles ?? []))) {
+      if (!(await this.market.erisebilir(order.store, user.id, user.roles ?? [], dikey, Permission.ORDER_MANAGE))) {
         throw new ForbiddenException('Bu siparişi yönetme yetkiniz yok');
       }
 
@@ -580,7 +582,7 @@ export class OrdersService {
   }
 
   // ============================ İPTAL / İADE ============================
-  async cancel(user: AuthUser, id: string) {
+  async cancel(user: AuthUser, id: string, dikey: BusinessUnit | null) {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: { store: true, items: true },
@@ -588,8 +590,9 @@ export class OrdersService {
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
     const isOwner = order.userId === user.id;
-    const magazaYetkisi = await this.market.erisebilir(order.store, user.id, user.roles ?? []);
-    if (!isOwner && !magazaYetkisi) {
+    // VERT-01: magaza tarafi iptal (iade doguran yazma) = order:manage, bu
+    // magazada ve dogru dikeyde. Musteri yolu dikey sormaz.
+    if (!isOwner && !(await this.market.erisebilir(order.store, user.id, user.roles ?? [], dikey, Permission.ORDER_MANAGE))) {
       throw new ForbiddenException('Bu siparişi iptal etme yetkiniz yok');
     }
     // Erken ret: cüzdan sorguları ve transaction açılmadan, ucuz yoldan.

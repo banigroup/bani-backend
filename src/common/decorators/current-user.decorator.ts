@@ -1,5 +1,6 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { BusinessUnit, Role } from '@prisma/client';
+import { dikeyAyristir } from '../domain/dikey-domain';
 
 export interface AuthUser {
   id: string;
@@ -27,3 +28,20 @@ export const CurrentUser = createParamDecorator(
     return data ? req.user?.[data] : req.user;
   },
 );
+
+/**
+ * VERT-01 — SATICI PANELININ AKTIF DIKEYI: yalnizca X-Bani-Dikey basligi.
+ *
+ * Origin BILEREK okunmaz: panel markali bir domainde calismiyor, baglami
+ * panelin kendisi bildirir. Baslik yoksa, tekrarlanmissa (dizi) ya da
+ * BusinessUnit degeri degilse null doner; nasil karsilanacagina magaza kapisi
+ * (MarketService.dikeyKapisi) karar verir - burada hata firlatilmaz ki muaf
+ * uclar (basvuru, bootstrap) bu dekoratoru hic kullanmasin, kullansa da kirilmasin.
+ */
+export function istekDikeyiCoz(_: unknown, ctx: ExecutionContext): BusinessUnit | null {
+  const baslik = ctx.switchToHttp().getRequest().headers?.['x-bani-dikey'];
+  return typeof baslik === 'string' ? dikeyAyristir(baslik) : null;
+}
+
+/** Cozucu ayri export edildi: testler hangi ucun dikey bagli oldugunu metadata'dan dogrular. */
+export const IstekDikeyi = createParamDecorator(istekDikeyiCoz);
