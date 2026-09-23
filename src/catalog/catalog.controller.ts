@@ -140,6 +140,31 @@ export class CatalogController {
     return this.catalog.listPending(storeId, user.id, user.roles, dikey);
   }
 
+  // VERT-02 — SATICI YONETIM OKUMALARI: public products / categories?tumu=1
+  // ile ayni yanit, ama vitrin sarti YOK - kapali magaza ve ACTIVE olmayan
+  // satici da kendi katalogunu yonetir. Yetki pending ile AYNI. Kullaniciya
+  // ozel: CacheInterceptor BILEREK YOK.
+  @Get('stores/:storeId/yonetim/urunler')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
+  yonetimUrunleri(
+    @Param('storeId', UuidParam) storeId: string,
+    @CurrentUser() user: AuthUser,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+    @Query('categoryId', UuidQuery) categoryId?: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+  ) {
+    return this.catalog.yonetimUrunleri(storeId, user.id, user.roles, dikey, categoryId, Number(skip) || 0, Number(take) || 50);
+  }
+
+  @Get('stores/:storeId/yonetim/kategoriler')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.PRODUCT_WRITE)
+  yonetimKategorileri(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.yonetimKategorileri(storeId, user.id, user.roles, dikey);
+  }
+
   // Satici islemleri
   @Post('stores/:storeId/categories')
   @UseGuards(JwtAuthGuard, PermissionsGuard)

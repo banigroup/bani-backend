@@ -366,6 +366,7 @@ describe('VERT-01 — dikey bagli / muaf uc haritasi (metadata kilidi)', () => {
       'varyantListesi', 'varyantOlustur', 'varyantGuncelle', 'varyantSil', 'secenekGruplari', 'secenekGrubuOlustur',
       'secenekGrubuGuncelle', 'secenekGrubuSil', 'secenekEkle', 'secenekGuncelle', 'secenekSil', 'urunSecenekGruplari',
       'medyaListesi', 'medyaEkle', 'medyaGuncelle', 'medyaSil',
+      'yonetimUrunleri', 'yonetimKategorileri',
     ]],
     [OrdersController, ['storeOrders', 'getOne', 'updateStatus', 'cancel']],
   ];

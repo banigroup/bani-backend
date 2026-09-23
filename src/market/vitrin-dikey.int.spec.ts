@@ -10,6 +10,9 @@
 //   V7  kapali magazanin urun ve kategorileri gorunmez
 //   V8  satici kendi kapali/urunsuz magazasini yetkili uctan gorur; baska satici 403
 //   V9  ic getById kapali magazayi hala bulur (yetki kapilari icin degismedi)
+//   V10 kapali magazada public 404, satici yonetim urun listesi + kategori agaci okunur
+//   V11 urunsuz magaza ve ACTIVE olmayan satici yonetim verisini okur
+//   V12 yonetim uclarinda personel / baska satici / dikey / admin yetki sozlesmesi
 //
 // CALISTIRMA: `pnpm run test:int` + INTEGRATION_DATABASE_URL (bani_test).
 // FAIL-CLOSED: hedef veritabani 'bani_test' degilse HICBIR baglanti kurulmaz.
@@ -264,5 +267,63 @@ describe('VERT-02 — V8/V9 satici paneli ve ic getById', () => {
     await expect(market.getById(i.storeId)).resolves.toMatchObject({ id: i.storeId, isActive: false });
     await expect(market.calismaSaatleri(i.storeId, i.sahip, MERCHANT, MARKET)).resolves.toBeDefined();
     await expect(market.calismaSaatleri(i.storeId, M.sahip, MERCHANT, MARKET)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('VERT-02 — V10-V12 satici yonetim urun listesi ve kategori agaci', () => {
+  it('V10: kapali magazada public 404, yonetim okur (yayindaki + pending + bos kategori dahil agac)', async () => {
+    const k = await magazaKur(MARKET, 'yon-kapali');
+    const kat = await prisma.category.create({ data: { storeId: k.storeId, name: 'V02 yon kat', slug: `v02-${KOSU}-yon-kat` } });
+    const bos = await prisma.category.create({ data: { storeId: k.storeId, name: 'V02 bos kat', slug: `v02-${KOSU}-bos-kat` } });
+    const yayinda = await urunKur(k.storeId, 'yon-yayinda', { categoryId: kat.id, stock: 0 });
+    const bekleyen = await urunKur(k.storeId, 'yon-bekleyen', { isActive: false });
+    await prisma.store.update({ where: { id: k.storeId }, data: { isActive: false } });
+
+    // Public vitrin kapali kalir.
+    await expect(catalog.listProducts(k.storeId, undefined, 0, 50, null)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(catalog.listCategories(k.storeId, true, null)).rejects.toBeInstanceOf(NotFoundException);
+
+    // Yonetim: yalniz yayindaki (bekleyen ayri uctan), kategori suzgeci calisir.
+    expect((await catalog.yonetimUrunleri(k.storeId, k.sahip, MERCHANT, MARKET)).map((p) => p.id)).toEqual([yayinda]);
+    expect((await catalog.yonetimUrunleri(k.storeId, k.sahip, MERCHANT, MARKET, bos.id)).map((p) => p.id)).toEqual([]);
+    expect((await catalog.listPending(k.storeId, k.sahip, MERCHANT, MARKET)).map((p) => p.id)).toEqual([bekleyen]);
+    const agac = await catalog.yonetimKategorileri(k.storeId, k.sahip, MERCHANT, MARKET);
+    expect(agac.map((c: any) => c.id).sort()).toEqual([kat.id, bos.id].sort());
+  });
+
+  it('V11: urunsuz magaza ve ACTIVE olmayan satici yonetim verisini okur; public 404', async () => {
+    const u = await magazaKur(MARKET, 'yon-urunsuz');
+    await expect(catalog.yonetimUrunleri(u.storeId, u.sahip, MERCHANT, MARKET)).resolves.toEqual([]);
+    await expect(catalog.yonetimKategorileri(u.storeId, u.sahip, MERCHANT, MARKET)).resolves.toEqual([]);
+
+    const a = await magazaKur(MARKET, 'yon-aski');
+    const urun = await urunKur(a.storeId, 'yon-aski');
+    await prisma.seller.update({ where: { id: a.sellerId }, data: { status: SellerStatus.SUSPENDED } });
+    await expect(catalog.listProducts(a.storeId, undefined, 0, 50, null)).rejects.toBeInstanceOf(NotFoundException);
+    expect((await catalog.yonetimUrunleri(a.storeId, a.sahip, MERCHANT, MARKET)).map((p) => p.id)).toEqual([urun]);
+  });
+
+  it('V12: yetki - personel (STORE_STOCK gecer, STORE_KITCHEN 403), baska satici 403, dikey 400/403, admin gecer', async () => {
+    const p = await magazaKur(MARKET, 'yon-yetki');
+    const stok = await kullaniciKur('yon-stok', [Role.CUSTOMER]);
+    const mutfak = await kullaniciKur('yon-mutfak', [Role.CUSTOMER]);
+    await prisma.userRole.createMany({
+      data: [
+        { userId: stok, storeId: p.storeId, role: Role.STORE_STOCK },
+        { userId: mutfak, storeId: p.storeId, role: Role.STORE_KITCHEN },
+      ],
+    });
+
+    for (const cagri of [
+      (u: string, r: Role[], d: BusinessUnit | null) => catalog.yonetimUrunleri(p.storeId, u, r, d),
+      (u: string, r: Role[], d: BusinessUnit | null) => catalog.yonetimKategorileri(p.storeId, u, r, d),
+    ]) {
+      await expect(cagri(stok, [Role.CUSTOMER], MARKET)).resolves.toBeDefined();
+      await expect(cagri(mutfak, [Role.CUSTOMER], MARKET)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(cagri(M.sahip, MERCHANT, MARKET)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(cagri(p.sahip, MERCHANT, null)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(cagri(p.sahip, MERCHANT, YEMEK)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(cagri(admin, [Role.ADMIN], null)).resolves.toBeDefined();
+    }
   });
 });

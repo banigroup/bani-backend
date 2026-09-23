@@ -9,6 +9,8 @@
 //   · katalog public okumalari magaza sartini (ve varsa dikeyi) tasir;
 //   · gorunmeyen / yanlis dikey magaza 404;
 //   · satici paneli ucu: sahip gorur, baska satici 403, VERT-01 kapisi korunur;
+//   · satici yonetim urun listesi / kategori agaci: vitrin sarti yok, kapi
+//     PRODUCT_WRITE + assertOwner + dikey, onbellek yok;
 //   · IC getById sorgusu degismedi;
 //   · URL-anahtarli onbellek: farkli ?dikey= degerleri ayri anahtar.
 //
@@ -29,6 +31,8 @@ import { SozlesmeService } from '../sozlesme/sozlesme.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OnbellekService } from '../common/cache/onbellek.service';
 import { CatalogService } from '../catalog/catalog.service';
+import { CatalogController } from '../catalog/catalog.controller';
+import { INTERCEPTORS_METADATA } from '@nestjs/common/constants';
 import { Permission } from '../common/rbac/permissions.enum';
 import { PERMISSIONS_KEY } from '../common/rbac/permissions.decorator';
 
@@ -189,6 +193,43 @@ describe('VERT-02 — satici paneli ucu ve ic getById', () => {
 
   it('uc STORE_READ ister', () => {
     expect(Reflect.getMetadata(PERMISSIONS_KEY, MarketController.prototype.panelMagaza)).toEqual([Permission.STORE_READ]);
+  });
+});
+
+// ============================================================ satici yonetim katalog uclari
+
+describe('VERT-02 — satici yonetim urun listesi ve kategori agaci', () => {
+  it('yonetimUrunleri: sahip kapali magazada okur; sorguda vitrin (store) sarti YOK, yalniz yayindakiler', async () => {
+    const { catalog, prisma } = kur();
+    await catalog.yonetimUrunleri(MAGAZA, SAHIP, MERCHANT, MARKET, undefined, 0, 50);
+    const where = prisma.product.findMany.mock.calls[0][0].where;
+    expect(where).toEqual({ storeId: MAGAZA, isActive: true, deletedAt: null });
+  });
+
+  it('yonetimKategorileri: sahip kapali magazada okur; tumu=1 agaci (bos kategoriler dahil), vitrin sarti YOK', async () => {
+    const { catalog, prisma } = kur();
+    await catalog.yonetimKategorileri(MAGAZA, SAHIP, MERCHANT, MARKET);
+    expect(prisma.category.findMany.mock.calls[0][0].where).toEqual({ storeId: MAGAZA, isActive: true });
+    // Magaza yalniz ic getById ile okundu (vitrin sarti sorgusu acilmadi).
+    expect(prisma.store.findFirst).toHaveBeenCalledWith({ where: { id: MAGAZA, deletedAt: null } });
+  });
+
+  it.each([
+    ['yonetimUrunleri', (c: CatalogService, u: string, r: Role[], d: BusinessUnit | null) => c.yonetimUrunleri(MAGAZA, u, r, d)],
+    ['yonetimKategorileri', (c: CatalogService, u: string, r: Role[], d: BusinessUnit | null) => c.yonetimKategorileri(MAGAZA, u, r, d)],
+  ])('%s: baska satici 403, baglamsiz 400, yanlis dikey 403, admin gecer; DB sorgusu acilmaz', async (_ad, cagri) => {
+    const { catalog, prisma } = kur();
+    await kodu(cagri(catalog, BASKA, MERCHANT, MARKET), ForbiddenException);
+    await kodu(cagri(catalog, SAHIP, MERCHANT, null), BadRequestException, 'DIKEY_BAGLAMI_GEREKLI');
+    await kodu(cagri(catalog, SAHIP, MERCHANT, YEMEK), ForbiddenException, 'DIKEY_UYUMSUZ');
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+    expect(prisma.category.findMany).not.toHaveBeenCalled();
+    await expect(cagri(catalog, 'admin', [Role.ADMIN], null)).resolves.toEqual([]);
+  });
+
+  it.each(['yonetimUrunleri', 'yonetimKategorileri'] as const)('%s: PRODUCT_WRITE ister, onbellek interceptor YOK', (m) => {
+    expect(Reflect.getMetadata(PERMISSIONS_KEY, CatalogController.prototype[m])).toEqual([Permission.PRODUCT_WRITE]);
+    expect(Reflect.getMetadata(INTERCEPTORS_METADATA, CatalogController.prototype[m])).toBeUndefined();
   });
 });
 
