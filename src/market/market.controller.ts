@@ -17,12 +17,12 @@ import { SaticiSozlesmeOnaylaDto } from './dto/sozlesme.dto';
 import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { TeslimatBolgeleriDto } from './dto/teslimat-bolge.dto';
 import { SaticiSiparisSorguDto } from './dto/seller-orders.dto';
-import type { SozlesmeTipi } from '@prisma/client';
+import type { BusinessUnit, SozlesmeTipi } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
-import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { CurrentUser, AuthUser, IstekDikeyi } from '../common/decorators/current-user.decorator';
 import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
@@ -67,11 +67,21 @@ export class MarketController {
     return this.market.getById(id);
   }
 
-  // Satıcı: kendi mağazaları
+  // VERT-01 — DIKEY BAGLAMI (X-Bani-Dikey, A-STRICT):
+  //   · Magaza kapsamli uclar (stores/:id/*) ve my/stores, seller/orders
+  //     baglam ISTER: yoksa/gecersizse 400 DIKEY_BAGLAMI_GEREKLI, hedef magaza
+  //     baska dikeydeyse 403 DIKEY_UYUMSUZ. Platform yoneticisi muaf.
+  //   · YAPISAL OLARAK DIKEYSIZ, BILEREK MUAF: seller (bootstrap/basvuru),
+  //     seller/submit, seller/belge(ler), seller/sozlesme*, POST stores (ilk
+  //     magaza - dikey Seller.talepEdilenDikey'den gelir, baslik okunmaz),
+  //     herkese acik vitrin uclari ve admin (sellers*) uclari.
+  // Liste dikey-izolasyon.spec.ts'te metadata uzerinden kilitli.
+
+  // Satıcı: kendi mağazaları (yalniz aktif dikey)
   @Get('my/stores')
   @UseGuards(JwtAuthGuard)
-  mine(@CurrentUser() user: AuthUser) {
-    return this.market.myStores(user.id);
+  mine(@CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.market.myStores(user.id, user.roles, dikey);
   }
 
   @Post('stores')
@@ -87,8 +97,14 @@ export class MarketController {
   @Patch('stores/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  async update(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateStoreDto, @Req() req: Request) {
-    const r = await this.market.update(id, user.id, user.roles, dto, req.ip);
+  async update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @Body() dto: UpdateStoreDto,
+    @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    const r = await this.market.update(id, user.id, user.roles, dto, req.ip, dikey);
     // ONBELLEK: ad/logo/isActive degismis olabilir - liste bayatladi.
     await this.onbellek.magazaListesiniTemizle();
     return r;
@@ -103,8 +119,13 @@ export class MarketController {
   @Post('stores/:id/logo-imza')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  async logoImza(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
-    const r = await this.market.logoImzasi(id, user.id, user.roles);
+  async logoImza(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    const r = await this.market.logoImzasi(id, user.id, user.roles, dikey);
     // AUDIT: imza bir YUKLEME YETKISIDIR (katalog ucuyla ayni gerekce).
     // metadata'ya YALNIZCA klasor; signature/apiKey audit'e GIRMEZ.
     await this.audit.record({
@@ -124,8 +145,12 @@ export class MarketController {
   @Get('stores/:id/calisma-saatleri')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_READ)
-  calismaSaatleri(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
-    return this.market.calismaSaatleri(id, user.id, user.roles);
+  calismaSaatleri(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.market.calismaSaatleri(id, user.id, user.roles, dikey);
   }
 
   @Put('stores/:id/calisma-saatleri')
@@ -136,8 +161,9 @@ export class MarketController {
     @Param('id', UuidParam) id: string,
     @Body() dto: CalismaSaatleriDto,
     @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
   ) {
-    return this.market.calismaSaatleriGuncelle(id, user.id, user.roles, dto, req.ip);
+    return this.market.calismaSaatleriGuncelle(id, user.id, user.roles, dto, req.ip, dikey);
   }
 
   // ---------------- TESLIMAT BOLGELERI ----------------
@@ -164,8 +190,12 @@ export class MarketController {
   @Get('stores/:id/teslimat-bolgeleri')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_READ)
-  teslimatBolgeleri(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
-    return this.market.teslimatBolgeleri(id, user.id, user.roles);
+  teslimatBolgeleri(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.market.teslimatBolgeleri(id, user.id, user.roles, dikey);
   }
 
   // Audit servis icinde yaziliyor - calisma saatleri ve store.update ile ayni
@@ -178,8 +208,9 @@ export class MarketController {
     @Param('id', UuidParam) id: string,
     @Body() dto: TeslimatBolgeleriDto,
     @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
   ) {
-    return this.market.teslimatBolgeleriGuncelle(id, user.id, user.roles, dto, req.ip);
+    return this.market.teslimatBolgeleriGuncelle(id, user.id, user.roles, dto, req.ip, dikey);
   }
 
   // ---------------- SATICI (SELLER) ----------------
@@ -366,8 +397,12 @@ export class MarketController {
   @Get('seller/orders')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.ORDER_MANAGE)
-  saticiSiparisleri(@CurrentUser() user: AuthUser, @Query() q: SaticiSiparisSorguDto) {
-    return this.market.saticiSiparisleri(user.id, q);
+  saticiSiparisleri(
+    @CurrentUser() user: AuthUser,
+    @Query() q: SaticiSiparisSorguDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.market.saticiSiparisleri(user.id, user.roles, dikey, q);
   }
 
   @Get('sellers/belgeler/bekleyenler')
@@ -432,15 +467,25 @@ export class MarketController {
   @Get('stores/:id/users')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  personelListesi(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
-    return this.market.personelListesi(id, user.id, user.roles);
+  personelListesi(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.market.personelListesi(id, user.id, user.roles, dikey);
   }
 
   @Post('stores/:id/users')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.STORE_WRITE)
-  async personelEkle(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: PersonelEkleDto, @Req() req: Request) {
-    const r = await this.market.personelEkle(id, user.id, user.roles, dto.userId);
+  async personelEkle(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @Body() dto: PersonelEkleDto,
+    @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    const r = await this.market.personelEkle(id, user.id, user.roles, dto.userId, dikey);
     // C4: metadata'ya kapsam ve rol eklendi — "kime, HANGI MAGAZADA, HANGI ROL
     // verildi" sorusu audit'ten cevaplanabilmeli.
     await this.audit.record({ actorId: user.id, action: 'store.user.add', entity: 'Store', entityId: id, ip: req.ip, metadata: { userId: dto.userId, storeId: id, role: 'STORE_STAFF' } });
@@ -456,8 +501,9 @@ export class MarketController {
     @Param('userId', UuidParam) userId: string,
     @Body() dto: PersonelDurumDto,
     @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
   ) {
-    const r = await this.market.personelDurum(id, user.id, user.roles, userId, dto.isActive);
+    const r = await this.market.personelDurum(id, user.id, user.roles, userId, dto.isActive, dikey);
     // C4: pasiflestirme o magazanin ROL SATIRLARINI da siliyor; kayit bunu
     // yansitsin diye storeId ve etkilenen rol metadata'ya eklendi.
     await this.audit.record({ actorId: user.id, action: 'store.user.status', entity: 'Store', entityId: id, ip: req.ip, metadata: { userId, isActive: dto.isActive, storeId: id, role: 'STORE_STAFF' } });
@@ -479,8 +525,9 @@ export class MarketController {
     @Param('userId', UuidParam) userId: string,
     @Body() dto: RolAtaDto,
     @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
   ) {
-    const r = await this.market.rolVer(id, user.id, user.roles, userId, dto.role);
+    const r = await this.market.rolVer(id, user.id, user.roles, userId, dto.role, dikey);
     await this.audit.record({
       actorId: user.id, action: 'store.user.role.grant', entity: 'Store', entityId: id, ip: req.ip,
       metadata: { storeId: id, targetUserId: userId, role: dto.role, degisti: r.degisti },
@@ -499,8 +546,9 @@ export class MarketController {
     // atanabilirRolDogrula() ile yapiliyor (beyaz liste disi -> 400).
     @Param('role') role: string,
     @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
   ) {
-    const r = await this.market.rolAl(id, user.id, user.roles, userId, role);
+    const r = await this.market.rolAl(id, user.id, user.roles, userId, role, dikey);
     await this.audit.record({
       actorId: user.id, action: 'store.user.role.revoke', entity: 'Store', entityId: id, ip: req.ip,
       metadata: { storeId: id, targetUserId: userId, role, degisti: r.degisti },

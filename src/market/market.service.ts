@@ -13,6 +13,8 @@ import { CalismaSaatleriDto } from './dto/calisma-saati.dto';
 import { TeslimatBolgeleriDto } from './dto/teslimat-bolge.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/rol-kontrol';
+import { Permission } from '../common/rbac/permissions.enum';
+import { MAGAZA_ROLU_IZIN_BEYAZ_LISTESI } from '../common/rbac/permissions.guard';
 import { DIKEY_DOMAIN } from '../common/domain/dikey-domain';
 
 /**
@@ -141,10 +143,15 @@ export class MarketService {
   // Sahip olunan VE personel olarak calisilan magazalar. Paneller buradan
   // basliyor; uyelik eklendiginde magaza listede gorunmezse uye hicbir yere
   // ulasamaz (storeId'yi bilmesinin baska yolu yok).
-  myStores(ownerId: string) {
+  //
+  // VERT-01: yalniz AKTIF DIKEYIN magazalari. Baslik zorunlu; platform
+  // yoneticisi basliksiz gelirse suzgecsiz (bkz. baglamDikeyi).
+  myStores(ownerId: string, roles: Role[], dikey: BusinessUnit | null) {
+    const aktif = this.baglamDikeyi(roles, dikey);
     return this.prisma.store.findMany({
       where: {
         deletedAt: null,
+        ...(aktif ? { businessUnit: aktif } : {}),
         OR: [
           { ownerId },
           { personel: { some: { userId: ownerId, isActive: true } } },
@@ -279,21 +286,111 @@ export class MarketService {
   }
 
   /**
-   * MAGAZA ERISIMININ TEK KAYNAGI: sahip | aktif personel | platform yoneticisi.
+   * VERT-01 — AKTIF DIKEY BAGLAMI ZORUNLU (A-STRICT, fallback YOK).
+   *
+   * null = baslik yok ya da gecersiz. Ikisi AYNI hatayi alir: istemci icin
+   * duzeltme ayni (dogru X-Bani-Dikey gonder). Govde deseni SATICI_AKTIF_DEGIL
+   * ile ayni: message duz metin (panel onu gosteriyor), kod makine icin.
+   */
+  dikeyGerekli(dikey: BusinessUnit | null): BusinessUnit {
+    if (!dikey) {
+      throw new BadRequestException({
+        statusCode: 400,
+        kod: 'DIKEY_BAGLAMI_GEREKLI',
+        message: 'Geçerli bir dikey bağlamı gerekli (X-Bani-Dikey).',
+        error: 'Bad Request',
+      });
+    }
+    return dikey;
+  }
+
+  /** Hedef magaza aktif dikeyde degilse 403 DIKEY_UYUMSUZ. Platform yoneticisi buraya gelmez. */
+  private dikeyKapisi(store: { businessUnit: BusinessUnit }, dikey: BusinessUnit | null) {
+    if (store.businessUnit !== this.dikeyGerekli(dikey)) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        kod: 'DIKEY_UYUMSUZ',
+        message: 'Bu kaynak aktif panel dikeyine ait değil.',
+        error: 'Forbidden',
+      });
+    }
+  }
+
+  /**
+   * Liste uclari icin baglam: platform yoneticisi basliksiz gelirse suzgec YOK
+   * (null, mevcut davranis); diger herkes icin baslik zorunlu.
+   */
+  baglamDikeyi(roles: Role[], dikey: BusinessUnit | null): BusinessUnit | null {
+    if (this.platformYoneticisi(roles) && !dikey) return null;
+    return this.dikeyGerekli(dikey);
+  }
+
+  /**
+   * VERT-01 — UYELIK YOLUNDA IZIN BU MAGAZADAN GELMELI.
+   *
+   * Eskiden uyeMi yeterliydi: guard magaza rollerini TUM magazalardan
+   * duzlestirip izin veriyor, sonra uyeMi hedef magazada HERHANGI bir rol
+   * satiri ariyordu. Iki parca birlesince X magazasindaki STORE_KITCHEN'in
+   * order:manage'i, izinsiz STORE_STAFF olunan Y magazasinda kullanilabiliyordu;
+   * MERCHANT'in platform izinleri de personel olunan baskasinin magazasina
+   * tasiniyordu. Artik istenen izin, kisinin YALNIZCA BU magazadaki rollerinden
+   * (guard'daki beyaz listeyle kesisik) gelmek zorunda.
+   *
+   * izin null = okuma: uyelik yeter (onceki davranis).
+   *
+   * Tablo dogrudan okunur: IzinMatrisi'nin kaynagi ayni tablo; MarketService'e
+   * yeni bagimlilik eklemek 13 test kurulumunu degistirirdi. Sorgu yalnizca
+   * sahip olmayan, yonetici olmayan uye icin kosar.
+   */
+  private async magazaIzniVar(storeId: string, userId: string, izin: Permission | null): Promise<boolean> {
+    if (izin === null) return this.uyeMi(storeId, userId);
+    if (!MAGAZA_ROLU_IZIN_BEYAZ_LISTESI.has(izin)) return false;
+    const satirlar = await this.prisma.userRole.findMany({
+      where: { userId, storeId },
+      select: { role: true },
+    });
+    if (satirlar.length === 0) return false;
+    const izinSatiri = await this.prisma.rolePermission.findFirst({
+      where: { permissionKey: izin, role: { in: satirlar.map((s) => s.role) } },
+      select: { id: true },
+    });
+    return izinSatiri !== null;
+  }
+
+  /**
+   * MAGAZA ERISIMININ TEK KAYNAGI: platform yoneticisi | (dogru dikey VE
+   * (sahip | bu magazada izni olan uye)).
    *
    * Magaza NESNESINI alir, id'yi degil - cagiran taraf magazayi zaten okumussa
    * (orders.service'te oyle) ikinci bir sorgu acilmasin diye. isAdmin'in iki ayri
    * yerde farkli tanimlanmasi gibi bir ayrisma olmasin diye kural burada TEK.
+   *
+   * VERT-01: platform yoneticisi dikey kontrolunden ONCE gecer (dikeyler arasi
+   * yetkisi korunur). Diger herkes icin dikey eksik/gecersizse 400, uyusmazsa
+   * 403 FIRLATILIR (false donulmez) - istemci ayrimi kod alanindan gorur.
    */
-  async erisebilir(store: { id: string; ownerId: string }, userId: string, roles: Role[]): Promise<boolean> {
-    if (store.ownerId === userId) return true;
+  async erisebilir(
+    store: { id: string; ownerId: string; businessUnit: BusinessUnit },
+    userId: string,
+    roles: Role[],
+    dikey: BusinessUnit | null,
+    izin: Permission | null,
+  ): Promise<boolean> {
     if (this.platformYoneticisi(roles)) return true;
-    return this.uyeMi(store.id, userId);
+    this.dikeyKapisi(store, dikey);
+    if (store.ownerId === userId) return true;
+    return this.magazaIzniVar(store.id, userId, izin);
   }
 
-  private async ownedOrAdmin(storeId: string, userId: string, roles: Role[]) {
+  private async ownedOrAdmin(
+    storeId: string,
+    userId: string,
+    roles: Role[],
+    dikey: BusinessUnit | null,
+    izin: Permission | null,
+  ) {
     const store = await this.getById(storeId);
-    if (!(await this.erisebilir(store, userId, roles))) {
+    if (!(await this.erisebilir(store, userId, roles, dikey, izin))) {
       throw new ForbiddenException('Bu mağaza size ait değil');
     }
     return store;
@@ -309,9 +406,11 @@ export class MarketService {
    * yoneticiligi soruyor. Eksiklik degil, karar: magaza kapsamli rolun kendi
    * kadrosunu genisletebilmesi yetki yukseltme yolu acardi.
    */
-  private async sahipVeyaYonetici(storeId: string, userId: string, roles: Role[]) {
+  private async sahipVeyaYonetici(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const store = await this.getById(storeId);
-    if (store.ownerId !== userId && !this.platformYoneticisi(roles)) {
+    if (this.platformYoneticisi(roles)) return store;
+    this.dikeyKapisi(store, dikey); // VERT-01: sahip de yalniz aktif dikeyinde yonetir
+    if (store.ownerId !== userId) {
       throw new ForbiddenException('Personel yönetimi için mağaza sahibi ya da admin yetkisi gerekli');
     }
     return store;
@@ -319,8 +418,8 @@ export class MarketService {
 
   // ---------------- MAGAZA PERSONELI ----------------
 
-  async personelListesi(storeId: string, userId: string, roles: Role[]) {
-    await this.sahipVeyaYonetici(storeId, userId, roles);
+  async personelListesi(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.sahipVeyaYonetici(storeId, userId, roles, dikey);
     return this.prisma.storeUser.findMany({
       where: { storeId },
       orderBy: { createdAt: 'asc' },
@@ -342,8 +441,8 @@ export class MarketService {
     });
   }
 
-  async personelEkle(storeId: string, userId: string, roles: Role[], eklenecekUserId: string) {
-    const store = await this.sahipVeyaYonetici(storeId, userId, roles);
+  async personelEkle(storeId: string, userId: string, roles: Role[], eklenecekUserId: string, dikey: BusinessUnit | null) {
+    const store = await this.sahipVeyaYonetici(storeId, userId, roles, dikey);
     const kisi = await this.prisma.user.findFirst({ where: { id: eklenecekUserId, deletedAt: null } });
     if (!kisi) throw new NotFoundException('Kullanıcı bulunamadı');
     if (kisi.id === store.ownerId) {
@@ -370,8 +469,15 @@ export class MarketService {
     return uyelik;
   }
 
-  async personelDurum(storeId: string, userId: string, roles: Role[], hedefUserId: string, isActive: boolean) {
-    await this.sahipVeyaYonetici(storeId, userId, roles);
+  async personelDurum(
+    storeId: string,
+    userId: string,
+    roles: Role[],
+    hedefUserId: string,
+    isActive: boolean,
+    dikey: BusinessUnit | null,
+  ) {
+    await this.sahipVeyaYonetici(storeId, userId, roles, dikey);
     const uyelik = await this.prisma.storeUser.findUnique({
       where: { storeId_userId: { storeId, userId: hedefUserId } },
     });
@@ -467,8 +573,8 @@ export class MarketService {
   }
 
   /** Idempotent: ayni rol ikinci kez verilirse mukerrer satir olusmaz. */
-  async rolVer(storeId: string, userId: string, roles: Role[], hedefUserId: string, rol: string) {
-    await this.sahipVeyaYonetici(storeId, userId, roles);
+  async rolVer(storeId: string, userId: string, roles: Role[], hedefUserId: string, rol: string, dikey: BusinessUnit | null) {
+    await this.sahipVeyaYonetici(storeId, userId, roles, dikey);
     const secilen = this.atanabilirRolDogrula(rol);
     await this.aktifUyelikDogrula(storeId, hedefUserId);
 
@@ -487,8 +593,8 @@ export class MarketService {
    * personelDurum'un pasiflestirme dali da ayni mantikta (deleteMany, yoksa
    * sessiz gecer) - iki yol tutarli olsun diye 404 tercih edilmedi.
    */
-  async rolAl(storeId: string, userId: string, roles: Role[], hedefUserId: string, rol: string) {
-    await this.sahipVeyaYonetici(storeId, userId, roles);
+  async rolAl(storeId: string, userId: string, roles: Role[], hedefUserId: string, rol: string, dikey: BusinessUnit | null) {
+    await this.sahipVeyaYonetici(storeId, userId, roles, dikey);
     const secilen = this.atanabilirRolDogrula(rol);
     // Uyelik AKTIFLIGI aranmaz: yetki GERI ALMAK her zaman guvenli yonde bir
     // islem, pasif uyenin artik satiri da kalmamis olabilir.
@@ -498,10 +604,17 @@ export class MarketService {
     return { degisti: silinen.count > 0, roller: await this.magazaRolleri(storeId, hedefUserId) };
   }
 
-  async update(storeId: string, userId: string, roles: Role[], dto: UpdateStoreDto, ip?: string) {
-    // SAHIPLIK KAPISI (degismedi): sahip | aktif personel | platform yoneticisi.
+  async update(
+    storeId: string,
+    userId: string,
+    roles: Role[],
+    dto: UpdateStoreDto,
+    ip: string | undefined,
+    dikey: BusinessUnit | null,
+  ) {
+    // SAHIPLIK KAPISI: platform yoneticisi | dogru dikey + (sahip | store:write izinli uye).
     // Donen satir ONCEKI hal - audit'te once/sonra icin EK SORGU GEREKMIYOR.
-    const once = await this.ownedOrAdmin(storeId, userId, roles);
+    const once = await this.ownedOrAdmin(storeId, userId, roles, dikey, Permission.STORE_WRITE);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = { ...dto };
     if (dto.minOrder !== undefined) data.minOrder = BigInt(dto.minOrder);
@@ -1355,8 +1468,14 @@ export class MarketService {
   //      magazalar[] kirilimi de kendiliginden daralir. Toplamlar ayni where'i
   //      paylastigi icin filtreli kumeye gore cikar - istemcinin toplam
   //      hesaplamasina hic gerek kalmaz.
+  //
+  //   5) VERT-01: suzgec ARTIK X-Bani-Dikey'den (zorunlu). q.dikey yalnizca
+  //      baglamla AYNIYSA kabul edilir; farkliysa 403 DIKEY_UYUMSUZ. Platform
+  //      yoneticisi basliksiz gelirse eski davranis (q.dikey opsiyonel).
   async saticiSiparisleri(
     userId: string,
+    roles: Role[],
+    istekDikeyi: BusinessUnit | null,
     q: {
       from?: string;
       to?: string;
@@ -1367,6 +1486,11 @@ export class MarketService {
       take?: number;
     },
   ) {
+    const baglam = this.baglamDikeyi(roles, istekDikeyi);
+    if (baglam) {
+      if (q.dikey) this.dikeyKapisi({ businessUnit: q.dikey }, baglam);
+      q = { ...q, dikey: baglam };
+    }
     const satici = await this.saticimHam(userId);
 
     const magazalar = await this.prisma.store.findMany({
@@ -1627,8 +1751,8 @@ export class MarketService {
    *
    * YETKI: ownedOrAdmin - magaza guncellemenin AYNI kapisi.
    */
-  async logoImzasi(storeId: string, userId: string, roles: Role[]) {
-    await this.ownedOrAdmin(storeId, userId, roles);
+  async logoImzasi(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.ownedOrAdmin(storeId, userId, roles, dikey, Permission.STORE_WRITE);
     return cloudinaryImzala(`bani/stores/${storeId}`);
   }
 
@@ -1642,8 +1766,8 @@ export class MarketService {
    * gunler isClosed:false + bos aralik olarak gorunur - panel formu "eksik gun"
    * diye bir durumla ugrasmasin.
    */
-  async calismaSaatleri(storeId: string, userId: string, roles: Role[]) {
-    await this.ownedOrAdmin(storeId, userId, roles);
+  async calismaSaatleri(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.ownedOrAdmin(storeId, userId, roles, dikey, null);
     return this.calismaSaatleriOku(storeId);
   }
 
@@ -1707,9 +1831,10 @@ export class MarketService {
     userId: string,
     roles: Role[],
     dto: CalismaSaatleriDto,
-    ip?: string,
+    ip: string | undefined,
+    dikey: BusinessUnit | null,
   ) {
-    await this.ownedOrAdmin(storeId, userId, roles);
+    await this.ownedOrAdmin(storeId, userId, roles, dikey, Permission.STORE_WRITE);
 
     const bugun = this.trBugun();
     const effectiveFrom = dto.effectiveFrom
@@ -2024,8 +2149,8 @@ export class MarketService {
   }
 
   /** Magazanin SECTIGI bolgeler. kisitVar=false -> her yere teslimat. */
-  async teslimatBolgeleri(storeId: string, userId: string, roles: Role[]) {
-    await this.ownedOrAdmin(storeId, userId, roles);
+  async teslimatBolgeleri(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.ownedOrAdmin(storeId, userId, roles, dikey, null);
     return this.teslimatBolgeleriOku(storeId);
   }
 
@@ -2308,9 +2433,10 @@ export class MarketService {
     userId: string,
     roles: Role[],
     dto: TeslimatBolgeleriDto,
-    ip?: string,
+    ip: string | undefined,
+    dikey: BusinessUnit | null,
   ) {
-    await this.ownedOrAdmin(storeId, userId, roles);
+    await this.ownedOrAdmin(storeId, userId, roles, dikey, Permission.STORE_WRITE);
 
     // TEK KAPI (D124 Option A): panel yolu da approval apply yolu da AYNI
     // teslimatBolgeleriYazTx primitive'ini cagirir. Dogrulama, CAS ve liste
@@ -2363,7 +2489,11 @@ export class MarketService {
     return sonra;
   }
 
-  async assertOwner(storeId: string, userId: string, roles: Role[]) {
-    return this.ownedOrAdmin(storeId, userId, roles);
+  /**
+   * Katalog yazma kapisi. dikey ve izin ZORUNLU parametre: yeni bir uc bunlari
+   * unutursa derleme kirilir, kapi sessizce eski (dikeysiz) haline donmez.
+   */
+  async assertOwner(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null, izin: Permission) {
+    return this.ownedOrAdmin(storeId, userId, roles, dikey, izin);
   }
 }

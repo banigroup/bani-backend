@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException,
 import { BusinessUnit, Prisma, Role, SellerStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MarketService } from '../market/market.service';
+import { Permission } from '../common/rbac/permissions.enum';
 import { slugify, randomSuffix } from '../common/util/slug';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -181,8 +182,8 @@ export class CatalogService {
     return kokler;
   }
 
-  async createCategory(storeId: string, userId: string, roles: Role[], dto: CreateCategoryDto) {
-    await this.market.assertOwner(storeId, userId, roles);
+  async createCategory(storeId: string, userId: string, roles: Role[], dto: CreateCategoryDto, dikey: BusinessUnit | null) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.CATEGORY_WRITE);
 
     // En fazla IKI seviye: secilen ebeveyn kendisi bir alt kategoriyse reddet.
     // Ebeveyn ayni magazadan olmali (baska magazanin agacina baglanamaz).
@@ -322,8 +323,8 @@ export class CatalogService {
   }
 
   // Onay bekleyen (yayinda olmayan) urunler - magaza sahibi veya admin gorur
-  async listPending(storeId: string, userId: string, roles: Role[]) {
-    await this.market.assertOwner(storeId, userId, roles);
+  async listPending(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     return this.prisma.product.findMany({
       where: { storeId, isActive: false, deletedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -364,9 +365,9 @@ export class CatalogService {
    * fiyati bos doldurmasin diye bu uc acildi. Yetki her yerdeki ayni kapidan:
    * market.assertOwner (sahip | aktif personel | platform yoneticisi).
    */
-  async urunDetay(id: string, userId: string, roles: Role[]) {
+  async urunDetay(id: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const urun = await this.getProduct(id); // yayinda olmayani da bulur
-    await this.market.assertOwner(urun.storeId, userId, roles);
+    await this.market.assertOwner(urun.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     return urun;
   }
 
@@ -435,8 +436,8 @@ export class CatalogService {
     };
   }
 
-  async createProduct(storeId: string, userId: string, roles: Role[], dto: CreateProductDto) {
-    await this.market.assertOwner(storeId, userId, roles);
+  async createProduct(storeId: string, userId: string, roles: Role[], dto: CreateProductDto, dikey: BusinessUnit | null) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     // SLUG YALNIZCA BURADA URETILIR — urunun omru boyunca degismez.
     // Gerekcesi updateProduct'ta yazili.
     const baseSlug = slugify(dto.name) || 'urun';
@@ -492,9 +493,9 @@ export class CatalogService {
     });
   }
 
-  async updateProduct(id: string, userId: string, roles: Role[], dto: UpdateProductDto) {
+  async updateProduct(id: string, userId: string, roles: Role[], dto: UpdateProductDto, dikey: BusinessUnit | null) {
     const product = await this.getProduct(id);
-    await this.market.assertOwner(product.storeId, userId, roles);
+    await this.market.assertOwner(product.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
 
     // SLUG BILEREK YENIDEN URETILMIYOR — ad degisse bile eski slug kalir.
     //
@@ -715,28 +716,28 @@ export class CatalogService {
     };
   }
 
-  private async urunVeMagaza(productId: string, userId: string, roles: Role[]) {
+  private async urunVeMagaza(productId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const urun = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
       include: { store: { select: { id: true, businessUnit: true, commissionRate: true } } },
     });
     if (!urun) throw new NotFoundException('Urun bulunamadi');
-    await this.market.assertOwner(urun.storeId, userId, roles);
+    await this.market.assertOwner(urun.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     return urun;
   }
 
   // ---------------- VARYANT ----------------
 
-  async varyantListesi(productId: string, userId: string, roles: Role[]) {
-    await this.urunVeMagaza(productId, userId, roles);
+  async varyantListesi(productId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.urunVeMagaza(productId, userId, roles, dikey);
     return this.prisma.productVariant.findMany({
       where: { productId, deletedAt: null },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
 
-  async varyantOlustur(productId: string, userId: string, roles: Role[], dto: VaryantOlusturDto) {
-    const urun = await this.urunVeMagaza(productId, userId, roles);
+  async varyantOlustur(productId: string, userId: string, roles: Role[], dto: VaryantOlusturDto, dikey: BusinessUnit | null) {
+    const urun = await this.urunVeMagaza(productId, userId, roles, dikey);
     const cakisma = await this.prisma.productVariant.findFirst({ where: { productId, name: dto.name } });
     if (cakisma) throw new ConflictException('Bu isimde bir varyant zaten var');
     return this.prisma.productVariant.create({
@@ -753,7 +754,7 @@ export class CatalogService {
     });
   }
 
-  async varyantGuncelle(variantId: string, userId: string, roles: Role[], dto: VaryantGuncelleDto) {
+  async varyantGuncelle(variantId: string, userId: string, roles: Role[], dto: VaryantGuncelleDto, dikey: BusinessUnit | null) {
     const varyant = await this.prisma.productVariant.findFirst({
       where: { id: variantId, deletedAt: null },
       include: {
@@ -761,7 +762,7 @@ export class CatalogService {
       },
     });
     if (!varyant) throw new NotFoundException('Varyant bulunamadi');
-    await this.market.assertOwner(varyant.product.storeId, userId, roles);
+    await this.market.assertOwner(varyant.product.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
 
     // Fiyat girdisi GELDIYSE yeniden hesaplanir; gelmediyse mevcut degerlere
     // dokunulmaz - kismi guncellemede fiyat sessizce sifirlanmasin.
@@ -789,13 +790,13 @@ export class CatalogService {
 
   // SOFT DELETE: sepette ve gecmis siparislerde referansi olabilir; sert silme
   // gecmisi bozar (OrderItem.variantId'ye FK koymamamizla ayni gerekce).
-  async varyantSil(variantId: string, userId: string, roles: Role[]) {
+  async varyantSil(variantId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const varyant = await this.prisma.productVariant.findFirst({
       where: { id: variantId, deletedAt: null },
       include: { product: { select: { storeId: true } } },
     });
     if (!varyant) throw new NotFoundException('Varyant bulunamadi');
-    await this.market.assertOwner(varyant.product.storeId, userId, roles);
+    await this.market.assertOwner(varyant.product.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     await this.prisma.productVariant.update({
       where: { id: variantId },
       data: { deletedAt: new Date(), isActive: false },
@@ -812,8 +813,8 @@ export class CatalogService {
     if (zorunlu && min < 1) throw new BadRequestException('Zorunlu grupta minSecim en az 1 olmali');
   }
 
-  async secenekGruplari(storeId: string, userId: string, roles: Role[]) {
-    await this.market.assertOwner(storeId, userId, roles);
+  async secenekGruplari(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     return this.prisma.optionGroup.findMany({
       where: { storeId },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
@@ -821,8 +822,8 @@ export class CatalogService {
     });
   }
 
-  async secenekGrubuOlustur(storeId: string, userId: string, roles: Role[], dto: SecenekGrubuDto) {
-    await this.market.assertOwner(storeId, userId, roles);
+  async secenekGrubuOlustur(storeId: string, userId: string, roles: Role[], dto: SecenekGrubuDto, dikey: BusinessUnit | null) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     const min = dto.minSecim ?? 0;
     const max = dto.maxSecim ?? 1;
     this.secimSiniriDogrula(min, max, dto.zorunlu ?? false);
@@ -838,10 +839,10 @@ export class CatalogService {
     });
   }
 
-  async secenekGrubuGuncelle(groupId: string, userId: string, roles: Role[], dto: SecenekGrubuDto) {
+  async secenekGrubuGuncelle(groupId: string, userId: string, roles: Role[], dto: SecenekGrubuDto, dikey: BusinessUnit | null) {
     const grup = await this.prisma.optionGroup.findUnique({ where: { id: groupId } });
     if (!grup) throw new NotFoundException('Secenek grubu bulunamadi');
-    await this.market.assertOwner(grup.storeId, userId, roles);
+    await this.market.assertOwner(grup.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     this.secimSiniriDogrula(
       dto.minSecim ?? grup.minSecim,
       dto.maxSecim ?? grup.maxSecim,
@@ -862,18 +863,18 @@ export class CatalogService {
 
   // SILME DEGIL KAPATMA: grup silinirse ona bagli urun eslesmeleri Cascade ile
   // gider ve gecmis menu yapisi kaybolur.
-  async secenekGrubuSil(groupId: string, userId: string, roles: Role[]) {
+  async secenekGrubuSil(groupId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const grup = await this.prisma.optionGroup.findUnique({ where: { id: groupId } });
     if (!grup) throw new NotFoundException('Secenek grubu bulunamadi');
-    await this.market.assertOwner(grup.storeId, userId, roles);
+    await this.market.assertOwner(grup.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     await this.prisma.optionGroup.update({ where: { id: groupId }, data: { isActive: false } });
     return { deactivated: true };
   }
 
-  async secenekEkle(groupId: string, userId: string, roles: Role[], dto: SecenekDto) {
+  async secenekEkle(groupId: string, userId: string, roles: Role[], dto: SecenekDto, dikey: BusinessUnit | null) {
     const grup = await this.prisma.optionGroup.findUnique({ where: { id: groupId } });
     if (!grup) throw new NotFoundException('Secenek grubu bulunamadi');
-    await this.market.assertOwner(grup.storeId, userId, roles);
+    await this.market.assertOwner(grup.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     return this.prisma.option.create({
       data: {
         optionGroupId: groupId,
@@ -884,13 +885,13 @@ export class CatalogService {
     });
   }
 
-  async secenekGuncelle(optionId: string, userId: string, roles: Role[], dto: SecenekDto) {
+  async secenekGuncelle(optionId: string, userId: string, roles: Role[], dto: SecenekDto, dikey: BusinessUnit | null) {
     const secenek = await this.prisma.option.findUnique({
       where: { id: optionId },
       include: { group: { select: { storeId: true } } },
     });
     if (!secenek) throw new NotFoundException('Secenek bulunamadi');
-    await this.market.assertOwner(secenek.group.storeId, userId, roles);
+    await this.market.assertOwner(secenek.group.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     return this.prisma.option.update({
       where: { id: optionId },
       data: {
@@ -902,13 +903,13 @@ export class CatalogService {
     });
   }
 
-  async secenekSil(optionId: string, userId: string, roles: Role[]) {
+  async secenekSil(optionId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const secenek = await this.prisma.option.findUnique({
       where: { id: optionId },
       include: { group: { select: { storeId: true } } },
     });
     if (!secenek) throw new NotFoundException('Secenek bulunamadi');
-    await this.market.assertOwner(secenek.group.storeId, userId, roles);
+    await this.market.assertOwner(secenek.group.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     await this.prisma.option.update({ where: { id: optionId }, data: { isActive: false } });
     return { deactivated: true };
   }
@@ -916,8 +917,14 @@ export class CatalogService {
   // Urun <-> grup eslesmesi TOPLU yazilir: gonderilen liste NIHAI durumdur.
   // Kismi guncellemede istemcinin iki cagri arasinda tutarsiz durum birakma
   // ihtimali boylece ortadan kalkar.
-  async urunSecenekGruplari(productId: string, userId: string, roles: Role[], dto: UrunSecenekGruplariDto) {
-    const urun = await this.urunVeMagaza(productId, userId, roles);
+  async urunSecenekGruplari(
+    productId: string,
+    userId: string,
+    roles: Role[],
+    dto: UrunSecenekGruplariDto,
+    dikey: BusinessUnit | null,
+  ) {
+    const urun = await this.urunVeMagaza(productId, userId, roles, dikey);
     const idler = dto.optionGroupIds ?? [];
     if (idler.length > 0) {
       // Gruplar AYNI MAGAZAYA ait olmali: baska magazanin menu grubu bu urune
@@ -944,8 +951,8 @@ export class CatalogService {
 
   // ---------------- MEDYA ----------------
 
-  async medyaListesi(productId: string, userId: string, roles: Role[]) {
-    await this.urunVeMagaza(productId, userId, roles);
+  async medyaListesi(productId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.urunVeMagaza(productId, userId, roles, dikey);
     return this.prisma.productMedia.findMany({ where: { productId }, orderBy: { sortOrder: 'asc' } });
   }
 
@@ -966,13 +973,13 @@ export class CatalogService {
    * secure_url ile POST /catalog/products/:id/media cagrilir (birincil medya
    * kurali ve Product.imageUrl senkronu orada calisir).
    */
-  async medyaYuklemeImzasi(storeId: string, userId: string, roles: Role[]) {
-    await this.market.assertOwner(storeId, userId, roles);
+  async medyaYuklemeImzasi(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     return cloudinaryImzala(`bani/products/${storeId}`);
   }
 
-  async medyaEkle(productId: string, userId: string, roles: Role[], dto: MedyaEkleDto) {
-    await this.urunVeMagaza(productId, userId, roles);
+  async medyaEkle(productId: string, userId: string, roles: Role[], dto: MedyaEkleDto, dikey: BusinessUnit | null) {
+    await this.urunVeMagaza(productId, userId, roles, dikey);
     const medya = await this.prisma.productMedia.create({
       data: {
         productId,
@@ -986,13 +993,13 @@ export class CatalogService {
     return medya;
   }
 
-  async medyaGuncelle(mediaId: string, userId: string, roles: Role[], dto: MedyaGuncelleDto) {
+  async medyaGuncelle(mediaId: string, userId: string, roles: Role[], dto: MedyaGuncelleDto, dikey: BusinessUnit | null) {
     const mevcut = await this.prisma.productMedia.findUnique({
       where: { id: mediaId },
       include: { product: { select: { storeId: true } } },
     });
     if (!mevcut) throw new NotFoundException('Medya bulunamadi');
-    await this.market.assertOwner(mevcut.product.storeId, userId, roles);
+    await this.market.assertOwner(mevcut.product.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     const medya = await this.prisma.productMedia.update({
       where: { id: mediaId },
       data: {
@@ -1004,13 +1011,13 @@ export class CatalogService {
     return medya;
   }
 
-  async medyaSil(mediaId: string, userId: string, roles: Role[]) {
+  async medyaSil(mediaId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const medya = await this.prisma.productMedia.findUnique({
       where: { id: mediaId },
       include: { product: { select: { storeId: true } } },
     });
     if (!medya) throw new NotFoundException('Medya bulunamadi');
-    await this.market.assertOwner(medya.product.storeId, userId, roles);
+    await this.market.assertOwner(medya.product.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     await this.prisma.productMedia.delete({ where: { id: mediaId } });
     return { deleted: true };
   }
@@ -1051,9 +1058,9 @@ export class CatalogService {
     return { rejected: true };
   }
 
-  async removeProduct(id: string, userId: string, roles: Role[]) {
+  async removeProduct(id: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
     const product = await this.getProduct(id);
-    await this.market.assertOwner(product.storeId, userId, roles);
+    await this.market.assertOwner(product.storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
     await this.prisma.product.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
     return { deleted: true };
   }

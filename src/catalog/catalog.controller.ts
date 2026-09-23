@@ -15,7 +15,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
-import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { CurrentUser, AuthUser, IstekDikeyi } from '../common/decorators/current-user.decorator';
+import type { BusinessUnit } from '@prisma/client';
 import { UuidParam, UuidQuery } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
@@ -125,24 +126,29 @@ export class CatalogController {
   @Get('products/:id/detay')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  urunDetay(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.urunDetay(id, user.id, user.roles);
+  urunDetay(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.urunDetay(id, user.id, user.roles, dikey);
   }
 
   // Onay bekleyen urunler (magaza sahibi / admin)
   @Get('stores/:storeId/pending')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  pending(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.listPending(storeId, user.id, user.roles);
+  pending(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.listPending(storeId, user.id, user.roles, dikey);
   }
 
   // Satici islemleri
   @Post('stores/:storeId/categories')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.CATEGORY_WRITE)
-  async createCategory(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: CreateCategoryDto) {
-    const r = await this.catalog.createCategory(storeId, user.id, user.roles, dto);
+  async createCategory(
+    @Param('storeId', UuidParam) storeId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateCategoryDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    const r = await this.catalog.createCategory(storeId, user.id, user.roles, dto, dikey);
     await this.onbellek.magazaKataloguTemizle(storeId);
     return r;
   }
@@ -161,8 +167,13 @@ export class CatalogController {
   @Post('stores/:storeId/media-imza')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  async medyaImza(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Req() req: Request) {
-    const r = await this.catalog.medyaYuklemeImzasi(storeId, user.id, user.roles);
+  async medyaImza(
+    @Param('storeId', UuidParam) storeId: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    const r = await this.catalog.medyaYuklemeImzasi(storeId, user.id, user.roles, dikey);
     // AUDIT: imza bir YUKLEME YETKISIDIR, verilmesi kayda gecer (PR #16 deseni).
     // metadata'ya YALNIZCA klasor yazilir; signature/apiKey audit'e GIRMEZ -
     // KYC ucunda dosya URL'inin yazilmamasiyla ayni gerekce.
@@ -181,8 +192,9 @@ export class CatalogController {
     @CurrentUser() user: AuthUser,
     @Body() dto: CreateProductDto,
     @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
   ) {
-    const r = await this.catalog.createProduct(storeId, user.id, user.roles, dto);
+    const r = await this.catalog.createProduct(storeId, user.id, user.roles, dto, dikey);
     await this.audit.record({
       actorId: user.id, action: 'product.create', entity: 'Product', entityId: r.id, ip: req.ip,
       metadata: {
@@ -204,6 +216,7 @@ export class CatalogController {
     @CurrentUser() user: AuthUser,
     @Body() dto: UpdateProductDto,
     @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
   ) {
     // ONCEKI HAL AYRI SORGUYLA OKUNUR. Servis yalnizca guncel satiri
     // donduruyor; "hangi fiyattan hangi fiyata" sorusu ancak once/sonra
@@ -212,7 +225,7 @@ export class CatalogController {
     // aynisi ve yetki kontrolu ondan SONRA geliyor: yetkisiz kullanici
     // eskisiyle ayni 404/403'u alir, yeni bir sizinti yok.
     const once = await this.catalog.getProduct(id);
-    const r = await this.catalog.updateProduct(id, user.id, user.roles, dto);
+    const r = await this.catalog.updateProduct(id, user.id, user.roles, dto, dikey);
     await this.audit.record({
       actorId: user.id, action: 'product.update', entity: 'Product', entityId: id, ip: req.ip,
       metadata: {
@@ -282,10 +295,15 @@ export class CatalogController {
   @Delete('products/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  async removeProduct(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Req() req: Request) {
+  async removeProduct(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
     // reject ile ayni gerekce: silinen satir sonradan okunamaz.
     const once = await this.catalog.getProduct(id);
-    const r = await this.catalog.removeProduct(id, user.id, user.roles);
+    const r = await this.catalog.removeProduct(id, user.id, user.roles, dikey);
     await this.audit.record({
       actorId: user.id, action: 'product.delete', entity: 'Product', entityId: id, ip: req.ip,
       metadata: {
@@ -302,121 +320,171 @@ export class CatalogController {
   // FAZ 3 / ADIM 2.5 — KATALOG YAZMA UCLARI
   // Hepsi PRODUCT_WRITE ister; veri kapsami servis icinde
   // market.assertOwner ile daraltilir (sahip | personel | platform yoneticisi).
+  // VERT-01: hepsi X-Bani-Dikey ister (@IstekDikeyi -> assertOwner).
   // ============================================================
 
   // ---- Varyant ----
   @Get('products/:id/variants')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantListesi(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.varyantListesi(id, user.id, user.roles);
+  varyantListesi(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.varyantListesi(id, user.id, user.roles, dikey);
   }
 
   @Post('products/:id/variants')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantOlustur(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: VaryantOlusturDto) {
-    return this.catalog.varyantOlustur(id, user.id, user.roles, dto);
+  varyantOlustur(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: VaryantOlusturDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.varyantOlustur(id, user.id, user.roles, dto, dikey);
   }
 
   @Patch('variants/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: VaryantGuncelleDto) {
-    return this.catalog.varyantGuncelle(id, user.id, user.roles, dto);
+  varyantGuncelle(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: VaryantGuncelleDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.varyantGuncelle(id, user.id, user.roles, dto, dikey);
   }
 
   @Delete('variants/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  varyantSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.varyantSil(id, user.id, user.roles);
+  varyantSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.varyantSil(id, user.id, user.roles, dikey);
   }
 
   // ---- Secenek grubu ve secenekler ----
   @Get('stores/:storeId/option-groups')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGruplari(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.secenekGruplari(storeId, user.id, user.roles);
+  secenekGruplari(
+    @Param('storeId', UuidParam) storeId: string,
+    @CurrentUser() user: AuthUser,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.secenekGruplari(storeId, user.id, user.roles, dikey);
   }
 
   @Post('stores/:storeId/option-groups')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGrubuOlustur(@Param('storeId', UuidParam) storeId: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekGrubuDto) {
-    return this.catalog.secenekGrubuOlustur(storeId, user.id, user.roles, dto);
+  secenekGrubuOlustur(
+    @Param('storeId', UuidParam) storeId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SecenekGrubuDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.secenekGrubuOlustur(storeId, user.id, user.roles, dto, dikey);
   }
 
   @Patch('option-groups/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGrubuGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekGrubuDto) {
-    return this.catalog.secenekGrubuGuncelle(id, user.id, user.roles, dto);
+  secenekGrubuGuncelle(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SecenekGrubuDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.secenekGrubuGuncelle(id, user.id, user.roles, dto, dikey);
   }
 
   @Delete('option-groups/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGrubuSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.secenekGrubuSil(id, user.id, user.roles);
+  secenekGrubuSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.secenekGrubuSil(id, user.id, user.roles, dikey);
   }
 
   @Post('option-groups/:id/options')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekEkle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekDto) {
-    return this.catalog.secenekEkle(id, user.id, user.roles, dto);
+  secenekEkle(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SecenekDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.secenekEkle(id, user.id, user.roles, dto, dikey);
   }
 
   @Patch('options/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: SecenekDto) {
-    return this.catalog.secenekGuncelle(id, user.id, user.roles, dto);
+  secenekGuncelle(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SecenekDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.secenekGuncelle(id, user.id, user.roles, dto, dikey);
   }
 
   @Delete('options/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  secenekSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.secenekSil(id, user.id, user.roles);
+  secenekSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.secenekSil(id, user.id, user.roles, dikey);
   }
 
   // Urun <-> grup eslesmesi TOPLU yazilir (gonderilen liste nihai durumdur).
   @Put('products/:id/option-groups')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  urunSecenekGruplari(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: UrunSecenekGruplariDto) {
-    return this.catalog.urunSecenekGruplari(id, user.id, user.roles, dto);
+  urunSecenekGruplari(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UrunSecenekGruplariDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.urunSecenekGruplari(id, user.id, user.roles, dto, dikey);
   }
 
   // ---- Medya ----
   @Get('products/:id/media')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaListesi(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.medyaListesi(id, user.id, user.roles);
+  medyaListesi(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.medyaListesi(id, user.id, user.roles, dikey);
   }
 
   @Post('products/:id/media')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaEkle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: MedyaEkleDto) {
-    return this.catalog.medyaEkle(id, user.id, user.roles, dto);
+  medyaEkle(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: MedyaEkleDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.medyaEkle(id, user.id, user.roles, dto, dikey);
   }
 
   @Patch('media/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaGuncelle(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @Body() dto: MedyaGuncelleDto) {
-    return this.catalog.medyaGuncelle(id, user.id, user.roles, dto);
+  medyaGuncelle(
+    @Param('id', UuidParam) id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: MedyaGuncelleDto,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.catalog.medyaGuncelle(id, user.id, user.roles, dto, dikey);
   }
 
   @Delete('media/:id')
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(Permission.PRODUCT_WRITE)
-  medyaSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser) {
-    return this.catalog.medyaSil(id, user.id, user.roles);
+  medyaSil(@Param('id', UuidParam) id: string, @CurrentUser() user: AuthUser, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.catalog.medyaSil(id, user.id, user.roles, dikey);
   }
 }

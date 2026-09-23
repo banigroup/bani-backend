@@ -4,7 +4,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/rbac/permissions.guard';
 import { RequirePermissions } from '../common/rbac/permissions.decorator';
 import { Permission } from '../common/rbac/permissions.enum';
-import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
+import { CurrentUser, AuthUser, IstekDikeyi } from '../common/decorators/current-user.decorator';
+import type { BusinessUnit } from '@prisma/client';
 import { UuidParam } from '../common/pipes/uuid-param.pipe';
 import { AuditService } from '../common/audit/audit.service';
 import { OrdersService } from './orders.service';
@@ -33,16 +34,25 @@ export class OrdersController {
     return this.orders.myOrders(user.id, Number(skip) || 0, Number(take) || 20);
   }
 
+  // VERT-01: magaza tarafi yollar X-Bani-Dikey ister (MarketService.erisebilir).
+  // getOne/cancel'da siparis sahibi MUSTERI baslik gondermez ve muaftir -
+  // dikey yalnizca magaza yetkisi yolunda sorulur.
+
   // Not: 'store/:storeId' rotası ':id'den ÖNCE tanımlı olmalı
   @RequirePermissions(Permission.ORDER_MANAGE)
   @Get('store/:storeId')
-  storeOrders(@CurrentUser() user: AuthUser, @Param('storeId', UuidParam) storeId: string, @Query('status') status?: string) {
-    return this.orders.storeOrders(user, storeId, status);
+  storeOrders(
+    @CurrentUser() user: AuthUser,
+    @Param('storeId', UuidParam) storeId: string,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+    @Query('status') status?: string,
+  ) {
+    return this.orders.storeOrders(user, storeId, dikey, status);
   }
 
   @Get(':id')
-  getOne(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string) {
-    return this.orders.getOne(user, id);
+  getOne(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @IstekDikeyi() dikey: BusinessUnit | null) {
+    return this.orders.getOne(user, id, dikey);
   }
 
   // Audit controller katmanında (kural 7: tek kaynak, serviste ikinci kayıt YOK).
@@ -50,15 +60,26 @@ export class OrdersController {
   // geçişler audit'e girmez.
   @RequirePermissions(Permission.ORDER_MANAGE)
   @Patch(':id/status')
-  async updateStatus(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Body() dto: UpdateOrderStatusDto, @Req() req: Request) {
-    const r = await this.orders.updateStatus(user, id, dto.status);
+  async updateStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @Body() dto: UpdateOrderStatusDto,
+    @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    const r = await this.orders.updateStatus(user, id, dto.status, dikey);
     await this.audit.record({ actorId: user.id, action: 'order.status.update', entity: 'Order', entityId: id, ip: req.ip, metadata: { to: dto.status } });
     return r;
   }
 
   @Post(':id/cancel')
-  async cancel(@CurrentUser() user: AuthUser, @Param('id', UuidParam) id: string, @Req() req: Request) {
-    const r = await this.orders.cancel(user, id);
+  async cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @Req() req: Request,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    const r = await this.orders.cancel(user, id, dikey);
     await this.audit.record({ actorId: user.id, action: 'order.cancel', entity: 'Order', entityId: id, ip: req.ip });
     return r;
   }

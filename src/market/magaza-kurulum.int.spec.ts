@@ -369,13 +369,14 @@ describe('S4.4 — DIKEY IZOLASYONU (gercek servis yetki yollari)', () => {
     }
   });
 
+  // VERT-01: her kimlik KENDI dikeyinin panel baglamiyla (X-Bani-Dikey) cagirir.
   const kaynaklar: [string, (k: Kimlik, hedef: Kimlik) => Promise<unknown>][] = [
-    ['Store (PATCH stores/:id)', (k, h) => market.update(h.storeId, k.user.id, k.user.roles, { description: `${k.dikey} yazdi` })],
-    ['Store (calisma saatleri)', (k, h) => market.calismaSaatleri(h.storeId, k.user.id, k.user.roles)],
-    ['Product (bekleyen urunler)', (k, h) => catalog.listPending(h.storeId, k.user.id, k.user.roles)],
-    ['Product (urun detay)', (k, h) => catalog.urunDetay(h.productId, k.user.id, k.user.roles)],
-    ['Order (magaza siparisleri)', (k, h) => orders.storeOrders(k.user, h.storeId)],
-    ['Order (siparis detay)', (k, h) => orders.getOne(k.user, h.orderId)],
+    ['Store (PATCH stores/:id)', (k, h) => market.update(h.storeId, k.user.id, k.user.roles, { description: `${k.dikey} yazdi` }, undefined, k.dikey)],
+    ['Store (calisma saatleri)', (k, h) => market.calismaSaatleri(h.storeId, k.user.id, k.user.roles, k.dikey)],
+    ['Product (bekleyen urunler)', (k, h) => catalog.listPending(h.storeId, k.user.id, k.user.roles, k.dikey)],
+    ['Product (urun detay)', (k, h) => catalog.urunDetay(h.productId, k.user.id, k.user.roles, k.dikey)],
+    ['Order (magaza siparisleri)', (k, h) => orders.storeOrders(k.user, h.storeId, k.dikey)],
+    ['Order (siparis detay)', (k, h) => orders.getOne(k.user, h.orderId, k.dikey)],
   ];
 
   for (const kimlikDikey of [BusinessUnit.MARKET, BusinessUnit.YEMEK, BusinessUnit.CARSI]) {
