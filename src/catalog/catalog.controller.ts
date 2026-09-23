@@ -64,9 +64,10 @@ export class CatalogController {
   @CacheTTL(60_000)
   @Public()
   @Get('stores/:storeId/categories')
-  categories(@Param('storeId', UuidParam) storeId: string, @Query('tumu') tumu?: string) {
+  categories(@Param('storeId', UuidParam) storeId: string, @Query('tumu') tumu?: string, @Query('dikey') dikey?: string) {
     // tumu=1 -> yonetim ekrani: bos kategoriler de doner
-    return this.catalog.listCategories(storeId, tumu === '1');
+    // VERT-02: ?dikey= opsiyonel, URL'nin parcasi (onbellek anahtari ayrisir).
+    return this.catalog.listCategories(storeId, tumu === '1', this.catalog.vitrinDikeyi(dikey));
   }
 
   // ONBELLEKLI (30 sn) — vitrinin en sik cagrilan ucu.
@@ -92,8 +93,9 @@ export class CatalogController {
     @Query('categoryId', UuidQuery) categoryId?: string,
     @Query('skip') skip?: string,
     @Query('take') take?: string,
+    @Query('dikey') dikey?: string,
   ) {
-    return this.catalog.listProducts(storeId, categoryId, Number(skip) || 0, Number(take) || 50);
+    return this.catalog.listProducts(storeId, categoryId, Number(skip) || 0, Number(take) || 50, this.catalog.vitrinDikeyi(dikey));
   }
 
   // MUSTERI DETAYI: muhasebe kirilimi (netFiyat/komisyon/kargo/KDV) DONMEZ,
@@ -117,8 +119,8 @@ export class CatalogController {
   @CacheTTL(30_000)
   @Public()
   @Get('products/:id')
-  product(@Param('id', UuidParam) id: string) {
-    return this.catalog.getPublicProduct(id);
+  product(@Param('id', UuidParam) id: string, @Query('dikey') dikey?: string) {
+    return this.catalog.getPublicProduct(id, this.catalog.vitrinDikeyi(dikey));
   }
 
   // SATICI DETAYI: tam satir (muhasebe kirilimi dahil). Duzenleme ekraninin
@@ -246,6 +248,9 @@ export class CatalogController {
     // ONBELLEK: fiyat/stok/ad/gorunurluk degismis olabilir. Ikinci arguman
     // tekil detay anahtari (/catalog/products/<id>).
     await this.onbellek.magazaKataloguTemizle(r.storeId, id);
+    // VERT-02: magaza vitrini "en az bir yayinda urun" sartina bagli; yeniden
+    // onaya dusen son urun magazayi listeden dusurebilir.
+    if (once.isActive && !r.isActive) await this.onbellek.magazaListesiniTemizle();
     return r;
   }
 
@@ -267,6 +272,8 @@ export class CatalogController {
     // 404 donuyordu; o yanit onbellege girmez ama urun sonradan degistiyse
     // eski satir durabilir - tekil anahtar da temizleniyor.
     await this.onbellek.magazaKataloguTemizle(r.storeId, id);
+    // VERT-02: ilk yayindaki urun urunsuz magazayi vitrine sokar.
+    await this.onbellek.magazaListesiniTemizle();
     return r;
   }
 
@@ -289,6 +296,8 @@ export class CatalogController {
     // ONBELLEK: urun listeden dustu (reject deletedAt yaziyor) - detay ucu de
     // artik 404 dondurmeli, tekil anahtar temizleniyor.
     await this.onbellek.magazaKataloguTemizle(once.storeId, id);
+    // VERT-02: yayindaki son urun gidince magaza vitrinden duser.
+    if (once.isActive) await this.onbellek.magazaListesiniTemizle();
     return r;
   }
 
@@ -313,6 +322,8 @@ export class CatalogController {
     });
     // ONBELLEK: urun listeden dustu - detay ucu de artik 404 dondurmeli.
     await this.onbellek.magazaKataloguTemizle(once.storeId, id);
+    // VERT-02: yayindaki son urun gidince magaza vitrinden duser.
+    if (once.isActive) await this.onbellek.magazaListesiniTemizle();
     return r;
   }
 

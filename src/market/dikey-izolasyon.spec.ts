@@ -359,6 +359,7 @@ describe('VERT-01 — dikey bagli / muaf uc haritasi (metadata kilidi)', () => {
     [MarketController, [
       'mine', 'update', 'logoImza', 'calismaSaatleri', 'calismaSaatleriGuncelle', 'teslimatBolgeleri',
       'teslimatBolgeleriGuncelle', 'saticiSiparisleri', 'personelListesi', 'personelEkle', 'personelDurum', 'rolVer', 'rolAl',
+      'panelMagaza',
     ]],
     [CatalogController, [
       'urunDetay', 'pending', 'createCategory', 'medyaImza', 'createProduct', 'updateProduct', 'removeProduct',
