@@ -47,24 +47,44 @@ export class MarketController {
   // DEKORATOR SIRASI: @Public @Get'in HEMEN USTUNDE kalmali -
   // scripts/check-guards.js korumayi bu yakinliktan okuyor (araya dekorator
   // girince uc "korumasiz" sayildi, yerelde yakalandi).
+  //
+  // VERT-02: ?dikey= (opsiyonel) URL'nin parcasi - CacheInterceptor her
+  // dikeyi AYRI anahtarda tutar, dikeyler birbirinin yanitini kullanmaz.
+  // Aktiflik / satici ACTIVE / urun varligi dikeyden bagimsiz HER ZAMAN.
   @UseInterceptors(CacheInterceptor)
   @CacheTTL(60_000)
   @Public()
   @Get('stores')
-  list(@Query('skip') skip?: string, @Query('take') take?: string) {
-    return this.market.listActive(Number(skip) || 0, Number(take) || 50);
+  list(@Query('skip') skip?: string, @Query('take') take?: string, @Query('dikey') dikey?: string) {
+    return this.market.listActive(Number(skip) || 0, Number(take) || 50, this.market.vitrinDikeyi(dikey));
   }
 
   @Public()
   @Get('stores/slug/:slug')
-  getBySlug(@Param('slug') slug: string) {
-    return this.market.getBySlug(slug);
+  getBySlug(@Param('slug') slug: string, @Query('dikey') dikey?: string) {
+    return this.market.getBySlug(slug, this.market.vitrinDikeyi(dikey));
   }
 
+  // VERT-02: musteri vitrini. Kapali/urunsuz/yanlis dikey magaza 404. Satici
+  // paneli kendi magazasini stores/:id/panel'den okur.
   @Public()
   @Get('stores/:id')
-  getById(@Param('id', UuidParam) id: string) {
-    return this.market.getById(id);
+  getById(@Param('id', UuidParam) id: string, @Query('dikey') dikey?: string) {
+    return this.market.getPublicById(id, this.market.vitrinDikeyi(dikey));
+  }
+
+  // VERT-02 — SATICI PANELI MAGAZA OKUMASI: kapali ve urunsuz magaza da doner.
+  // Yetki calisma-saatleri ucuyla AYNI (STORE_READ + ownedOrAdmin + VERT-01
+  // dikey kapisi). Salt okuma, audit YOK; kullaniciya ozel, onbellege ALINMAZ.
+  @Get('stores/:id/panel')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.STORE_READ)
+  panelMagaza(
+    @CurrentUser() user: AuthUser,
+    @Param('id', UuidParam) id: string,
+    @IstekDikeyi() dikey: BusinessUnit | null,
+  ) {
+    return this.market.panelMagaza(id, user.id, user.roles, dikey);
   }
 
   // VERT-01 — DIKEY BAGLAMI (X-Bani-Dikey, A-STRICT):
@@ -107,6 +127,12 @@ export class MarketController {
     const r = await this.market.update(id, user.id, user.roles, dto, req.ip, dikey);
     // ONBELLEK: ad/logo/isActive degismis olabilir - liste bayatladi.
     await this.onbellek.magazaListesiniTemizle();
+    // VERT-02: katalog public okumalari magaza aktifligini suzuyor - kapanan
+    // magazanin urun/kategori listeleri ve urun detaylari TTL beklemeden duser.
+    if (dto.isActive !== undefined) {
+      await this.onbellek.magazaKataloguTemizle(id);
+      await this.onbellek.tumUrunOnbelleginiTemizle();
+    }
     return r;
   }
 

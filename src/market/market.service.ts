@@ -15,7 +15,7 @@ import { UpdateStoreDto } from './dto/update-store.dto';
 import { platformYoneticisi as platformYoneticisiKurali } from '../common/rbac/rol-kontrol';
 import { Permission } from '../common/rbac/permissions.enum';
 import { MAGAZA_ROLU_IZIN_BEYAZ_LISTESI } from '../common/rbac/permissions.guard';
-import { DIKEY_DOMAIN } from '../common/domain/dikey-domain';
+import { DIKEY_DOMAIN, dikeyAyristir } from '../common/domain/dikey-domain';
 
 /**
  * Teslimat bolgesi yazma girdisinin DAR sekli (D124 Option A).
@@ -119,25 +119,105 @@ export class MarketService {
   // gorunmez. Askiya alma "yeni urun yayinlayamaz" ile sinirli degil, mevcut
   // vitrin de kapanir (okuma aninda suzuluyor; urun/magaza kayitlarina
   // DOKUNULMUYOR ki askidan cikinca eski hal kendiliginden geri gelsin).
-  listActive(skip = 0, take = 50) {
+  //
+  // VERT-02: suzme vitrinMusteriSarti'nda TEK yerde (aktiflik + satici ACTIVE +
+  // varsa dikey + gosterilebilir urun).
+  listActive(skip = 0, take = 50, dikey: BusinessUnit | null = null) {
     return this.prisma.store.findMany({
-      where: { isActive: true, deletedAt: null, seller: { status: SellerStatus.ACTIVE } },
+      where: this.vitrinMusteriSarti(dikey),
       orderBy: { createdAt: 'desc' },
       skip,
       take: Math.min(take, 100),
     });
   }
 
+  // IC METOT — yetki kapilari (ownedOrAdmin, sahipVeyaYonetici) bunun
+  // uzerinden yurur; vitrin suzmesi BURAYA EKLENMEZ (satici kapali/urunsuz
+  // magazasini yonetebilmeli). Public uc getPublicById'yi kullanir.
   async getById(id: string) {
     const store = await this.prisma.store.findFirst({ where: { id, deletedAt: null } });
     if (!store) throw new NotFoundException('Mağaza bulunamadı');
     return store;
   }
 
-  async getBySlug(slug: string) {
-    const store = await this.prisma.store.findFirst({ where: { slug, deletedAt: null } });
+  /**
+   * VERT-02 — VITRIN DIKEYI (?dikey=). Parametre YOKSA null (yalniz dikey
+   * suzmesi atlanir); VARSA gecerli BusinessUnit olmali, degilse 400. Bos
+   * deger ve tekrarli parametre (dizi) de gecersizdir: "yok" ile "bozuk"
+   * ayri durumlar, bozuk degeri sessizce suzgecsize cevirmek yanlis dikeyin
+   * vitrinini acardi.
+   */
+  vitrinDikeyi(ham: unknown): BusinessUnit | null {
+    if (ham === undefined) return null;
+    const dikey = typeof ham === 'string' ? dikeyAyristir(ham) : null;
+    if (!dikey) {
+      throw new BadRequestException({
+        statusCode: 400,
+        kod: 'DIKEY_GECERSIZ',
+        message: 'Geçersiz dikey parametresi (?dikey=).',
+        error: 'Bad Request',
+      });
+    }
+    return dikey;
+  }
+
+  /**
+   * VERT-02 — MAGAZA DUZEYI VITRIN SARTI: aktif, silinmemis, satici ACTIVE,
+   * dikey verildiyse eslesen. Katalog okumalari (urun/kategori) bunu kullanir.
+   * Musteriye MAGAZA gostermek icin ek olarak urun varligi gerekir:
+   * vitrinMusteriSarti.
+   */
+  vitrinMagazaSarti(dikey: BusinessUnit | null): Prisma.StoreWhereInput {
+    return {
+      isActive: true,
+      deletedAt: null,
+      seller: { status: SellerStatus.ACTIVE },
+      ...(dikey ? { businessUnit: dikey } : {}),
+    };
+  }
+
+  /**
+   * Musteriye gorunen magaza: magaza sarti + en az bir aktif ve onayli urun.
+   * Onay = isActive (yayina alma yolu tek: approveProduct). Stok BILEREK
+   * sart degil - tukenmis urunu olan magaza vitrinde kalir.
+   */
+  private vitrinMusteriSarti(dikey: BusinessUnit | null): Prisma.StoreWhereInput {
+    return {
+      ...this.vitrinMagazaSarti(dikey),
+      products: { some: { isActive: true, deletedAt: null } },
+    };
+  }
+
+  /** Public GET stores/:id. Gorunmeyen / yanlis dikey = 404 (varlik sizdirilmaz). */
+  async getPublicById(id: string, dikey: BusinessUnit | null) {
+    const store = await this.prisma.store.findFirst({ where: { id, ...this.vitrinMusteriSarti(dikey) } });
     if (!store) throw new NotFoundException('Mağaza bulunamadı');
     return store;
+  }
+
+  /** Public GET stores/slug/:slug. Yalniz public uc cagiriyor; kural getPublicById ile ayni. */
+  async getBySlug(slug: string, dikey: BusinessUnit | null) {
+    const store = await this.prisma.store.findFirst({ where: { slug, ...this.vitrinMusteriSarti(dikey) } });
+    if (!store) throw new NotFoundException('Mağaza bulunamadı');
+    return store;
+  }
+
+  /** Katalog public okumalari icin: magaza vitrin sartini saglamiyorsa 404. */
+  async vitrinMagazaDogrula(storeId: string, dikey: BusinessUnit | null): Promise<void> {
+    const store = await this.prisma.store.findFirst({
+      where: { id: storeId, ...this.vitrinMagazaSarti(dikey) },
+      select: { id: true },
+    });
+    if (!store) throw new NotFoundException('Mağaza bulunamadı');
+  }
+
+  /**
+   * VERT-02 — SATICI PANELI MAGAZA OKUMASI (kapali/urunsuz magaza dahil).
+   * Kapi calisma saatleriyle AYNI: ownedOrAdmin, izin null (okuma) - sahip,
+   * bu magazanin uyesi ya da platform yoneticisi; VERT-01 dikey kapisi dahil.
+   */
+  panelMagaza(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    return this.ownedOrAdmin(storeId, userId, roles, dikey, null);
   }
 
   // Sahip olunan VE personel olarak calisilan magazalar. Paneller buradan

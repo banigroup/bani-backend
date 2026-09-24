@@ -130,12 +130,35 @@ export class CatalogService {
     private readonly market: MarketService,
   ) { }
 
+  /** VERT-02: public katalog uclarinin ?dikey= cozumu - kural MarketService'te tek. */
+  vitrinDikeyi(ham: unknown): BusinessUnit | null {
+    return this.market.vitrinDikeyi(ham);
+  }
+
   // ---- Kategoriler ----
   // GORUNURLUK STOKTAN TURER: bir baslik, kendi urunu veya alt basliginin urunu
   // stokta ise vitrinde listelenir. isActive ise "yonetici bilerek kapatti" demektir;
   // ikisi ayri kavramdir, karistirilmaz.
   // tumu=true -> yonetim ekranlari icin: bos kategoriler de doner (urun atamak icin gerekli).
-  async listCategories(storeId: string, tumu = false) {
+  //
+  // VERT-02: magaza vitrin sartini (aktif, silinmemis, satici ACTIVE, varsa
+  // dikey) saglamiyorsa 404 - tumu=1 dahil, uc public.
+  async listCategories(storeId: string, tumu = false, dikey: BusinessUnit | null = null) {
+    await this.market.vitrinMagazaDogrula(storeId, dikey);
+    return this.kategoriAgaci(storeId, tumu);
+  }
+
+  /**
+   * VERT-02 — SATICI YONETIM KATEGORI AGACI: public tumu=1 ile AYNI agac,
+   * vitrin sarti YOK (kapali magaza / ACTIVE olmayan satici da okur). Kapi
+   * pending ile ayni: PRODUCT_WRITE + assertOwner (sahiplik + VERT-01 dikey).
+   */
+  async yonetimKategorileri(storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
+    return this.kategoriAgaci(storeId, true);
+  }
+
+  private async kategoriAgaci(storeId: string, tumu: boolean) {
     // "Dolu" urun: kendi stogu varsa YA DA stoklu bir varyanti varsa.
     // Varyantsiz urunde ikinci dal hicbir zaman saglanmaz -> sonuc Faz 3
     // oncesiyle birebir ayni (kanit: yerel testte kategori sayilari degismedi).
@@ -296,15 +319,39 @@ export class CatalogService {
     };
   }
 
-  async listProducts(storeId: string, categoryId?: string, skip = 0, take = 50) {
+  // VERT-02: magaza vitrin sartini saglamiyorsa (kapali, satici askida, yanlis
+  // dikey) bos liste degil 404 - dogrudan storeId ile erisim de kapanir.
+  async listProducts(storeId: string, categoryId?: string, skip = 0, take = 50, dikey: BusinessUnit | null = null) {
+    await this.market.vitrinMagazaDogrula(storeId, dikey);
+    // Askiya alinan saticinin YAYINDAKI urunleri de gizlenir. Suzme okuma
+    // aninda: urun kayitlarina dokunulmuyor, askidan cikinca vitrin
+    // kendiliginden geri geliyor.
+    return this.yayindakiUrunler(storeId, categoryId, skip, take, this.market.vitrinMagazaSarti(dikey));
+  }
+
+  /**
+   * VERT-02 — SATICI YONETIM URUN LISTESI: YAYINDAKI urunler, public liste ile
+   * ayni parametreler ve ayni yanit bicimi; vitrin sarti YOK (kapali magaza /
+   * ACTIVE olmayan satici da okur). Onay bekleyenler ayri uctan: listPending.
+   * Kapi pending ile ayni: PRODUCT_WRITE + assertOwner (sahiplik + VERT-01 dikey).
+   */
+  async yonetimUrunleri(
+    storeId: string, userId: string, roles: Role[], dikey: BusinessUnit | null,
+    categoryId?: string, skip = 0, take = 50,
+  ) {
+    await this.market.assertOwner(storeId, userId, roles, dikey, Permission.PRODUCT_WRITE);
+    return this.yayindakiUrunler(storeId, categoryId, skip, take);
+  }
+
+  private async yayindakiUrunler(
+    storeId: string, categoryId: string | undefined, skip: number, take: number,
+    magazaSarti?: Prisma.StoreWhereInput,
+  ) {
     const kayitlar = await this.prisma.product.findMany({
       // Ust baslik secilirse alt basliklarin urunleri de gelir (iki seviyeli agac).
       where: {
         storeId, isActive: true, deletedAt: null,
-        // Askiya alinan saticinin YAYINDAKI urunleri de gizlenir. Suzme okuma
-        // aninda: urun kayitlarina dokunulmuyor, askidan cikinca vitrin
-        // kendiliginden geri geliyor.
-        store: { seller: { status: SellerStatus.ACTIVE } },
+        ...(magazaSarti ? { store: magazaSarti } : {}),
         ...(categoryId ? { OR: [{ categoryId }, { category: { parentId: categoryId } }] } : {}),
       },
       orderBy: { createdAt: 'desc' },
@@ -342,9 +389,12 @@ export class CatalogService {
   // Public okuma: yalnizca yayindaki urun. Onay bekleyen urunun fiyat/komisyon/KDV
   // kirilimi disariya sizmasin diye ayri metot; getProduct'a filtre eklenemez
   // cunku approve/reject onun uzerinden yurur.
-  async getPublicProduct(id: string) {
+  //
+  // VERT-02: magazasi kapali / silinmis / satici askida / yanlis dikeydeki
+  // urun 404 - urun id'si bilinse de acilmaz.
+  async getPublicProduct(id: string, dikey: BusinessUnit | null = null) {
     const product = await this.prisma.product.findFirst({
-      where: { id, isActive: true, deletedAt: null, store: { seller: { status: SellerStatus.ACTIVE } } },
+      where: { id, isActive: true, deletedAt: null, store: this.market.vitrinMagazaSarti(dikey) },
       select: {
         ...VITRIN_URUN_ALANLARI,
         store: { select: { businessUnit: true, commissionRate: true } },
