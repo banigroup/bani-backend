@@ -80,6 +80,7 @@ model User {
   rolAtamalari     UserRole[]
   carts            Cart[] // dikey basina bir sepet
   orders           Order[]
+  orderGroups      OrderGroup[]
   deliveries       Delivery[]       @relation("CourierDeliveries")
 
   verdigiYukler           YukIlani[]          @relation("VerdigiYukler")
@@ -1206,6 +1207,26 @@ enum PaymentStatus {
   REFUNDED // müşteriye geri ödendi
 }
 
+model OrderGroup {
+  id           String       @id @default(uuid()) @db.Uuid
+  groupNo      String       @unique
+  userId       String       @db.Uuid
+  user         User         @relation(fields: [userId], references: [id])
+  businessUnit BusinessUnit @default(CARSI)
+  subtotal     BigInt
+  total        BigInt
+  addressId    String?      @db.Uuid
+  addressText  String?
+  contactPhone String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  orders Order[]
+
+  @@index([userId, createdAt])
+  @@map("order_groups")
+}
+
 model Order {
   id            String        @id @default(uuid()) @db.Uuid
   orderNo       String        @unique
@@ -1214,6 +1235,8 @@ model Order {
   storeId       String        @db.Uuid
   store         Store         @relation(fields: [storeId], references: [id])
   businessUnit  BusinessUnit  @default(MARKET)
+  orderGroupId  String?       @db.Uuid
+  orderGroup    OrderGroup?   @relation(fields: [orderGroupId], references: [id])
   status        OrderStatus   @default(CONFIRMED)
   paymentStatus PaymentStatus @default(PAID)
 
@@ -1242,6 +1265,7 @@ model Order {
 
   @@index([userId])
   @@index([storeId, status])
+  @@index([orderGroupId])
   // @@index([orderNo]) KALDIRILDI: orderNo zaten @unique (Transaction.orderNo unique DEGIL, oradaki index kaliyor)
   @@map("orders")
 }

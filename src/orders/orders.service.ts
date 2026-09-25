@@ -99,7 +99,7 @@ export class OrdersService {
     // doner ve tum degerler urunden gelir - Faz 3 oncesiyle ayni sonuc.
     // secimler de yukleniyor: ek ucret ve Carsi kirilimi sepetteki SNAPSHOT'tan
     // okunur (bkz. schema CartItemOption "secim anindaki ek ucret ANLIK KOPYA").
-    const sepetIcerik = { items: { include: { product: true, variant: true, secimler: true } } } as const;
+    const sepetIcerik = { items: { include: { product: { include: { store: { include: { seller: { select: { status: true } } } } } }, variant: true, secimler: true } } } as const;
     const cart = dikey
       ? await this.prisma.cart.findUnique({
           where: { userId_businessUnit: { userId, businessUnit: dikey } },
@@ -113,67 +113,117 @@ export class OrdersService {
     if (!cart || cart.items.length === 0) {
       throw new BadRequestException('Sepet boş');
     }
-    if (!cart.storeId) {
+    const carsiSepeti = cart.businessUnit === BusinessUnit.CARSI;
+    if (!carsiSepeti && !cart.storeId) {
       throw new BadRequestException('Sepette mağaza bilgisi yok');
     }
 
-    const store = await this.prisma.store.findFirst({
-      where: { id: cart.storeId, isActive: true, deletedAt: null },
-      include: { seller: { select: { status: true } } },
-    });
-    if (!store) throw new BadRequestException('Mağaza aktif değil');
-
-    // SATICI DURUMU: askiya alinan/kapatilan saticinin magazasindan siparis
-    // alinmaz. Vitrin suzmesi urunu zaten gizliyor; bu, sepette kalmis eski
-    // urunle odemeye gidilmesini kapatan ikinci kapi.
-    if (store.seller.status !== SellerStatus.ACTIVE) {
-      throw new ConflictException({
-        statusCode: 409,
-        kod: 'SATICI_AKTIF_DEGIL',
-        message: 'Bu mağazanın satıcısı şu anda satışa kapalı.',
-        error: 'Conflict',
+    let store: (typeof cart.items)[number]["product"]["store"] | null = null;
+    if (carsiSepeti) {
+      const carsiStores = new Map<string, (typeof cart.items)[number]["product"]["store"]>();
+      for (const item of cart.items) {
+        const itemStore = item.product.store;
+        if (itemStore.businessUnit !== BusinessUnit.CARSI) {
+          throw new ConflictException({
+            statusCode: 409,
+            kod: 'SEPET_DIKEY_TUTARSIZ',
+            message: 'Sepet ile magaza dikeyi uyusmuyor. Sepeti temizleyip tekrar deneyin.',
+            error: 'Conflict',
+          });
+        }
+        carsiStores.set(itemStore.id, itemStore);
+      }
+      for (const itemStore of carsiStores.values()) {
+        if (!itemStore.isActive || itemStore.deletedAt) {
+          throw new BadRequestException('Magaza aktif degil');
+        }
+        if (itemStore.seller.status !== SellerStatus.ACTIVE) {
+          throw new ConflictException({
+            statusCode: 409,
+            kod: 'SATICI_AKTIF_DEGIL',
+            message: 'Bu magazanin saticisi su anda satisa kapali.',
+            error: 'Conflict',
+          });
+        }
+        if (!(await this.market.acikMi(itemStore.id))) {
+          throw new ConflictException({
+            statusCode: 409,
+            kod: 'MAGAZA_KAPALI',
+            message: 'Magaza su anda kapali. Calisma saatleri icinde tekrar deneyin.',
+            error: 'Conflict',
+          });
+        }
+      }
+      const originKontrol = checkoutOriginUygun(origin, BusinessUnit.CARSI);
+      if (!originKontrol.uygun) {
+        throw new ConflictException({
+          statusCode: 409,
+          kod: 'YANLIS_DOMAIN',
+          message: `Sepetinizdeki urunler ${originKontrol.beklenenDomain} magazasina ait. Bu siparisi ${originKontrol.beklenenDomain} adresinden tamamlayin.`,
+          beklenenDomain: originKontrol.beklenenDomain,
+          error: 'Conflict',
+        });
+      }
+    } else {
+      store = await this.prisma.store.findFirst({
+        where: { id: cart.storeId!, isActive: true, deletedAt: null },
+        include: { seller: { select: { status: true } } },
       });
-    }
+      if (!store) throw new BadRequestException('Mağaza aktif değil');
 
-    // BR-014 — magaza kapaliyken yeni siparis kabul edilmez.
-    // store_hours kaydi YOKSA magaza ACIK sayilir (bkz. market.acikMi);
-    // aksi halde bu kural devreye girdigi an saat tanimlamamis her magaza
-    // kapanirdi.
-    if (!(await this.market.acikMi(store.id))) {
-      throw new ConflictException({
-        statusCode: 409,
-        kod: 'MAGAZA_KAPALI',
-        message: 'Mağaza şu anda kapalı. Çalışma saatleri içinde tekrar deneyin.',
-        error: 'Conflict',
-      });
-    }
+      // SATICI DURUMU: askiya alinan/kapatilan saticinin magazasindan siparis
+      // alinmaz. Vitrin suzmesi urunu zaten gizliyor; bu, sepette kalmis eski
+      // urunle odemeye gidilmesini kapatan ikinci kapi.
+      if (store.seller.status !== SellerStatus.ACTIVE) {
+        throw new ConflictException({
+          statusCode: 409,
+          kod: 'SATICI_AKTIF_DEGIL',
+          message: 'Bu mağazanın satıcısı şu anda satışa kapalı.',
+          error: 'Conflict',
+        });
+      }
 
-    // Sepetin dikeyi ile magazanin dikeyi ayrisamaz: sepete urun eklerken dikey
-    // urunun magazasindan turetiliyor (cart.service). Ayrisiyorsa veri bozuktur,
-    // siparis yazilmadan durulur.
-    if (cart.businessUnit !== store.businessUnit) {
-      throw new ConflictException({
-        statusCode: 409,
-        kod: 'SEPET_DIKEY_TUTARSIZ',
-        message: 'Sepet ile mağaza dikeyi uyuşmuyor. Sepeti temizleyip tekrar deneyin.',
-        error: 'Conflict',
-      });
-    }
+      // BR-014 — magaza kapaliyken yeni siparis kabul edilmez.
+      // store_hours kaydi YOKSA magaza ACIK sayilir (bkz. market.acikMi);
+      // aksi halde bu kural devreye girdigi an saat tanimlamamis her magaza
+      // kapanirdi.
+      if (!(await this.market.acikMi(store.id))) {
+        throw new ConflictException({
+          statusCode: 409,
+          kod: 'MAGAZA_KAPALI',
+          message: 'Mağaza şu anda kapalı. Çalışma saatleri içinde tekrar deneyin.',
+          error: 'Conflict',
+        });
+      }
 
-    // ORIGIN/DIKEY TUTARLILIGI — para ve stok adimlarindan ONCE, ucuz yoldan.
-    // Sepet kullanici basina TEK ve tek magazaya kilitli (Cart.userId @unique +
-    // cart.service FARKLI_MAGAZA kurali). Dolayisiyla kullanici bir markanin
-    // vitrininde baska markanin sepetiyle odemeye gidebiliyordu: siparis o
-    // vitrinle alakasiz bir dikeye yaziliyordu. Burada durduruluyor.
-    const originKontrol = checkoutOriginUygun(origin, store.businessUnit);
-    if (!originKontrol.uygun) {
-      throw new ConflictException({
-        statusCode: 409,
-        kod: 'YANLIS_DOMAIN',
-        message: `Sepetinizdeki ürünler ${originKontrol.beklenenDomain} mağazasına ait. Bu siparişi ${originKontrol.beklenenDomain} adresinden tamamlayın.`,
-        beklenenDomain: originKontrol.beklenenDomain,
-        error: 'Conflict',
-      });
+      // Sepetin dikeyi ile magazanin dikeyi ayrisamaz: sepete urun eklerken dikey
+      // urunun magazasindan turetiliyor (cart.service). Ayrisiyorsa veri bozuktur,
+      // siparis yazilmadan durulur.
+      if (cart.businessUnit !== store.businessUnit) {
+        throw new ConflictException({
+          statusCode: 409,
+          kod: 'SEPET_DIKEY_TUTARSIZ',
+          message: 'Sepet ile mağaza dikeyi uyuşmuyor. Sepeti temizleyip tekrar deneyin.',
+          error: 'Conflict',
+        });
+      }
+
+      // ORIGIN/DIKEY TUTARLILIGI — para ve stok adimlarindan ONCE, ucuz yoldan.
+      // Sepet kullanici basina TEK ve tek magazaya kilitli (Cart.userId @unique +
+      // cart.service FARKLI_MAGAZA kurali). Dolayisiyla kullanici bir markanin
+      // vitrininde baska markanin sepetiyle odemeye gidebiliyordu: siparis o
+      // vitrinle alakasiz bir dikeye yaziliyordu. Burada durduruluyor.
+      const originKontrol = checkoutOriginUygun(origin, store.businessUnit);
+      if (!originKontrol.uygun) {
+        throw new ConflictException({
+          statusCode: 409,
+          kod: 'YANLIS_DOMAIN',
+          message: `Sepetinizdeki ürünler ${originKontrol.beklenenDomain} mağazasına ait. Bu siparişi ${originKontrol.beklenenDomain} adresinden tamamlayın.`,
+          beklenenDomain: originKontrol.beklenenDomain,
+          error: 'Conflict',
+        });
+      }
+
     }
 
     // Teslimat adresi ZORUNLU. Kontrol burada: cüzdan oluşturma, escrow ve
@@ -182,6 +232,11 @@ export class OrdersService {
     const addr = await this.prisma.address.findFirst({ where: { id: dto.addressId, userId } });
     if (!addr) throw new BadRequestException('Adres bulunamadı');
     const addressText = [addr.city, addr.district, addr.line1].filter(Boolean).join(' / ');
+
+    if (carsiSepeti) {
+      return this.checkoutCarsiMultiStore(userId, dto, cart, addressText);
+    }
+    if (!store) throw new BadRequestException('Magaza aktif degil');
 
     const isCarsi = store.businessUnit === BusinessUnit.CARSI;
 
@@ -466,6 +521,94 @@ export class OrdersService {
     }
 
     return order;
+  }
+
+  private async checkoutCarsiMultiStore(
+    userId: string,
+    dto: CheckoutDto,
+    cart: any,
+    addressText: string,
+  ) {
+    const groups = new Map<string, { store: any; items: any[] }>();
+    for (const it of cart.items) {
+      const store = it.product.store;
+      const group = groups.get(store.id);
+      if (group) group.items.push(it);
+      else groups.set(store.id, { store, items: [it] });
+    }
+
+    const childPlans = Array.from(groups.values()).map(({ store, items }) => {
+      let subtotal = 0n;
+      let deliveryFee = 0n;
+      let commission = 0n;
+      let vat = 0n;
+      let netRevenue = 0n;
+      for (const it of items) {
+        if (!it.product?.isActive || it.product.deletedAt) {
+          throw new BadRequestException(`Urun artik satista degil: ${it.product?.name ?? it.productId}`);
+        }
+        const stok = etkinStok(it.product, it.variant);
+        if (stok < it.quantity) throw new BadRequestException(`Yetersiz stok: ${it.product.name} (kalan ${stok})`);
+        const q = BigInt(it.quantity);
+        const ek = it.secimler.reduce((t: bigint, s: any) => t + s.ekUcret, 0n);
+        const k = etkinKirilim(it.product, it.variant);
+        subtotal += (k.price + ek) * q;
+        deliveryFee += k.kargoTutari * q;
+        commission += (k.komisyonTutari + this.secimToplam(it.secimler, 'komisyonTutari')) * q;
+        vat += (k.hizmetKdvTutari + this.secimToplam(it.secimler, 'hizmetKdvTutari')) * q;
+        netRevenue += (k.netFiyat + this.secimToplam(it.secimler, 'netFiyat') + k.malKdvTutari + this.secimToplam(it.secimler, 'malKdvTutari')) * q;
+      }
+      if (store.minOrder > 0n && subtotal < store.minOrder) throw new BadRequestException(`Minimum siparis tutari: ${store.minOrder} kurus`);
+      if (netRevenue + commission + vat + deliveryFee !== subtotal) throw new BadRequestException('Carsi tutar tutarsizligi');
+      return { store, items, subtotal, deliveryFee, commission, vat, netRevenue, total: subtotal, orderNo: this.orderNo(), teslimKod: this.teslimKoduUret() };
+    });
+
+    const subtotal = childPlans.reduce((t, p) => t + p.subtotal, 0n);
+    const total = childPlans.reduce((t, p) => t + p.total, 0n);
+    const commission = childPlans.reduce((t, p) => t + p.commission, 0n);
+    const vat = childPlans.reduce((t, p) => t + p.vat, 0n);
+    const deliveryFee = childPlans.reduce((t, p) => t + p.deliveryFee, 0n);
+    const netRevenue = childPlans.reduce((t, p) => t + p.netRevenue, 0n);
+    const customerWallet = await this.wallet.getOrCreateUserWallet(userId);
+    if (customerWallet.balance < total) throw new BadRequestException('Yetersiz bakiye. Lutfen cuzdana para yukleyin.');
+    const escrowWallet = await this.wallet.getSystemWallet(WalletType.ESCROW);
+    const groupNo = this.orderNo();
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      for (const plan of childPlans) for (const it of plan.items) {
+        const varyantStogu = !!it.variantId && it.variant?.stock !== null && it.variant?.stock !== undefined;
+        const { count } = varyantStogu
+          ? await tx.productVariant.updateMany({ where: { id: it.variantId as string, stock: { gte: it.quantity } }, data: { stock: { decrement: it.quantity } } })
+          : await tx.product.updateMany({ where: { id: it.productId, stock: { gte: it.quantity } }, data: { stock: { decrement: it.quantity } } });
+        if (count === 0) throw new ConflictException({ statusCode: 409, kod: 'STOK_TUKENDI', message: `Urun tukendi: ${it.product.name}.`, urunId: it.productId, variantId: it.variantId ?? null, error: 'Conflict' });
+      }
+
+      const group = await tx.orderGroup.create({ data: { groupNo, userId, businessUnit: BusinessUnit.CARSI, subtotal, total, addressId: dto.addressId, addressText, contactPhone: dto.contactPhone } });
+      const orders = [];
+      for (const plan of childPlans) {
+        const created = await tx.order.create({
+          data: {
+            orderNo: plan.orderNo, userId, storeId: plan.store.id, businessUnit: BusinessUnit.CARSI, orderGroupId: group.id,
+            status: OrderStatus.CONFIRMED, paymentStatus: PaymentStatus.PAID, subtotal: plan.subtotal, deliveryFee: plan.deliveryFee,
+            discount: 0n, total: plan.total, commission: plan.commission, vat: plan.vat, netRevenue: plan.netRevenue,
+            addressId: dto.addressId, addressText, note: dto.note, contactPhone: dto.contactPhone, confirmedAt: new Date(),
+            items: { create: plan.items.map((it: any) => {
+              const up = etkinKirilim(it.product, it.variant).price + it.secimler.reduce((t: bigint, s: any) => t + s.ekUcret, 0n);
+              return { productId: it.productId, name: it.product.name, variantId: it.variantId, variantAdi: it.variant?.name ?? null, unitType: it.product.unitType, unitPrice: up, quantity: it.quantity, lineTotal: up * BigInt(it.quantity), ...(it.secimler.length ? { secimler: { create: it.secimler.map((s: any) => ({ optionId: s.optionId, optionAdi: s.optionAdi, ekUcret: s.ekUcret })) } } : {}) };
+            }) },
+          }, include: { items: { include: { secimler: true } } },
+        });
+        await tx.delivery.create({ data: { orderId: created.id, fee: plan.deliveryFee, status: DeliveryStatus.PENDING, teslimKod: plan.teslimKod } });
+        orders.push(created);
+      }
+      await this.ledger.postWithTx(tx, { type: TransactionType.PAYMENT, reference: groupNo, orderNo: groupNo, businessUnit: BusinessUnit.CARSI, commission, vat, deliveryFee, netRevenue, description: `Siparis grubu ${groupNo} odemesi (escrow)`, lines: [{ walletId: customerWallet.id, direction: EntryDirection.DEBIT, amount: total }, { walletId: escrowWallet.id, direction: EntryDirection.CREDIT, amount: total }] });
+      await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
+      await tx.cart.update({ where: { id: cart.id }, data: { storeId: null } });
+      return { id: group.id, orderNo: group.groupNo, groupNo: group.groupNo, total: group.total, subtotal: group.subtotal, orders };
+    });
+
+    if (dto.contactPhone) for (const plan of childPlans) await this.bildirim.gonderSms(dto.contactPhone, 'TESLIM_KODU', { orderNo: plan.orderNo, kod: plan.teslimKod });
+    return result;
   }
 
   // ============================ LİSTELEME ============================
