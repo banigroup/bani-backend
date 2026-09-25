@@ -49,7 +49,7 @@ export class CartService {
         where: { userId_businessUnit: { userId, businessUnit: dikey } },
       });
     }
-    return this.prisma.cart.findFirst({ where: { userId }, orderBy: { updatedAt: 'desc' } });
+    return null;
   }
 
   /**
