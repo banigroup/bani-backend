@@ -54,6 +54,9 @@ describe('CART-01 Kervan multi-store checkout / real PostgreSQL', () => {
     const groupNos = (await prisma.orderGroup.findMany({ where: { userId }, select: { groupNo: true } })).map(g => g.groupNo);
     if (groupNos.length) await prisma.transaction.deleteMany({ where: { reference: { in: groupNos } } });
     await prisma.cart.deleteMany({ where: { userId } });
+    await prisma.delivery.deleteMany({ where: { order: { userId } } });
+    await prisma.orderItem.deleteMany({ where: { order: { userId } } });
+    await prisma.order.deleteMany({ where: { userId } });
     await prisma.orderGroup.deleteMany({ where: { userId } });
     await prisma.product.deleteMany({ where: { id: { in: productIds } } });
     await prisma.store.deleteMany({ where: { id: { in: storeIds } } });
