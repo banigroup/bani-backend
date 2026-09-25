@@ -268,19 +268,24 @@ export class CartService {
     const cart = await this.getOrCreate(userId, product.store.businessUnit);
     const qty = dto.quantity ?? 1;
 
-    // Tek-mağaza kuralı: sepette ürün varken başka mağazanın ürünü eklenemez
-    const itemCount = await this.prisma.cartItem.count({ where: { cartId: cart.id } });
-    if (itemCount > 0 && cart.storeId && cart.storeId !== product.storeId) {
-      throw new ConflictException({
-        statusCode: 409,
-        kod: 'FARKLI_MAGAZA',
-        message: 'Sepetinizde başka bir mağazadan ürün var.',
-        error: 'Conflict',
-      });
-    }
-    // Sepet boşsa veya mağazasızsa mağazayı bu ürüne bağla (bayat storeId'yi de düzeltir)
-    if (cart.storeId !== product.storeId) {
-      await this.prisma.cart.update({ where: { id: cart.id }, data: { storeId: product.storeId } });
+    // MARKET/YEMEK tek mağaza kalır. CARSI (Kervan) çok mağazalı pazaryeridir:
+    // mağaza kimliği her kalemin Product.storeId ilişkisinden gelir.
+    if (product.store.businessUnit !== BusinessUnit.CARSI) {
+      const itemCount = await this.prisma.cartItem.count({ where: { cartId: cart.id } });
+      if (itemCount > 0 && cart.storeId && cart.storeId !== product.storeId) {
+        throw new ConflictException({
+          statusCode: 409,
+          kod: 'FARKLI_MAGAZA',
+          message: 'Sepetinizde başka bir mağazadan ürün var.',
+          error: 'Conflict',
+        });
+      }
+      if (cart.storeId !== product.storeId) {
+        await this.prisma.cart.update({ where: { id: cart.id }, data: { storeId: product.storeId } });
+      }
+    } else if (cart.storeId !== null) {
+      // CARSI checkout mağazayı CartItem -> Product.storeId üzerinden çözecek.
+      await this.prisma.cart.update({ where: { id: cart.id }, data: { storeId: null } });
     }
 
     // TEKILLIK ARTIK SECIM KUMESINI DE KAPSIYOR (Faz 3 / adim 3 karari):
