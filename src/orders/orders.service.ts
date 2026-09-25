@@ -145,14 +145,6 @@ export class OrdersService {
             error: 'Conflict',
           });
         }
-        if (!(await this.market.acikMi(itemStore.id))) {
-          throw new ConflictException({
-            statusCode: 409,
-            kod: 'MAGAZA_KAPALI',
-            message: 'Magaza su anda kapali. Calisma saatleri icinde tekrar deneyin.',
-            error: 'Conflict',
-          });
-        }
       }
       const originKontrol = checkoutOriginUygun(origin, BusinessUnit.CARSI);
       if (!originKontrol.uygun) {
